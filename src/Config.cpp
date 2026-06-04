@@ -114,6 +114,8 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"igdbTokenExpiry\":" + std::to_string(m_cfg.igdbTokenExpiry) + ",\n";
     out += "  \"serverEnabled\":" + B(m_cfg.server.enabled) + ",\n";
     out += "  \"serverBaseUrl\":\"" + Escape(m_cfg.server.baseUrl) + "\",\n";
+    out += "  \"serverUsername\":\"" + Escape(m_cfg.server.username) + "\",\n";
+    out += "  \"serverPassword\":\"" + Escape(m_cfg.server.password) + "\",\n";
     out += "  \"serverAuthToken\":\"" + Escape(m_cfg.server.authToken) + "\",\n";
     out += "  \"serverInstallRoot\":\"" + Escape(m_cfg.server.installRoot) + "\",\n";
     // Library settings
@@ -195,6 +197,8 @@ void Config::Load(const std::wstring& path) {
     m_cfg.igdbTokenExpiry    = ReadInt64(json, "igdbTokenExpiry");
     m_cfg.server.enabled     = ReadBool(json, "serverEnabled");
     m_cfg.server.baseUrl     = ToWide(ReadField(json, "serverBaseUrl"));
+    m_cfg.server.username    = ToWide(ReadField(json, "serverUsername"));
+    m_cfg.server.password    = ToWide(ReadField(json, "serverPassword"));
     m_cfg.server.authToken   = ToWide(ReadField(json, "serverAuthToken"));
     m_cfg.server.installRoot = ToWide(ReadField(json, "serverInstallRoot"));
 

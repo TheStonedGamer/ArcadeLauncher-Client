@@ -229,6 +229,8 @@ bool ServerClient::HttpGet(const std::wstring& url,
                            std::string& body,
                            std::wstring& error,
                            const std::wstring& rangeHeader) {
+    if (url.find(L"/api/login") == std::wstring::npos && !EnsureAuthenticated(error))
+        return false;
     URL_COMPONENTSW uc{ sizeof(uc) };
     wchar_t host[256]{}, path[2048]{};
     uc.lpszHostName = host; uc.dwHostNameLength = _countof(host);
@@ -297,6 +299,89 @@ bool ServerClient::HttpGet(const std::wstring& url,
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(sess);
+    return true;
+}
+
+bool ServerClient::HttpPostForm(const std::wstring& url,
+                                const std::wstring& formBody,
+                                std::string& body,
+                                std::wstring& error) {
+    URL_COMPONENTSW uc{ sizeof(uc) };
+    wchar_t host[256]{}, path[2048]{};
+    uc.lpszHostName = host; uc.dwHostNameLength = _countof(host);
+    uc.lpszUrlPath = path; uc.dwUrlPathLength = _countof(path);
+    uc.dwSchemeLength = 1;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
+        error = L"Invalid URL";
+        return false;
+    }
+
+    bool https = uc.nScheme == INTERNET_SCHEME_HTTPS;
+    HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/ServerClient",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!sess) { error = L"WinHTTP open failed"; return false; }
+    HINTERNET conn = WinHttpConnect(sess, std::wstring(host, uc.dwHostNameLength).c_str(), uc.nPort, 0);
+    if (!conn) { WinHttpCloseHandle(sess); error = L"Server connect failed"; return false; }
+    HINTERNET req = WinHttpOpenRequest(conn, L"POST", std::wstring(path, uc.dwUrlPathLength).c_str(),
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
+    if (!req) {
+        WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+        error = L"Request open failed";
+        return false;
+    }
+
+    std::string post = ToUtf8(formBody);
+    std::wstring headers = L"Content-Type: application/x-www-form-urlencoded\r\n";
+    BOOL ok = WinHttpSendRequest(req, headers.c_str(), (DWORD)-1,
+        post.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)post.data(),
+        (DWORD)post.size(), (DWORD)post.size(), 0);
+    if (ok) ok = WinHttpReceiveResponse(req, nullptr);
+    if (!ok) {
+        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+        error = L"Request failed";
+        return false;
+    }
+
+    DWORD status = 0, statusSize = sizeof(status);
+    WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        nullptr, &status, &statusSize, nullptr);
+    if (status < 200 || status >= 300) {
+        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+        error = L"Server returned HTTP " + std::to_wstring(status);
+        return false;
+    }
+
+    body.clear();
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+        std::string chunk(avail, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(req, chunk.data(), avail, &read)) break;
+        chunk.resize(read);
+        body += chunk;
+    }
+    WinHttpCloseHandle(req);
+    WinHttpCloseHandle(conn);
+    WinHttpCloseHandle(sess);
+    return true;
+}
+
+bool ServerClient::EnsureAuthenticated(std::wstring& error) {
+    if (!m_cfg.authToken.empty()) return true;
+    if (m_cfg.username.empty() || m_cfg.password.empty()) return true;
+
+    std::wstring form = L"username=" + PercentEncode(m_cfg.username) +
+        L"&password=" + PercentEncode(m_cfg.password);
+    std::string body;
+    if (!HttpPostForm(Url(L"/api/login"), form, body, error))
+        return false;
+    std::wstring token = ToWide(JsonString(body, "token"));
+    if (token.empty()) {
+        error = L"Server login did not return a token";
+        return false;
+    }
+    m_cfg.authToken = token;
     return true;
 }
 

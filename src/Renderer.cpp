@@ -582,12 +582,23 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
 }
 
 void Renderer::DrawPlatformBadge(Platform p, D2D1_POINT_2F center) {
-    D2D1_ELLIPSE e = D2D1::Ellipse(center, 8.0f, 8.0f);
+    D2D1_ELLIPSE e = D2D1::Ellipse(center, 13.0f, 13.0f);
     m_brushCard->SetColor(D2D1::ColorF(0.05f, 0.05f, 0.08f, 0.85f));
     m_rt->FillEllipse(e, m_brushCard.Get());
+
+    ID2D1Bitmap* icon = m_platformIcons ? m_platformIcons->Get(p) : nullptr;
+    if (icon) {
+        D2D1_RECT_F dst = D2D1::RectF(center.x - 9.0f, center.y - 9.0f,
+                                      center.x + 9.0f, center.y + 9.0f);
+        m_rt->DrawBitmap(icon, dst, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    } else {
+        m_brushAccent->SetColor(PlatformColor(p));
+        D2D1_ELLIPSE inner = D2D1::Ellipse(center, 5.0f, 5.0f);
+        m_rt->FillEllipse(inner, m_brushAccent.Get());
+    }
+
     m_brushAccent->SetColor(PlatformColor(p));
-    D2D1_ELLIPSE inner = D2D1::Ellipse(center, 5.0f, 5.0f);
-    m_rt->FillEllipse(inner, m_brushAccent.Get());
+    m_rt->DrawEllipse(e, m_brushAccent.Get(), 1.0f);
     m_brushCard->SetColor(C_CARD);
     m_brushAccent->SetColor(C_ACCENT);
 }

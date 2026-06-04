@@ -572,15 +572,19 @@ void SettingsWindow::BuildGeneralPage() {
           ID_P_STAT2, K_CX + 152, y + 26, K_CW - 164, 17));
     y += 76;
 
-    AddPC(Group(m_hwnd, L" ArcadeLauncher Server ", K_CX, y, K_CW, 142));
+    AddPC(Group(m_hwnd, L" ArcadeLauncher Server ", K_CX, y, K_CW, 176));
     AddPC(Check(m_hwnd, L"Enable server library sync", ID_P_CHK4,
                 K_CX + 12, y + 20, K_CW - 24));
     AddPC(Label(m_hwnd, L"Server URL:", K_CX + 12, y + 48, 92));
     AddPC(Edit(m_hwnd, ID_P_EDIT3, K_CX + 106, y + 46, K_CW - 118));
-    AddPC(Label(m_hwnd, L"Auth Token:", K_CX + 12, y + 76, 92));
-    AddPC(Edit(m_hwnd, ID_P_EDIT4, K_CX + 106, y + 74, K_CW - 118, ES_PASSWORD));
-    AddPC(Label(m_hwnd, L"Install Root:", K_CX + 12, y + 104, 92));
-    AddPC(Edit(m_hwnd, ID_P_EDIT5, K_CX + 106, y + 102, K_CW - 118));
+    AddPC(Label(m_hwnd, L"Username:", K_CX + 12, y + 76, 92));
+    AddPC(Edit(m_hwnd, ID_P_EDIT4, K_CX + 106, y + 74, K_CW - 118));
+    AddPC(Label(m_hwnd, L"Password:", K_CX + 12, y + 104, 92));
+    AddPC(Edit(m_hwnd, ID_P_EDIT5, K_CX + 106, y + 102, K_CW - 118, ES_PASSWORD));
+    AddPC(Label(m_hwnd, L"Install Root:", K_CX + 12, y + 132, 92));
+    AddPC(Edit(m_hwnd, ID_P_EDIT6, K_CX + 106, y + 130, K_CW - 118));
+    AddPC(SmallLabel(m_hwnd, L"Bearer tokens are issued automatically after username/password sign-in.",
+                     K_CX + 12, y + 160, K_CW - 24));
 }
 
 void SettingsWindow::BuildSteamPage() {
@@ -917,8 +921,9 @@ void SettingsWindow::LoadGeneralPage() {
     SetWindowTextW(PC(ID_P_EDIT2), m_work.igdbClientSecret.c_str());
     Chk(PC(ID_P_CHK4), m_work.server.enabled);
     SetWindowTextW(PC(ID_P_EDIT3), m_work.server.baseUrl.c_str());
-    SetWindowTextW(PC(ID_P_EDIT4), m_work.server.authToken.c_str());
-    SetWindowTextW(PC(ID_P_EDIT5), m_work.server.installRoot.c_str());
+    SetWindowTextW(PC(ID_P_EDIT4), m_work.server.username.c_str());
+    SetWindowTextW(PC(ID_P_EDIT5), m_work.server.password.c_str());
+    SetWindowTextW(PC(ID_P_EDIT6), m_work.server.installRoot.c_str());
 }
 void SettingsWindow::SaveGeneralPage() {
     m_work.startFullscreen  = IsChk(PC(ID_P_CHK1));
@@ -928,8 +933,9 @@ void SettingsWindow::SaveGeneralPage() {
     m_work.igdbClientSecret = GetTxt(PC(ID_P_EDIT2));
     m_work.server.enabled     = IsChk(PC(ID_P_CHK4));
     m_work.server.baseUrl     = GetTxt(PC(ID_P_EDIT3));
-    m_work.server.authToken   = GetTxt(PC(ID_P_EDIT4));
-    m_work.server.installRoot = GetTxt(PC(ID_P_EDIT5));
+    m_work.server.username    = GetTxt(PC(ID_P_EDIT4));
+    m_work.server.password    = GetTxt(PC(ID_P_EDIT5));
+    m_work.server.installRoot = GetTxt(PC(ID_P_EDIT6));
 }
 
 void SettingsWindow::LoadSteamPage() {

@@ -64,6 +64,8 @@ struct EmulatorConfig {
 struct ServerConfig {
     bool enabled = false;
     std::wstring baseUrl;
+    std::wstring username;
+    std::wstring password;
     std::wstring authToken;
     std::wstring installRoot;
 };
