@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    ArcadeLauncher.wxs — WiX v4 installer definition.
+
+    Build with:
+        wix build installer\ArcadeLauncher.wxs ^
+             -ext WixToolset.UI.wixext        ^
+             -d BinDir=bin\Release            ^
+             -out dist\ArcadeLauncher-x64.msi
+
+    Or just run:  scripts\build.ps1
+
+    UpgradeCode is FIXED — never change it. Changing it makes Windows treat
+    the new version as a completely different product and leaves the old one installed.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="ArcadeLauncher"
+           Manufacturer="ArcadeLauncher"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="DA9B3C2E-5F7A-4B8D-9C1E-0F2A3B4C5D6E"
+           Language="1033"
+           Scope="perMachine">
+
+    <SummaryInformation Description="ArcadeLauncher — game library front-end" />
+
+    <!--
+        MajorUpgrade: installing a newer version automatically removes the old one.
+        Installing an older version is blocked with the error message below.
+    -->
+    <MajorUpgrade
+        DowngradeErrorMessage="A newer version of ArcadeLauncher is already installed. Uninstall it first, or download the latest installer." />
+
+    <!-- Embed the cab into the MSI (single-file installer) -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- ── Installation directories ─────────────────────────────────────────── -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="ArcadeLauncher">
+
+        <!-- Main executable -->
+        <Component Id="MainExecutable" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+          <File Id="MainExe"
+                Source="$(var.BinDir)\ArcadeLauncher.exe"
+                KeyPath="yes" />
+        </Component>
+
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Start-menu shortcut lives in HKCU so it can be installed per-machine
+         without requiring admin on subsequent runs. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuAppFolder" Name="ArcadeLauncher">
+        <Component Id="StartMenuShortcut" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+          <Shortcut Id="AppShortcut"
+                    Name="ArcadeLauncher"
+                    Description="Your all-in-one game library front-end"
+                    Target="[INSTALLFOLDER]ArcadeLauncher.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <!-- RemoveFolder cleans up the Start-menu directory on uninstall -->
+          <RemoveFolder Id="CleanupStartMenuDir" Directory="StartMenuAppFolder" On="uninstall" />
+          <!-- RegistryValue is the KeyPath so the component can be detected -->
+          <RegistryValue Root="HKCU"
+                         Key="Software\ArcadeLauncher"
+                         Name="StartMenuInstalled"
+                         Type="integer" Value="1"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Optional: desktop shortcut (user can deselect in the installer UI) -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="C3D4E5F6-A7B8-9012-CDEF-012345678902">
+        <Shortcut Id="DesktopLink"
+                  Name="ArcadeLauncher"
+                  Target="[INSTALLFOLDER]ArcadeLauncher.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\ArcadeLauncher"
+                       Name="DesktopInstalled"
+                       Type="integer" Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- ── Features ──────────────────────────────────────────────────────────── -->
+    <Feature Id="Main" Title="ArcadeLauncher" Level="1"
+             Description="The main application." AllowAbsent="no">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <Feature Id="DesktopShortcutFeature" Title="Desktop Shortcut" Level="1"
+             Description="Add a shortcut to the Desktop.">
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <!-- ── Installer UI ───────────────────────────────────────────────────────
+         WixUI_FeatureTree: shows install directory + feature checkboxes.
+         Remove the two lines below for a completely silent install. -->
+    <ui:WixUI Id="WixUI_FeatureTree" />
+    <WixVariable Id="WixUILicenseRtf" Value="installer\License.rtf" />
+
+  </Package>
+</Wix>

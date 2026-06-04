@@ -1,0 +1,138 @@
+name: Server Client Release
+
+# Builds and publishes the server-client MSI from this repo's main branch.
+on:
+  push:
+    branches: [main]
+    tags:
+      - "client-v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Package Server Client
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump client version
+        id: ver
+        shell: pwsh
+        run: |
+          $author = git log -1 --format='%an'
+          $isTag  = '${{ github.ref_type }}' -eq 'tag'
+          $isBot  = $author -eq 'github-actions[bot]'
+
+          $txt   = Get-Content src\Version.h -Raw
+          $major = [int][regex]::Match($txt, '#define ARCADE_VERSION_MAJOR\s+(\d+)').Groups[1].Value
+          $minor = [int][regex]::Match($txt, '#define ARCADE_VERSION_MINOR\s+(\d+)').Groups[1].Value
+          $patch = [int][regex]::Match($txt, '#define ARCADE_VERSION_PATCH\s+(\d+)').Groups[1].Value
+
+          Write-Host "Current version : $major.$minor.$patch"
+          Write-Host "Triggered by tag: $isTag   Bot commit: $isBot"
+
+          if (-not $isTag -and -not $isBot) {
+            $msg = git log -1 --format='%s'
+            Write-Host "Commit message  : $msg"
+            if ($msg -match '\[major\]') {
+              $major++; $minor = 0; $patch = 0
+              Write-Host "Bump type       : MAJOR"
+            } elseif ($msg -match '\[minor\]') {
+              $minor++; $patch = 0
+              Write-Host "Bump type       : MINOR"
+            } else {
+              $patch++
+              Write-Host "Bump type       : PATCH"
+            }
+
+            $txt = $txt -replace '(#define ARCADE_VERSION_MAJOR\s+)\d+', "`${1}$major"
+            $txt = $txt -replace '(#define ARCADE_VERSION_MINOR\s+)\d+', "`${1}$minor"
+            $txt = $txt -replace '(#define ARCADE_VERSION_PATCH\s+)\d+', "`${1}$patch"
+            $txt = $txt -replace '(#define ARCADE_VERSION_BUILD\s+)\d+', "`${1}0"
+            Set-Content src\Version.h $txt -NoNewline
+
+            git add src/Version.h
+            git commit -m "chore: bump server client version to $major.$minor.$patch [skip actions]"
+            git push origin HEAD:main
+          }
+
+          $ver = "$major.$minor.$patch"
+          $tag = "client-v$ver"
+          Write-Host "Client release version : $ver   Tag: $tag"
+          "VERSION=$ver" >> $env:GITHUB_OUTPUT
+          "TAG=$tag"     >> $env:GITHUB_OUTPUT
+
+      - name: Ensure client release tag
+        if: github.ref_type != 'tag'
+        shell: pwsh
+        run: |
+          git tag -f "${{ steps.ver.outputs.TAG }}"
+          git push -f origin "${{ steps.ver.outputs.TAG }}"
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Set up .NET for WiX
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.x"
+
+      - name: Install WiX v4
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          wix extension add WixToolset.UI.wixext/4.0.5 --global
+
+      - name: Build Release
+        run: |
+          msbuild GameLauncher.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m /nologo `
+            /p:TreatWarningsAsErrors=false
+
+      - name: Create dist directory
+        run: New-Item -ItemType Directory -Force dist
+
+      - name: Build MSI
+        run: |
+          wix build installer\ArcadeLauncher.wxs `
+            -ext WixToolset.UI.wixext `
+            -d "BinDir=bin\Release" `
+            -d "ProductVersion=${{ steps.ver.outputs.VERSION }}" `
+            -out "dist\ArcadeLauncher-Server-Client-x64.msi" `
+            -arch x64
+
+      - name: Copy client executable artifact
+        run: Copy-Item bin\Release\ArcadeLauncher.exe dist\ArcadeLauncher-Server-Client.exe -Force
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArcadeLauncher-Server-Client-${{ steps.ver.outputs.TAG }}
+          path: |
+            dist\ArcadeLauncher-Server-Client-x64.msi
+            dist\ArcadeLauncher-Server-Client.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.TAG }}
+          name: ArcadeLauncher Server Client ${{ steps.ver.outputs.TAG }}
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            dist/ArcadeLauncher-Server-Client-x64.msi
+            dist/ArcadeLauncher-Server-Client.exe

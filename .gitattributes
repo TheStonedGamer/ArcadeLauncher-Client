@@ -1,0 +1,17 @@
+# Normalize line endings: CRLF in working tree, LF in the repository.
+# This prevents the CRLF↔LF churn warnings on Windows and keeps diffs clean.
+* text=auto eol=crlf
+
+# Force LF for shell/yaml/markdown (edited cross-platform, CI runs on Linux)
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sh   text eol=lf
+
+# Binary files — no line-ending conversion
+*.exe  binary
+*.dll  binary
+*.msi  binary
+*.png  binary
+*.ico  binary
+*.res  binary
+*.pch  binary

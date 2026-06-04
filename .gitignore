@@ -1,0 +1,27 @@
+# ─── Visual Studio ─────────────────────────────────────────────────────────────
+.vs/
+*.user
+*.suo
+*.sdf
+*.VC.db
+*.VC.opendb
+ipch/
+
+# ─── Build outputs ─────────────────────────────────────────────────────────────
+bin/
+obj/
+
+# ─── Installer output ──────────────────────────────────────────────────────────
+dist/
+
+# ─── Compiled resources ────────────────────────────────────────────────────────
+*.res
+
+# ─── OS noise ──────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ─── Local config / secrets ────────────────────────────────────────────────────
+# Never commit IGDB keys or SteamGridDB keys — they live in config.json at runtime.
+# config.json is in %APPDATA%\ArcadeLauncher\, not the repo — nothing to ignore here.

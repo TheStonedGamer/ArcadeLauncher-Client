@@ -1,0 +1,46 @@
+// ArcadeLauncher.rc — Windows resource file
+// Compiled by the MSVC resource compiler (rc.exe).
+// Do NOT include pch.h here; rc.exe is not a C++ compiler.
+
+#include "Version.h"
+#include <winver.h>   // required by rc.exe >= SDK 10.0.26100 for VERSIONINFO constants
+
+// ─── Application icon ────────────────────────────────────────────────────────
+// Resource ID 101 = IDI_APPICON — used by WNDCLASSEXW (hIcon / hIconSm)
+// and shown in the taskbar, alt-tab switcher, and Explorer.
+101 ICON "icon.ico"
+
+// ─── Application manifest ─────────────────────────────────────────────────────
+// Opts into Common Controls v6 (visual styles) and declares DPI awareness.
+1 RT_MANIFEST "ArcadeLauncher.manifest"
+
+// ─── VERSIONINFO ─────────────────────────────────────────────────────────────
+// Shown in Explorer → Properties → Details and read by the WiX installer.
+VS_VERSION_INFO VERSIONINFO
+  FILEVERSION     ARCADE_VERSION_QUAD
+  PRODUCTVERSION  ARCADE_VERSION_QUAD
+  FILEFLAGSMASK   0x3fL
+  FILEFLAGS       0x0L
+  FILEOS          0x00040004L
+  FILETYPE        0x00000001L
+  FILESUBTYPE     0x00000000L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"   // Language: English (US), Code page: Unicode
+    BEGIN
+      VALUE "CompanyName",      "ArcadeLauncher\0"
+      VALUE "FileDescription",  "ArcadeLauncher — game library front-end\0"
+      VALUE "FileVersion",      ARCADE_VERSION_STR "\0"
+      VALUE "InternalName",     "ArcadeLauncher\0"
+      VALUE "LegalCopyright",   "\0"
+      VALUE "OriginalFilename", "ArcadeLauncher.exe\0"
+      VALUE "ProductName",      "ArcadeLauncher\0"
+      VALUE "ProductVersion",   ARCADE_VERSION_STR "\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

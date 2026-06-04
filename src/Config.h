@@ -1,0 +1,104 @@
+#pragma once
+#include "pch.h"
+
+struct CustomLibraryConfig {
+    std::wstring name    = L"Custom Library";
+    std::vector<std::wstring> dirs;
+};
+
+struct LibraryConfig {
+    std::wstring steamPath;                        // Steam install root override; empty = registry
+    std::vector<std::wstring> steamExtraFolders;   // extra steamapps dirs beyond what VDF reports
+    std::vector<std::wstring> epicManifestDirs;    // override list; empty = auto-detect
+
+    std::vector<CustomLibraryConfig> customLibraries;
+};
+
+struct EmulatorConfig {
+    std::wstring dolphinPath;
+    std::wstring ryujinxPath;
+    std::wstring rpcs3Path;
+    std::wstring n64Path;
+    std::wstring nesPath;
+    std::wstring snesPath;
+    std::wstring duckstationPath;
+    std::wstring pcsx2Path;
+    std::wstring xeniaPath;
+    std::wstring xemuPath;
+
+    std::wstring dolphinArgs;
+    std::wstring ryujinxArgs;
+    std::wstring rpcs3Args;
+    std::wstring n64Args;
+    std::wstring nesArgs;
+    std::wstring snesArgs;
+    std::wstring duckstationArgs;
+    std::wstring pcsx2Args;
+    std::wstring xeniaArgs;
+    std::wstring xemuArgs;
+
+    std::vector<std::wstring> dolphinRomDirs;
+    std::vector<std::wstring> ryujinxRomDirs;
+    std::vector<std::wstring> rpcs3RomDirs;
+    std::vector<std::wstring> n64RomDirs;
+    std::vector<std::wstring> nesRomDirs;
+    std::vector<std::wstring> snesRomDirs;
+    std::vector<std::wstring> duckstationRomDirs;
+    std::vector<std::wstring> pcsx2RomDirs;
+    std::vector<std::wstring> xeniaRomDirs;
+    std::vector<std::wstring> xemuRomDirs;
+
+    // Last downloaded release tag (empty = never downloaded via launcher)
+    std::wstring dolphinTag;
+    std::wstring ryujinxTag;
+    std::wstring rpcs3Tag;
+    std::wstring n64Tag;
+    std::wstring nesTag;
+    std::wstring snesTag;
+    std::wstring duckstationTag;
+    std::wstring pcsx2Tag;
+    std::wstring xeniaTag;
+    std::wstring xemuTag;
+};
+
+struct ServerConfig {
+    bool enabled = false;
+    std::wstring baseUrl;
+    std::wstring authToken;
+    std::wstring installRoot;
+};
+
+struct AppConfig {
+    bool        firstLaunchDone  = false;
+    bool        startFullscreen  = false;
+    bool        minimizeOnLaunch = true;
+    int         windowWidth  = 1280;
+    int         windowHeight = 720;
+    std::wstring steamGridDbApiKey;
+
+    // IGDB / Twitch API credentials
+    std::wstring igdbClientId;
+    std::wstring igdbClientSecret;
+
+    // Cached OAuth token
+    std::wstring igdbAccessToken;
+    int64_t      igdbTokenExpiry = 0;
+
+    LibraryConfig  libraries;
+    EmulatorConfig emulators;
+    ServerConfig   server;
+};
+
+class Config {
+public:
+    void Load(const std::wstring& path);
+    void Save(const std::wstring& path) const;
+    AppConfig& Get() { return m_cfg; }
+    const AppConfig& Get() const { return m_cfg; }
+
+private:
+    AppConfig m_cfg;
+
+    static std::string Escape(const std::wstring& s);
+    static std::wstring Unescape(const std::string& s);
+};
