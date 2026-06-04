@@ -104,7 +104,6 @@
     <ClCompile Include="src\Platform\SteamScanner.cpp" />
     <ClCompile Include="src\Platform\EpicScanner.cpp" />
     <ClCompile Include="src\Platform\GogScanner.cpp" />
-    <ClCompile Include="src\Platform\EmulatorScanner.cpp" />
     <ClCompile Include="src\IgdbClient.cpp" />
     <ClCompile Include="src\MetadataManager.cpp" />
     <ClCompile Include="src\PlatformIcons.cpp" />
@@ -149,7 +148,6 @@
     <ClInclude Include="src\Platform\SteamScanner.h" />
     <ClInclude Include="src\Platform\EpicScanner.h" />
     <ClInclude Include="src\Platform\GogScanner.h" />
-    <ClInclude Include="src\Platform\EmulatorScanner.h" />
     <ClInclude Include="src\IgdbPlatforms.h" />
     <ClInclude Include="src\ServerClient.h" />
     <ClInclude Include="src\Version.h" />

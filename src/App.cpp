@@ -3,7 +3,6 @@
 #include "Platform/SteamScanner.h"
 #include "Platform/EpicScanner.h"
 #include "Platform/GogScanner.h"
-#include "Platform/EmulatorScanner.h"
 #include "IgdbSync.h"
 #include <commctrl.h>
 
@@ -1209,28 +1208,6 @@ void App::OnScroll(float delta) {
 
 // ── Core logic ────────────────────────────────────────────────────────────────
 
-// Returns the largest non-installer exe in a directory (top level only).
-static std::wstring FindMainExe(const std::wstring& dir) {
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((dir + L"\\*.exe").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return {};
-    std::wstring best;
-    ULONGLONG bestSize = 0;
-    do {
-        std::wstring lower = fd.cFileName;
-        for (auto& c : lower) c = (wchar_t)towlower(c);
-        if (lower.find(L"unins") != std::wstring::npos) continue;
-        if (lower.find(L"setup") != std::wstring::npos) continue;
-        if (lower.find(L"install") != std::wstring::npos) continue;
-        if (lower.find(L"redist") != std::wstring::npos) continue;
-        if (lower.find(L"vcredist") != std::wstring::npos) continue;
-        ULONGLONG sz = ((ULONGLONG)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-        if (sz > bestSize) { bestSize = sz; best = dir + L"\\" + fd.cFileName; }
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
-    return best;
-}
-
 void App::ShowMenuBar() {
     auto& emu = m_config.Get().emulators;
 
@@ -1297,116 +1274,6 @@ void App::ScanAllPlatforms() {
     scanners.push_back(std::make_unique<EpicScanner>(lib.epicManifestDirs));
     scanners.push_back(std::make_unique<GogScanner>());
 
-    if (!emu.dolphinPath.empty()) {
-        EmulatorRomConfig dc;
-        dc.platform     = Platform::Dolphin;
-        dc.emulatorPath = emu.dolphinPath;
-        dc.emulatorArgs = emu.dolphinArgs.empty() ?
-            L"--batch --exec {rom}" : emu.dolphinArgs;
-        dc.romDirs      = emu.dolphinRomDirs;
-        dc.extensions   = { L"iso", L"gcm", L"rvz", L"gcz", L"wbfs", L"dol", L"elf" };
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(dc)));
-    }
-
-    if (!emu.ryujinxPath.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::Ryujinx;
-        rc.emulatorPath = emu.ryujinxPath;
-        rc.emulatorArgs = emu.ryujinxArgs.empty() ? L"{rom}" : emu.ryujinxArgs;
-        rc.romDirs      = emu.ryujinxRomDirs;
-        rc.extensions   = { L"nsp", L"xci", L"nca", L"nro" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.rpcs3Path.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::RPCS3;
-        rc.emulatorPath = emu.rpcs3Path;
-        rc.emulatorArgs = emu.rpcs3Args.empty() ? L"--no-gui {rom}" : emu.rpcs3Args;
-        rc.romDirs      = emu.rpcs3RomDirs;
-        rc.extensions   = { L"iso", L"pkg", L"bin", L"ps3" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.n64Path.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::N64;
-        rc.emulatorPath = emu.n64Path;
-        rc.emulatorArgs = emu.n64Args.empty() ? L"{rom}" : emu.n64Args;
-        rc.romDirs      = emu.n64RomDirs;
-        rc.extensions   = { L"z64", L"n64", L"v64", L"rom" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.nesPath.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::NES;
-        rc.emulatorPath = emu.nesPath;
-        rc.emulatorArgs = emu.nesArgs.empty() ? L"{rom}" : emu.nesArgs;
-        rc.romDirs      = emu.nesRomDirs;
-        rc.extensions   = { L"nes", L"fds", L"unf", L"unif" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.snesPath.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::SNES;
-        rc.emulatorPath = emu.snesPath;
-        rc.emulatorArgs = emu.snesArgs.empty() ? L"{rom}" : emu.snesArgs;
-        rc.romDirs      = emu.snesRomDirs;
-        rc.extensions   = { L"sfc", L"smc", L"fig", L"bs", L"st", L"zip" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.duckstationPath.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::PS1;
-        rc.emulatorPath = emu.duckstationPath;
-        rc.emulatorArgs = emu.duckstationArgs.empty() ? L"-batch {rom}" : emu.duckstationArgs;
-        rc.romDirs      = emu.duckstationRomDirs;
-        rc.extensions   = { L"bin", L"cue", L"iso", L"img", L"chd", L"pbp", L"mdf", L"m3u" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.pcsx2Path.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::PS2;
-        rc.emulatorPath = emu.pcsx2Path;
-        rc.emulatorArgs = emu.pcsx2Args.empty() ? L"--no-gui {rom}" : emu.pcsx2Args;
-        rc.romDirs      = emu.pcsx2RomDirs;
-        rc.extensions   = { L"iso", L"bin", L"img", L"mdf", L"nrg", L"chd", L"cso", L"cue" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.xeniaPath.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::Xbox360;
-        rc.emulatorPath = emu.xeniaPath;
-        rc.emulatorArgs = emu.xeniaArgs.empty() ? L"{rom}" : emu.xeniaArgs;
-        rc.romDirs      = emu.xeniaRomDirs;
-        rc.extensions   = { L"xex", L"iso" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
-    if (!emu.xemuPath.empty()) {
-        EmulatorRomConfig rc;
-        rc.platform     = Platform::Xbox;
-        rc.emulatorPath = emu.xemuPath;
-        rc.emulatorArgs = emu.xemuArgs.empty() ? L"{rom}" : emu.xemuArgs;
-        rc.romDirs      = emu.xemuRomDirs;
-        rc.extensions   = { L"iso", L"xbe" };
-        rc.romDb = m_romDb.IsLoaded() ? &m_romDb : nullptr;
-        scanners.push_back(std::make_unique<EmulatorScanner>(std::move(rc)));
-    }
-
     std::vector<Game> all;
     for (auto& s : scanners) {
         auto games = s->Scan();
@@ -1435,29 +1302,6 @@ void App::ScanAllPlatforms() {
                 }
                 all.push_back(std::move(g));
             }
-        }
-    }
-
-    // Custom libraries: one level deep, each subdir is one game
-    for (auto& cl : lib.customLibraries) {
-        for (auto& rootDir : cl.dirs) {
-            WIN32_FIND_DATAW fd;
-            HANDLE h = FindFirstFileW((rootDir + L"\\*").c_str(), &fd);
-            if (h == INVALID_HANDLE_VALUE) continue;
-            do {
-                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-                if (fd.cFileName[0] == L'.') continue;
-                std::wstring gameDir = rootDir + L"\\" + fd.cFileName;
-                std::wstring exe = FindMainExe(gameDir);
-                if (exe.empty()) continue;
-                Game g;
-                g.id       = L"custom_" + std::wstring(fd.cFileName);
-                g.title    = fd.cFileName;
-                g.platform = Platform::Repacks;
-                g.exePath  = exe;
-                all.push_back(std::move(g));
-            } while (FindNextFileW(h, &fd));
-            FindClose(h);
         }
     }
 
@@ -1657,7 +1501,7 @@ void App::UpdateSidebarFlags() {
     m_renderState.showPS2     = true;
     m_renderState.showXbox360 = true;
     m_renderState.showXbox    = true;
-    m_renderState.showRepacks = !lib.customLibraries.empty();
+    m_renderState.showRepacks = true;
     int count = Renderer::GetSidebarEntryCount(m_renderState);
     if (m_renderState.sidebarFocusIdx >= count)
         m_renderState.sidebarFocusIdx = count - 1;
