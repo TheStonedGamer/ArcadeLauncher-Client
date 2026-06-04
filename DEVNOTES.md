@@ -58,8 +58,8 @@ GameLauncher/
 │   ├── Version.h            # Single source of truth for app version
 │   ├── pch.h / pch.cpp      # Precompiled header + shared helpers
 │   └── main.cpp
-├── GameLauncher.sln
-├── GameLauncher.vcxproj
+├── ArcadeLauncher-Client.sln
+├── ArcadeLauncher-Client.vcxproj
 └── DEVNOTES.md              # You are here
 ```
 
@@ -314,7 +314,7 @@ All interaction uses `Renderer::HitTestGrid`, `HitTestSidebar`, `HitTestSearch`,
 
 ### Building in Visual Studio
 
-Open `GameLauncher.sln` → set configuration to **Release \| x64** → Build.
+Open `ArcadeLauncher-Client.sln` → set configuration to **Release \| x64** → Build.
 
 Output: `bin\Release\ArcadeLauncher.exe`
 
@@ -377,7 +377,7 @@ wix build installer\ArcadeLauncher.wxs `
 Triggers on `v*.*.*` tag pushes. Steps:
 1. Checkout
 2. Set up MSBuild + .NET + WiX v4
-3. `msbuild GameLauncher.sln /p:Configuration=Release /p:Platform=x64`
+3. `msbuild ArcadeLauncher-Client.sln /p:Configuration=Release /p:Platform=x64`
 4. `wix build ...` → `dist\ArcadeLauncher-x64.msi`
 5. Create GitHub Release with MSI + bare exe as assets
 

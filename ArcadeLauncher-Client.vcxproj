@@ -13,7 +13,7 @@
 
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A4B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
-    <RootNamespace>GameLauncher</RootNamespace>
+    <RootNamespace>ArcadeLauncherClient</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <Keyword>Win32Proj</Keyword>
     <CharacterSet>Unicode</CharacterSet>
