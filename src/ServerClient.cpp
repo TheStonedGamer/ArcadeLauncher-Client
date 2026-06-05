@@ -373,6 +373,8 @@ bool ServerClient::EnsureAuthenticated(std::wstring& error) {
 
     std::wstring form = L"username=" + PercentEncode(m_cfg.username) +
         L"&password=" + PercentEncode(m_cfg.password);
+    if (!m_cfg.totpCode.empty())
+        form += L"&totpCode=" + PercentEncode(m_cfg.totpCode);
     std::string body;
     if (!HttpPostForm(Url(L"/api/login"), form, body, error))
         return false;
@@ -730,6 +732,25 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
         result.arguments += L" \"" + result.launchPath + L"\"";
     result.version = manifest.version;
     return result;
+}
+
+bool ServerClient::UninstallGame(const Game& game, std::wstring& error) {
+    if (!game.serverBacked) {
+        error = L"Game is not server-backed";
+        return false;
+    }
+    std::wstring root = game.installRoot.empty()
+        ? m_cfg.installRoot + L"\\" + SafeFilePart(game.serverGameId)
+        : game.installRoot;
+    if (root.empty() || !fs::exists(root))
+        return true;
+    try {
+        fs::remove_all(root);
+        return true;
+    } catch (...) {
+        error = L"Could not remove installed game files: " + root;
+        return false;
+    }
 }
 
 ServerValidateResult ServerClient::ValidateGame(const Game& game,

@@ -138,6 +138,7 @@ class GameLibrary {
 public:
     void AddGame(Game game);
     void RemoveGame(const std::wstring& id);
+    void RemoveServerClientLocalEntries();
     void UpdateGame(const Game& game);
     void MergeGames(std::vector<Game> scanned);
 

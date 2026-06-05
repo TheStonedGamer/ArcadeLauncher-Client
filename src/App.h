@@ -45,6 +45,7 @@ private:
     void ScanAllPlatforms();
     void LaunchGame(const Game& game);
     void ValidateGame(int visibleIdx);
+    void UninstallGame(int visibleIdx);
     void RefreshArt(const Game& game);
     void ApplyFilter();
     void ApplySidebarFilter(int idx);
@@ -114,6 +115,7 @@ private:
     static constexpr UINT IDM_EDIT_TITLE  = 5003;
     static constexpr UINT IDM_DELETE_ROM  = 5004;
     static constexpr UINT IDM_VALIDATE_GAME = 5005;
+    static constexpr UINT IDM_UNINSTALL_GAME = 5006;
 
     // Tools menu command IDs
     static constexpr UINT IDM_TOOL_DOLPHIN = 6001;

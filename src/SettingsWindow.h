@@ -58,7 +58,7 @@ private:
     static constexpr int CX    = 186;   // content left  (SB_W + 14)
     static constexpr int CW    = 590;   // content width
     static constexpr int WIN_W = 810;   // CX + CW + 34
-    static constexpr int WIN_H = 570;
+    static constexpr int WIN_H = 640;
     static constexpr int BOT_Y = WIN_H - 50;  // bottom bar top
 
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);

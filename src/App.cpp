@@ -117,6 +117,7 @@ struct ServerLoginState {
     HWND url = nullptr;
     HWND username = nullptr;
     HWND password = nullptr;
+    HWND totpCode = nullptr;
     HWND installRoot = nullptr;
     bool done = false;
     bool saved = false;
@@ -150,21 +151,23 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)st);
         st->hwnd = hwnd;
 
-        LoginLabel(hwnd, L"Server URL", 22, 22, 110);
+        LoginLabel(hwnd, L"Backend URL", 22, 22, 110);
         st->url = LoginEdit(hwnd, 101, st->cfg->baseUrl.empty() ? L"http://10.0.0.210:8721" : st->cfg->baseUrl, 130, 20, 300);
-        LoginLabel(hwnd, L"Username", 22, 58, 110);
+        LoginLabel(hwnd, L"Username/email", 22, 58, 110);
         st->username = LoginEdit(hwnd, 102, st->cfg->username, 130, 56, 300);
         LoginLabel(hwnd, L"Password", 22, 94, 110);
         st->password = LoginEdit(hwnd, 103, st->cfg->password, 130, 92, 300, ES_PASSWORD);
-        LoginLabel(hwnd, L"Install Root", 22, 130, 110);
+        LoginLabel(hwnd, L"2FA code", 22, 130, 110);
+        st->totpCode = LoginEdit(hwnd, 105, L"", 130, 128, 120);
+        LoginLabel(hwnd, L"Install Root", 22, 166, 110);
         st->installRoot = LoginEdit(hwnd, 104,
             st->cfg->installRoot.empty() ? GetAppDataPath() + L"\\ServerLibrary" : st->cfg->installRoot,
-            130, 128, 300);
+            130, 164, 300);
 
         CreateWindowExW(0, WC_BUTTONW, L"Sign In", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            250, 174, 84, 28, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
+            250, 210, 84, 28, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
         CreateWindowExW(0, WC_BUTTONW, L"Offline", WS_CHILD | WS_VISIBLE,
-            346, 174, 84, 28, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
+            346, 210, 84, 28, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
@@ -176,6 +179,7 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
             st->cfg->baseUrl = TextOf(st->url);
             st->cfg->username = TextOf(st->username);
             st->cfg->password = TextOf(st->password);
+            st->cfg->totpCode = TextOf(st->totpCode);
             st->cfg->installRoot = TextOf(st->installRoot);
             st->cfg->authToken.clear();
             st->saved = true;
@@ -212,7 +216,7 @@ static bool ShowServerLoginDialog(HWND owner, ServerConfig& cfg) {
 
     RECT rc{};
     GetWindowRect(owner, &rc);
-    int w = 470, h = 250;
+    int w = 470, h = 286;
     ServerLoginState st{ &cfg, owner };
     EnableWindow(owner, FALSE);
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, SERVER_LOGIN_WNDCLASS,
@@ -567,10 +571,9 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
         UpdateWindow(m_hwnd);
     }
 
-    if (m_config.Get().server.enabled &&
-        (m_config.Get().server.baseUrl.empty() ||
-         m_config.Get().server.username.empty() ||
-         m_config.Get().server.password.empty())) {
+    if (m_config.Get().server.baseUrl.empty() ||
+        m_config.Get().server.username.empty() ||
+        m_config.Get().server.password.empty()) {
         if (ShowServerLoginDialog(m_hwnd, m_config.Get().server))
             SaveAll();
     }
@@ -1682,11 +1685,14 @@ void App::OnRButtonDown(float x, float y) {
     bool canValidate = hoveredGame->serverBacked &&
         hoveredGame->installState == InstallState::Installed &&
         !hoveredGame->installRoot.empty();
+    bool canUninstall = canValidate;
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, IDM_LAUNCH, L"Launch");
     if (canValidate)
         AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate Installed Files");
+    if (canUninstall)
+        AppendMenuW(menu, MF_STRING, IDM_UNINSTALL_GAME, L"Uninstall Local Files");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EDIT_TITLE, L"Edit Title…");
     UINT matchFlags = MF_STRING | (m_metaManager ? 0 : MF_GRAYED);
@@ -1710,6 +1716,8 @@ void App::OnRButtonDown(float x, float y) {
             LaunchGame(*m_visibleGames[idx]);
     } else if (cmd == IDM_VALIDATE_GAME) {
         ValidateGame(idx);
+    } else if (cmd == IDM_UNINSTALL_GAME) {
+        UninstallGame(idx);
     } else if (cmd == IDM_EDIT_TITLE) {
         OpenEditTitle(idx);
     } else if (cmd == IDM_MATCH_META) {
@@ -1718,6 +1726,36 @@ void App::OnRButtonDown(float x, float y) {
     } else if (cmd == IDM_DELETE_ROM) {
         DeleteRom(idx);
     }
+}
+
+void App::UninstallGame(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const Game game = *m_visibleGames[visibleIdx];
+    if (!game.serverBacked || game.installState != InstallState::Installed) return;
+
+    std::wstring prompt = L"Remove the locally installed files for " + game.title + L"?\n\n"
+        L"The game will stay in your server library and can be downloaded again.";
+    if (MessageBoxW(m_hwnd, prompt.c_str(), L"Uninstall Game",
+        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) {
+        return;
+    }
+
+    std::wstring error;
+    ServerClient client(m_config.Get().server);
+    if (!client.UninstallGame(game, error)) {
+        MessageBoxW(m_hwnd, error.c_str(), L"Uninstall Failed", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    if (auto* stored = m_library.FindById(game.id)) {
+        stored->installState = InstallState::Missing;
+        stored->installRoot.clear();
+        stored->romPath.clear();
+        stored->exePath.clear();
+    }
+    SaveAll();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void App::ValidateGame(int visibleIdx) {
@@ -1942,6 +1980,7 @@ void App::LoadAll() {
     CreateDirectoryW(appData.c_str(), nullptr);
     m_config.Load(appData + L"\\config.json");
     m_library.Load(appData + L"\\library.json");
+    m_library.RemoveServerClientLocalEntries();
 }
 
 // ── Tray icon implementation ───────────────────────────────────────────────────

@@ -16,6 +16,17 @@ void GameLibrary::RemoveGame(const std::wstring& id) {
         [&](const Game& g){ return g.id == id; }), m_games.end());
 }
 
+void GameLibrary::RemoveServerClientLocalEntries() {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    m_games.erase(std::remove_if(m_games.begin(), m_games.end(),
+        [](const Game& g) {
+            if (g.serverBacked) return false;
+            return g.platform != Platform::Steam &&
+                   g.platform != Platform::Epic &&
+                   g.platform != Platform::GOG;
+        }), m_games.end());
+}
+
 void GameLibrary::UpdateGame(const Game& game) {
     std::lock_guard<std::mutex> lk(m_mutex);
     for (auto& g : m_games)

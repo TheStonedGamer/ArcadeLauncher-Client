@@ -239,13 +239,21 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         int  id   = LOWORD(wp);
         int  note = HIWORD(wp);
 
-        if (id == ID_SAVE || id == ID_CANCEL) {
-            // Both Save and Close commit settings — there is no silent-discard path.
-            // Save triggers a full rescan; Close saves quietly without one.
+        if (id == ID_SAVE) {
             SaveCurrentPage();
             *m_cfg = m_work;
             Close();
             if (m_onSave) m_onSave();
+            return 0;
+        }
+        if (id == ID_APPLY) {
+            SaveCurrentPage();
+            *m_cfg = m_work;
+            if (m_onSave) m_onSave();
+            return 0;
+        }
+        if (id == ID_CANCEL) {
+            Close();
             return 0;
         }
         if (id == ID_SIDEBAR && note == LBN_SELCHANGE) {
@@ -414,8 +422,9 @@ void SettingsWindow::CreateChrome(HWND hwnd) {
     ApplyFont(m_sidebar);
 
     // Bottom bar buttons
-    Btn(hwnd, L"Save",          ID_SAVE,    WIN_W - 170, BOT_Y + 12, 80,  26);
-    Btn(hwnd, L"Close",         ID_CANCEL,  WIN_W - 82,  BOT_Y + 12, 72,  26);
+    Btn(hwnd, L"OK",     ID_SAVE,   WIN_W - 258, BOT_Y + 12, 72, 26);
+    Btn(hwnd, L"Cancel", ID_CANCEL, WIN_W - 178, BOT_Y + 12, 78, 26);
+    Btn(hwnd, L"Apply",  ID_APPLY,  WIN_W - 92,  BOT_Y + 12, 78, 26);
 
     RebuildSidebarItems();
 }
@@ -567,6 +576,12 @@ void SettingsWindow::BuildGeneralPage() {
     AddPC(Edit(m_hwnd, ID_P_EDIT6, K_CX + 106, y + 130, K_CW - 118));
     AddPC(SmallLabel(m_hwnd, L"Bearer tokens are issued automatically after username/password sign-in.",
                      K_CX + 12, y + 160, K_CW - 24));
+    y += 184;
+
+    AddPC(Group(m_hwnd, L" Local ROM Libraries ", K_CX, y, K_CW, 68));
+    AddPC(Btn(m_hwnd, L"Clear Local ROM Libraries", ID_P_BTN3, K_CX + 12, y + 24, 176, 26));
+    AddPC(SmallLabel(m_hwnd, L"Removes local ROM scan paths. Steam, Epic, and GOG stay enabled.",
+                     K_CX + 200, y + 26, K_CW - 212));
 }
 
 void SettingsWindow::BuildSteamPage() {
@@ -1027,6 +1042,24 @@ void SettingsWindow::SaveCustomPage(int idx) {
 void SettingsWindow::HandlePageCommand(int id) {
     // General page: metadata action buttons
     if (m_currentPage == PAGE_GENERAL) {
+        if (id == ID_P_BTN3) {
+            auto& e = m_work.emulators;
+            e.dolphinRomDirs.clear();
+            e.ryujinxRomDirs.clear();
+            e.rpcs3RomDirs.clear();
+            e.n64RomDirs.clear();
+            e.nesRomDirs.clear();
+            e.snesRomDirs.clear();
+            e.duckstationRomDirs.clear();
+            e.pcsx2RomDirs.clear();
+            e.xeniaRomDirs.clear();
+            e.xemuRomDirs.clear();
+            m_work.libraries.customLibraries.clear();
+            MessageBoxW(m_hwnd,
+                L"Local ROM library paths were cleared. Click Apply or OK to save and rescan.",
+                L"Local Libraries Cleared", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
         if (id == ID_P_BTN4 && m_onRefreshMeta)   { m_onRefreshMeta();   return; }
         if (id == ID_P_BTN5 && m_onReacquireMeta) { m_onReacquireMeta(); return; }
         if (id == ID_P_BTN6) {

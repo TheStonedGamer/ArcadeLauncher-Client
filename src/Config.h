@@ -66,6 +66,7 @@ struct ServerConfig {
     std::wstring baseUrl;
     std::wstring username;
     std::wstring password;
+    std::wstring totpCode;
     std::wstring authToken;
     std::wstring installRoot;
 };

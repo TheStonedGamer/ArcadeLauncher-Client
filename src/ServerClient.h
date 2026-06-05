@@ -58,6 +58,7 @@ public:
                                     std::function<void(uint64_t, uint64_t)> onProgress = {});
     ServerValidateResult ValidateGame(const Game& game,
                                       std::function<void(uint64_t, uint64_t)> onProgress = {});
+    bool UninstallGame(const Game& game, std::wstring& error);
 
 private:
     ServerConfig m_cfg;
