@@ -5,9 +5,9 @@
 // The build script and WiX installer read the VERSIONINFO stamped into the exe,
 // so this is the single source of truth for the version number.
 
-#define ARCADE_VERSION_MAJOR  2
+#define ARCADE_VERSION_MAJOR  1
 #define ARCADE_VERSION_MINOR  0
-#define ARCADE_VERSION_PATCH  13
+#define ARCADE_VERSION_PATCH  0
 #define ARCADE_VERSION_BUILD  0
 
 // Helpers — derived, do not edit.
