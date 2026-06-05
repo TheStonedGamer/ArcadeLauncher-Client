@@ -151,23 +151,30 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)st);
         st->hwnd = hwnd;
 
-        LoginLabel(hwnd, L"Backend URL", 22, 22, 110);
-        st->url = LoginEdit(hwnd, 101, st->cfg->baseUrl.empty() ? L"http://10.0.0.210:8721" : st->cfg->baseUrl, 130, 20, 300);
-        LoginLabel(hwnd, L"Username/email", 22, 58, 110);
-        st->username = LoginEdit(hwnd, 102, st->cfg->username, 130, 56, 300);
-        LoginLabel(hwnd, L"Password", 22, 94, 110);
-        st->password = LoginEdit(hwnd, 103, st->cfg->password, 130, 92, 300, ES_PASSWORD);
-        LoginLabel(hwnd, L"2FA code", 22, 130, 110);
-        st->totpCode = LoginEdit(hwnd, 105, L"", 130, 128, 120);
-        LoginLabel(hwnd, L"Install Root", 22, 166, 110);
+        CreateWindowExW(0, WC_STATICW, L"ArcadeLauncher Server",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            26, 22, 390, 24, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        CreateWindowExW(0, WC_STATICW, L"Sign in to your private library before the launcher opens.",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            26, 50, 430, 18, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+
+        LoginLabel(hwnd, L"Backend URL", 26, 86, 110);
+        st->url = LoginEdit(hwnd, 101, st->cfg->baseUrl.empty() ? L"http://10.0.0.210:8721" : st->cfg->baseUrl, 150, 84, 330);
+        LoginLabel(hwnd, L"Username/email", 26, 122, 110);
+        st->username = LoginEdit(hwnd, 102, st->cfg->username, 150, 120, 330);
+        LoginLabel(hwnd, L"Password", 26, 158, 110);
+        st->password = LoginEdit(hwnd, 103, st->cfg->password, 150, 156, 330, ES_PASSWORD);
+        LoginLabel(hwnd, L"2FA code", 26, 194, 110);
+        st->totpCode = LoginEdit(hwnd, 105, L"", 150, 192, 120);
+        LoginLabel(hwnd, L"Install Root", 26, 230, 110);
         st->installRoot = LoginEdit(hwnd, 104,
             st->cfg->installRoot.empty() ? GetAppDataPath() + L"\\ServerLibrary" : st->cfg->installRoot,
-            130, 164, 300);
+            150, 228, 330);
 
         CreateWindowExW(0, WC_BUTTONW, L"Sign In", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            250, 210, 84, 28, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
+            286, 276, 92, 30, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
         CreateWindowExW(0, WC_BUTTONW, L"Offline", WS_CHILD | WS_VISIBLE,
-            346, 210, 84, 28, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
+            388, 276, 92, 30, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
@@ -215,17 +222,20 @@ static bool ShowServerLoginDialog(HWND owner, ServerConfig& cfg) {
     }
 
     RECT rc{};
-    GetWindowRect(owner, &rc);
-    int w = 470, h = 286;
+    if (owner)
+        GetWindowRect(owner, &rc);
+    else
+        rc = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+    int w = 520, h = 350;
     ServerLoginState st{ &cfg, owner };
-    EnableWindow(owner, FALSE);
+    if (owner) EnableWindow(owner, FALSE);
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, SERVER_LOGIN_WNDCLASS,
         L"ArcadeLauncher Server Sign In", WS_CAPTION | WS_POPUP | WS_SYSMENU,
         rc.left + ((rc.right - rc.left) - w) / 2,
         rc.top + ((rc.bottom - rc.top) - h) / 2,
         w, h, owner, nullptr, GetModuleHandleW(nullptr), &st);
     if (!hwnd) {
-        EnableWindow(owner, TRUE);
+        if (owner) EnableWindow(owner, TRUE);
         return false;
     }
     ShowWindow(hwnd, SW_SHOW);
@@ -238,8 +248,10 @@ static bool ShowServerLoginDialog(HWND owner, ServerConfig& cfg) {
             DispatchMessageW(&msg);
         }
     }
-    EnableWindow(owner, TRUE);
-    SetForegroundWindow(owner);
+    if (owner) {
+        EnableWindow(owner, TRUE);
+        SetForegroundWindow(owner);
+    }
     return st.saved;
 }
 
@@ -509,15 +521,20 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     wc.hIconSm       = LoadIcon(hInstance, MAKEINTRESOURCE(101)); // IDI_APPICON (small)
     RegisterClassExW(&wc);
 
+    LoadAll();
+
     auto& cfg = m_config.Get();
+    if (cfg.server.baseUrl.empty() || cfg.server.username.empty() || cfg.server.password.empty()) {
+        if (ShowServerLoginDialog(nullptr, cfg.server))
+            SaveAll();
+    }
+
     m_hwnd = CreateWindowExW(0, WNDCLASS_NAME, L"ArcadeLauncher",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT,
         cfg.windowWidth, cfg.windowHeight,
         nullptr, nullptr, hInstance, this);
     if (!m_hwnd) return false;
-
-    LoadAll();
 
     // Auto-detect emulator paths on first launch (persist so they survive restarts)
     {
@@ -569,13 +586,6 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     } else {
         ShowWindow(m_hwnd, SW_SHOW);
         UpdateWindow(m_hwnd);
-    }
-
-    if (m_config.Get().server.baseUrl.empty() ||
-        m_config.Get().server.username.empty() ||
-        m_config.Get().server.password.empty()) {
-        if (ShowServerLoginDialog(m_hwnd, m_config.Get().server))
-            SaveAll();
     }
 
     // On first launch, offer to download missing emulators.

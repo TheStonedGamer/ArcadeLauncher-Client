@@ -57,6 +57,15 @@ static uint64_t JsonNumber(const std::string& json, const std::string& key) {
     return v;
 }
 
+static double JsonFloat(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    size_t p = json.find(search);
+    if (p == std::string::npos) return 0.0;
+    p += search.size();
+    while (p < json.size() && json[p] == ' ') ++p;
+    return strtod(json.c_str() + p, nullptr);
+}
+
 static size_t FindObjectEnd(const std::string& raw, size_t start) {
     int depth = 0;
     bool inStr = false;
@@ -405,6 +414,10 @@ bool ServerClient::FetchCatalog(std::vector<Game>& games, std::wstring& error) {
         g.coverArtUrl = ToWide(JsonString(obj, "coverArtUrl"));
         g.igdbId = (int64_t)JsonNumber(obj, "igdbId");
         g.igdbMatched = g.igdbId > 0;
+        g.summary = ToWide(JsonString(obj, "summary"));
+        g.genres = ToWide(JsonString(obj, "genres"));
+        g.igdbRating = (float)JsonFloat(obj, "igdbRating");
+        g.releaseDate = (int64_t)JsonNumber(obj, "releaseDate");
         g.serverVersion = ToWide(JsonString(obj, "version"));
         g.installRoot = m_cfg.installRoot + L"\\" + SafeFilePart(id);
         g.installState = fs::exists(g.installRoot) ? InstallState::Installed : InstallState::Missing;
