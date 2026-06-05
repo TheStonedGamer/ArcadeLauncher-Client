@@ -14,7 +14,7 @@ static const wchar_t* SERVER_LOGIN_WNDCLASS = L"ArcadeLauncherServerLoginWnd";
 
 class CopyProgressDialog {
 public:
-    bool Create(HWND owner, const std::wstring& title) {
+    bool Create(HWND owner, const std::wstring& title, const std::wstring& verb = L"Copying to local temp cache") {
         INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_PROGRESS_CLASS };
         InitCommonControlsEx(&icc);
 
@@ -47,7 +47,8 @@ public:
         m_title = CreateWindowExW(0, WC_STATICW, title.c_str(),
             WS_CHILD | WS_VISIBLE | SS_LEFT,
             18, 18, w - 36, 22, m_hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
-        m_status = CreateWindowExW(0, WC_STATICW, L"Copying to local temp cache...",
+        m_verb = verb;
+        m_status = CreateWindowExW(0, WC_STATICW, (m_verb + L"...").c_str(),
             WS_CHILD | WS_VISIBLE | SS_LEFT,
             18, 45, w - 36, 20, m_hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         m_progress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
@@ -71,7 +72,7 @@ public:
         if (pos > 1000) pos = 1000;
         SendMessageW(m_progress, PBM_SETPOS, pos, 0);
 
-        std::wstring text = L"Copying to local temp cache... "
+        std::wstring text = m_verb + L"... "
             + std::to_wstring((pos + 5) / 10) + L"%";
         if (mbps > 0.0) {
             wchar_t speed[64]{};
@@ -106,6 +107,7 @@ private:
     HWND m_title = nullptr;
     HWND m_status = nullptr;
     HWND m_progress = nullptr;
+    std::wstring m_verb;
 };
 
 struct ServerLoginState {
@@ -1677,9 +1679,14 @@ void App::OnRButtonDown(float x, float y) {
 
     const Game* hoveredGame = m_visibleGames[idx];
     bool hasRomFile = !hoveredGame->romPath.empty();
+    bool canValidate = hoveredGame->serverBacked &&
+        hoveredGame->installState == InstallState::Installed &&
+        !hoveredGame->installRoot.empty();
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, IDM_LAUNCH, L"Launch");
+    if (canValidate)
+        AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate Installed Files");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EDIT_TITLE, L"Edit Title…");
     UINT matchFlags = MF_STRING | (m_metaManager ? 0 : MF_GRAYED);
@@ -1701,6 +1708,8 @@ void App::OnRButtonDown(float x, float y) {
     if (cmd == IDM_LAUNCH) {
         if (idx < (int)m_visibleGames.size())
             LaunchGame(*m_visibleGames[idx]);
+    } else if (cmd == IDM_VALIDATE_GAME) {
+        ValidateGame(idx);
     } else if (cmd == IDM_EDIT_TITLE) {
         OpenEditTitle(idx);
     } else if (cmd == IDM_MATCH_META) {
@@ -1709,6 +1718,52 @@ void App::OnRButtonDown(float x, float y) {
     } else if (cmd == IDM_DELETE_ROM) {
         DeleteRom(idx);
     }
+}
+
+void App::ValidateGame(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const Game game = *m_visibleGames[visibleIdx];
+    if (!game.serverBacked || game.installState != InstallState::Installed) return;
+
+    CopyProgressDialog dialog;
+    dialog.Create(m_hwnd, L"Validating " + game.title, L"Validating installed files");
+    auto startedAt = std::chrono::steady_clock::now();
+
+    ServerClient client(m_config.Get().server);
+    auto result = client.ValidateGame(game, [&](uint64_t checked, uint64_t total) {
+        double seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - startedAt).count();
+        double mbps = seconds > 0.0
+            ? ((double)checked / (1024.0 * 1024.0)) / seconds
+            : 0.0;
+        dialog.SetProgress(checked, total, mbps);
+    });
+    dialog.Close();
+
+    if (result.ok) {
+        MessageBoxW(m_hwnd,
+            (L"All installed files validated successfully.\n\nFiles checked: " +
+             std::to_wstring(result.checkedFiles)).c_str(),
+            L"Validation Complete", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    std::wstring details = result.error.empty() ? L"Validation failed." : result.error;
+    auto appendList = [&](const wchar_t* title, const std::vector<std::wstring>& files) {
+        if (files.empty()) return;
+        details += L"\n\n";
+        details += title;
+        details += L":";
+        size_t limit = std::min<size_t>(files.size(), 8);
+        for (size_t i = 0; i < limit; ++i)
+            details += L"\n- " + files[i];
+        if (files.size() > limit)
+            details += L"\n- ... " + std::to_wstring(files.size() - limit) + L" more";
+    };
+    appendList(L"Missing", result.missingFiles);
+    appendList(L"Corrupt or changed", result.badFiles);
+
+    MessageBoxW(m_hwnd, details.c_str(), L"Validation Failed", MB_OK | MB_ICONWARNING);
 }
 
 void App::OpenEditTitle(int visibleIdx) {

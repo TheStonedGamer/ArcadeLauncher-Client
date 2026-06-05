@@ -39,6 +39,15 @@ struct ServerInstallResult {
     std::wstring version;
 };
 
+struct ServerValidateResult {
+    bool ok = false;
+    std::wstring error;
+    uint64_t checkedBytes = 0;
+    int checkedFiles = 0;
+    std::vector<std::wstring> missingFiles;
+    std::vector<std::wstring> badFiles;
+};
+
 class ServerClient {
 public:
     explicit ServerClient(ServerConfig cfg);
@@ -47,6 +56,8 @@ public:
     bool FetchManifest(const std::wstring& gameId, ServerGameManifest& manifest, std::wstring& error);
     ServerInstallResult InstallGame(const Game& game,
                                     std::function<void(uint64_t, uint64_t)> onProgress = {});
+    ServerValidateResult ValidateGame(const Game& game,
+                                      std::function<void(uint64_t, uint64_t)> onProgress = {});
 
 private:
     ServerConfig m_cfg;

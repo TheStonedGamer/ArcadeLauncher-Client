@@ -731,3 +731,54 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
     result.version = manifest.version;
     return result;
 }
+
+ServerValidateResult ServerClient::ValidateGame(const Game& game,
+    std::function<void(uint64_t, uint64_t)> onProgress) {
+    ServerValidateResult result;
+    if (!game.serverBacked) {
+        result.error = L"Game is not server-backed";
+        return result;
+    }
+
+    std::wstring error;
+    ServerGameManifest manifest;
+    if (!FetchManifest(game.serverGameId, manifest, error)) {
+        result.error = error.empty() ? L"Manifest fetch failed" : error;
+        return result;
+    }
+
+    std::wstring installRoot = m_cfg.installRoot + L"\\" + SafeFilePart(game.serverGameId);
+    uint64_t total = 0, done = 0;
+    for (const auto& f : manifest.files) total += f.size;
+
+    for (const auto& f : manifest.files) {
+        std::wstring dest = installRoot + L"\\" + f.path;
+        std::replace(dest.begin(), dest.end(), L'/', L'\\');
+
+        bool bad = false;
+        if (!fs::exists(dest)) {
+            result.missingFiles.push_back(f.path);
+        } else if ((uint64_t)fs::file_size(dest) != f.size) {
+            bad = true;
+        } else {
+            std::wstring hash;
+            if (!Sha256File(dest, hash) || _wcsicmp(hash.c_str(), f.sha256.c_str()) != 0)
+                bad = true;
+        }
+
+        if (bad)
+            result.badFiles.push_back(f.path);
+
+        result.checkedFiles++;
+        result.checkedBytes += f.size;
+        done += f.size;
+        if (onProgress) onProgress(done, total);
+    }
+
+    result.ok = result.missingFiles.empty() && result.badFiles.empty();
+    if (!result.ok) {
+        result.error = std::to_wstring(result.missingFiles.size()) + L" missing, " +
+            std::to_wstring(result.badFiles.size()) + L" failed validation";
+    }
+    return result;
+}
