@@ -253,15 +253,6 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (sel != LB_ERR) SwitchPage(sel);
             return 0;
         }
-        if (id == ID_ADD_LIB) {
-            SaveCurrentPage();
-            m_work.libraries.customLibraries.push_back({ L"New Library", {} });
-            RebuildSidebarItems();
-            int np = PAGE_CUSTOM0 + (int)m_work.libraries.customLibraries.size() - 1;
-            SendMessageW(m_sidebar, LB_SETCURSEL, np, 0);
-            SwitchPage(np);
-            return 0;
-        }
         HandlePageCommand(id);
         return 0;
     }
@@ -422,8 +413,7 @@ void SettingsWindow::CreateChrome(HWND hwnd) {
         (HMENU)(intptr_t)ID_SIDEBAR, GetModuleHandleW(nullptr), nullptr);
     ApplyFont(m_sidebar);
 
-    // Bottom bar buttons  (left: library; right: Save | Close)
-    Btn(hwnd, L"+ Add Library", ID_ADD_LIB, 8,           BOT_Y + 12, 110, 26);
+    // Bottom bar buttons
     Btn(hwnd, L"Save",          ID_SAVE,    WIN_W - 170, BOT_Y + 12, 80,  26);
     Btn(hwnd, L"Close",         ID_CANCEL,  WIN_W - 82,  BOT_Y + 12, 72,  26);
 
@@ -439,8 +429,6 @@ void SettingsWindow::RebuildSidebarItems() {
     };
     for (auto* s : fixed)
         SendMessageW(m_sidebar, LB_ADDSTRING, 0, (LPARAM)s);
-    for (auto& cl : m_work.libraries.customLibraries)
-        SendMessageW(m_sidebar, LB_ADDSTRING, 0, (LPARAM)cl.name.c_str());
     SendMessageW(m_sidebar, LB_SETCURSEL, m_currentPage, 0);
 }
 
@@ -467,9 +455,7 @@ void SettingsWindow::SwitchPage(int idx) {
     case PAGE_PS2:     BuildPS2Page();     break;
     case PAGE_XBOX360: BuildXbox360Page(); break;
     case PAGE_XBOX:    BuildXboxPage();    break;
-    default:
-        if (idx >= PAGE_CUSTOM0) BuildCustomPage(idx - PAGE_CUSTOM0);
-        break;
+    default: break;
     }
     LoadCurrentPage();
 }
@@ -491,9 +477,7 @@ void SettingsWindow::SaveCurrentPage() {
     case PAGE_PS2:     SavePS2Page();     break;
     case PAGE_XBOX360: SaveXbox360Page(); break;
     case PAGE_XBOX:    SaveXboxPage();    break;
-    default:
-        if (m_currentPage >= PAGE_CUSTOM0) SaveCustomPage(m_currentPage - PAGE_CUSTOM0);
-        break;
+    default: break;
     }
 }
 
@@ -513,9 +497,7 @@ void SettingsWindow::LoadCurrentPage() {
     case PAGE_PS2:     LoadPS2Page();     break;
     case PAGE_XBOX360: LoadXbox360Page(); break;
     case PAGE_XBOX:    LoadXboxPage();    break;
-    default:
-        if (m_currentPage >= PAGE_CUSTOM0) LoadCustomPage(m_currentPage - PAGE_CUSTOM0);
-        break;
+    default: break;
     }
 }
 
@@ -649,14 +631,6 @@ void SettingsWindow::BuildDolphinPage() {
     AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
                     K_CX + 12, y + 104, K_CW - 24));
     y += 132;
-
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"GameCube / Wii ROMs  (.iso  .rvz  .gcz  .wbfs  .gcm  .dol  .elf)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildRyujinxPage() {
@@ -673,14 +647,6 @@ void SettingsWindow::BuildRyujinxPage() {
     AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
                     K_CX + 12, y + 76, K_CW - 24));
     y += 108;
-
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"Switch ROMs  (.nsp  .xci  .nca  .nro)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildRpcs3Page() {
@@ -695,14 +661,6 @@ void SettingsWindow::BuildRpcs3Page() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 76, K_CW - 24, 20));
     y += 108;
-
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"PS3 ROMs  (.iso  .pkg  .bin  .ps3)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildN64Page() {
@@ -723,14 +681,6 @@ void SettingsWindow::BuildN64Page() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 144, K_CW - 24, 20));
     y += 176;
-
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"N64 ROMs  (.z64  .n64  .v64  .rom)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildNesPage() {
@@ -748,14 +698,6 @@ void SettingsWindow::BuildNesPage() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 112, K_CW - 24, 20));
     y += 144;
-
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"NES ROMs  (.nes  .fds  .unf  .unif)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildSnesPage() {
@@ -773,14 +715,6 @@ void SettingsWindow::BuildSnesPage() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 112, K_CW - 24, 20));
     y += 144;
-
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"SNES ROMs  (.sfc  .smc  .fig  .bs  .st)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 // ── PS1 / PS2 / Xbox 360 ──────────────────────────────────────────────────────
@@ -795,13 +729,6 @@ void SettingsWindow::BuildPS1Page() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 76, K_CW - 24, 20));
     y += 108;
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"PS1 ROMs  (.bin  .cue  .iso  .img  .chd  .pbp  .mdf  .m3u)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildPS2Page() {
@@ -814,13 +741,6 @@ void SettingsWindow::BuildPS2Page() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 76, K_CW - 24, 20));
     y += 108;
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"PS2 ROMs  (.iso  .bin  .img  .mdf  .nrg  .chd  .cso  .cue)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildXbox360Page() {
@@ -833,13 +753,6 @@ void SettingsWindow::BuildXbox360Page() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 76, K_CW - 24, 20));
     y += 108;
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"Xbox 360 games  (.xex  .iso  GOD/00007000)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildXboxPage() {
@@ -852,13 +765,6 @@ void SettingsWindow::BuildXboxPage() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 76, K_CW - 24, 20));
     y += 108;
-    AddPC(Group(m_hwnd, L" ROM directories ", K_CX, y, K_CW, 206));
-    AddPC(SmallLabel(m_hwnd,
-          L"Xbox games  (.iso  .xbe)",
-          K_CX + 12, y + 18, K_CW - 24));
-    AddPC(ListBox(m_hwnd, ID_P_LIST1, K_CX + 12, y + 40, K_LW, 148));
-    AddPC(Btn(m_hwnd, L"Add Dir…", ID_P_BTN3, K_BX, y + 40));
-    AddPC(Btn(m_hwnd, L"Remove",   ID_P_BTN4, K_BX, y + 68));
 }
 
 void SettingsWindow::BuildCustomPage(int /*libIdx*/) {
@@ -966,51 +872,43 @@ void SettingsWindow::SaveGogPage() {
 void SettingsWindow::LoadDolphinPage() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.dolphinPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.dolphinRomDirs);
     SetWindowTextW(PC(ID_P_STAT1), L"Builds available at dolphin-emu.org/download");
 }
 void SettingsWindow::SaveDolphinPage() {
     auto& e = m_work.emulators;
     e.dolphinPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.dolphinRomDirs);
 }
 
 void SettingsWindow::LoadRyujinxPage() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.ryujinxPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.ryujinxRomDirs);
     SetWindowTextW(PC(ID_P_STAT1), L"Project discontinued Oct 2024 \x2014 no new versions available.");
 }
 void SettingsWindow::SaveRyujinxPage() {
     auto& e = m_work.emulators;
     e.ryujinxPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.ryujinxRomDirs);
 }
 
 void SettingsWindow::LoadRpcs3Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.rpcs3Path.c_str());
-    VecToList(PC(ID_P_LIST1), e.rpcs3RomDirs);
     SetVersionLabel(e.rpcs3Tag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_RPCS3, "RPCS3/rpcs3-binaries-win");
 }
 void SettingsWindow::SaveRpcs3Page() {
     auto& e = m_work.emulators;
     e.rpcs3Path    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.rpcs3RomDirs);
 }
 
 void SettingsWindow::LoadN64Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.n64Path.c_str());
-    VecToList(PC(ID_P_LIST1), e.n64RomDirs);
     SetVersionLabel(e.n64Tag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_N64, "gopher64/gopher64");
 }
 void SettingsWindow::SaveN64Page() {
     auto& e = m_work.emulators;
     e.n64Path    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.n64RomDirs);
 }
 
 void SettingsWindow::LoadNesPage() {
@@ -1021,14 +919,12 @@ void SettingsWindow::LoadNesPage() {
         if (e.nesTag.empty()) e.nesTag = e.snesTag;
     }
     SetWindowTextW(PC(ID_P_EDIT1), e.nesPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.nesRomDirs);
     SetVersionLabel(e.nesTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_NES, "SourMesen/Mesen2");
 }
 void SettingsWindow::SaveNesPage() {
     auto& e = m_work.emulators;
     e.nesPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.nesRomDirs);
 }
 
 void SettingsWindow::LoadSnesPage() {
@@ -1039,87 +935,72 @@ void SettingsWindow::LoadSnesPage() {
         if (e.snesTag.empty()) e.snesTag = e.nesTag;
     }
     SetWindowTextW(PC(ID_P_EDIT1), e.snesPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.snesRomDirs);
     SetVersionLabel(e.snesTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_SNES, "SourMesen/Mesen2");
 }
 void SettingsWindow::SaveSnesPage() {
     auto& e = m_work.emulators;
     e.snesPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.snesRomDirs);
     // Mirror directly to live config — same pattern as SetPathForPage for the exe path,
     // ensures ROM dirs survive regardless of when *m_cfg = m_work runs.
     if (m_cfg) {
         m_cfg->emulators.snesPath    = e.snesPath;
-        m_cfg->emulators.snesRomDirs = e.snesRomDirs;
     }
 }
 
 void SettingsWindow::LoadPS1Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.duckstationPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.duckstationRomDirs);
     SetVersionLabel(e.duckstationTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_PS1, "stenzek/duckstation");
 }
 void SettingsWindow::SavePS1Page() {
     auto& e = m_work.emulators;
     e.duckstationPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.duckstationRomDirs);
     if (m_cfg) {
         m_cfg->emulators.duckstationPath    = e.duckstationPath;
-        m_cfg->emulators.duckstationRomDirs = e.duckstationRomDirs;
     }
 }
 
 void SettingsWindow::LoadPS2Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.pcsx2Path.c_str());
-    VecToList(PC(ID_P_LIST1), e.pcsx2RomDirs);
     SetVersionLabel(e.pcsx2Tag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_PS2, "PCSX2/pcsx2");
 }
 void SettingsWindow::SavePS2Page() {
     auto& e = m_work.emulators;
     e.pcsx2Path    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.pcsx2RomDirs);
     if (m_cfg) {
         m_cfg->emulators.pcsx2Path    = e.pcsx2Path;
-        m_cfg->emulators.pcsx2RomDirs = e.pcsx2RomDirs;
     }
 }
 
 void SettingsWindow::LoadXbox360Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.xeniaPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.xeniaRomDirs);
     SetVersionLabel(e.xeniaTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_XBOX360, "xenia-canary/xenia-canary");
 }
 void SettingsWindow::SaveXbox360Page() {
     auto& e = m_work.emulators;
     e.xeniaPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.xeniaRomDirs);
     if (m_cfg) {
         m_cfg->emulators.xeniaPath    = e.xeniaPath;
-        m_cfg->emulators.xeniaRomDirs = e.xeniaRomDirs;
     }
 }
 
 void SettingsWindow::LoadXboxPage() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.xemuPath.c_str());
-    VecToList(PC(ID_P_LIST1), e.xemuRomDirs);
     SetVersionLabel(e.xemuTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_XBOX, "xemu-project/xemu");
 }
 void SettingsWindow::SaveXboxPage() {
     auto& e = m_work.emulators;
     e.xemuPath    = GetTxt(PC(ID_P_EDIT1));
-    ListToVec(PC(ID_P_LIST1), e.xemuRomDirs);
     if (m_cfg) {
         m_cfg->emulators.xemuPath    = e.xemuPath;
-        m_cfg->emulators.xemuRomDirs = e.xemuRomDirs;
     }
 }
 
@@ -1192,8 +1073,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             else MessageBoxW(m_hwnd, L"Dolphin not found in common locations.",
                              L"Auto-detect", MB_OK | MB_ICONINFORMATION);
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             ShellExecuteW(nullptr, L"open", L"https://dolphin-emu.org/download/",
                           nullptr, nullptr, SW_SHOWNORMAL);
@@ -1211,8 +1090,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             else MessageBoxW(m_hwnd, L"Ryujinx not found in common locations.",
                              L"Auto-detect", MB_OK | MB_ICONINFORMATION);
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         break;
 
     case PAGE_RPCS3:
@@ -1220,8 +1097,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1236,8 +1111,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1252,8 +1125,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1268,8 +1139,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1284,8 +1153,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1301,8 +1168,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1318,8 +1183,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
@@ -1335,8 +1198,6 @@ void SettingsWindow::HandlePageCommand(int id) {
             std::wstring p = BrowseExe(GetTxt(PC(ID_P_EDIT1)));
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
         }
-        else if (id == ID_P_BTN3) ListAddPath(PC(ID_P_LIST1));
-        else if (id == ID_P_BTN4) ListRemoveSel(PC(ID_P_LIST1));
         else if (id == ID_P_BTN5) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");

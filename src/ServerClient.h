@@ -8,6 +8,15 @@ struct ServerFileEntry {
     std::wstring url;
     std::wstring sha256;
     uint64_t size = 0;
+    struct Chunk {
+        int index = 0;
+        uint64_t offset = 0;
+        uint64_t size = 0;
+        std::wstring url;
+        std::wstring sha256;
+        std::wstring compression;
+    };
+    std::vector<Chunk> chunks;
 };
 
 struct ServerGameManifest {
@@ -57,4 +66,8 @@ private:
                       uint64_t expectedSize,
                       std::function<void(uint64_t)> onFileProgress,
                       std::wstring& error);
+    bool DownloadChunkedFile(const ServerFileEntry& file,
+                             const std::wstring& dest,
+                             std::function<void(uint64_t)> onFileProgress,
+                             std::wstring& error);
 };

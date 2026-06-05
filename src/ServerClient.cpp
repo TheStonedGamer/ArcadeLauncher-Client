@@ -442,6 +442,17 @@ bool ServerClient::FetchManifest(const std::wstring& gameId,
         f.url = ToWide(JsonString(obj, "url"));
         f.sha256 = ToWide(JsonString(obj, "sha256"));
         f.size = JsonNumber(obj, "size");
+        for (const auto& chunkObj : ObjectsInArray(obj, "chunks")) {
+            ServerFileEntry::Chunk c;
+            c.index = (int)JsonNumber(chunkObj, "index");
+            c.offset = JsonNumber(chunkObj, "offset");
+            c.size = JsonNumber(chunkObj, "size");
+            c.url = ToWide(JsonString(chunkObj, "url"));
+            c.sha256 = ToWide(JsonString(chunkObj, "sha256"));
+            c.compression = ToWide(JsonString(chunkObj, "compression"));
+            if (!c.url.empty() && c.compression == L"none")
+                f.chunks.push_back(std::move(c));
+        }
         if (!f.path.empty()) manifest.files.push_back(std::move(f));
     }
     return !manifest.id.empty();
@@ -552,6 +563,66 @@ bool ServerClient::DownloadFile(const std::wstring& url,
     return true;
 }
 
+bool ServerClient::DownloadChunkedFile(const ServerFileEntry& file,
+                                       const std::wstring& dest,
+                                       std::function<void(uint64_t)> onFileProgress,
+                                       std::wstring& error) {
+    if (file.chunks.empty()) {
+        error = L"No chunks available";
+        return false;
+    }
+
+    std::wstring part = dest + L".part";
+    fs::create_directories(ParentPath(dest));
+    DeleteFileW(part.c_str());
+
+    std::ofstream out(part, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        error = L"Could not create partial download";
+        return false;
+    }
+
+    uint64_t written = 0;
+    for (const auto& chunk : file.chunks) {
+        if (chunk.compression != L"none") {
+            error = L"Unsupported chunk compression: " + chunk.compression;
+            return false;
+        }
+
+        std::wstring chunkPath = part + L".chunk";
+        if (!DownloadFile(chunk.url, chunkPath, chunk.size, {}, error))
+            return false;
+
+        std::wstring hash;
+        if (!Sha256File(chunkPath, hash) || _wcsicmp(hash.c_str(), chunk.sha256.c_str()) != 0) {
+            DeleteFileW(chunkPath.c_str());
+            error = L"Chunk verification failed: " + file.path;
+            return false;
+        }
+
+        std::ifstream in(chunkPath, std::ios::binary);
+        if (!in) {
+            DeleteFileW(chunkPath.c_str());
+            error = L"Could not read downloaded chunk";
+            return false;
+        }
+        out << in.rdbuf();
+        out.flush();
+        DeleteFileW(chunkPath.c_str());
+
+        written += chunk.size;
+        if (onFileProgress) onFileProgress(written);
+    }
+
+    out.close();
+    if ((uint64_t)fs::file_size(part) != file.size) {
+        error = L"Chunked download size mismatch";
+        return false;
+    }
+    MoveFileExW(part.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    return true;
+}
+
 ServerInstallResult ServerClient::InstallGame(const Game& game,
     std::function<void(uint64_t, uint64_t)> onProgress) {
     ServerInstallResult result;
@@ -599,9 +670,13 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
         }
 
         if (needDownload) {
-            if (!DownloadFile(f.url, dest, f.size, [&](uint64_t fileDone) {
+            auto progress = [&](uint64_t fileDone) {
                 if (onProgress) onProgress(done + fileDone, total);
-            }, error)) {
+            };
+            bool downloaded = !f.chunks.empty()
+                ? DownloadChunkedFile(f, dest, progress, error)
+                : DownloadFile(f.url, dest, f.size, progress, error);
+            if (!downloaded) {
                 result.error = error;
                 return result;
             }

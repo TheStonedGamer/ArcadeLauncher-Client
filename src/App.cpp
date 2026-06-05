@@ -10,6 +10,7 @@
 
 static const wchar_t* WNDCLASS_NAME = L"ArcadeLauncherWnd";
 static const wchar_t* COPY_PROGRESS_WNDCLASS = L"ArcadeLauncherCopyProgressWnd";
+static const wchar_t* SERVER_LOGIN_WNDCLASS = L"ArcadeLauncherServerLoginWnd";
 
 class CopyProgressDialog {
 public:
@@ -106,6 +107,135 @@ private:
     HWND m_status = nullptr;
     HWND m_progress = nullptr;
 };
+
+struct ServerLoginState {
+    ServerConfig* cfg = nullptr;
+    HWND owner = nullptr;
+    HWND hwnd = nullptr;
+    HWND url = nullptr;
+    HWND username = nullptr;
+    HWND password = nullptr;
+    HWND installRoot = nullptr;
+    bool done = false;
+    bool saved = false;
+};
+
+static std::wstring TextOf(HWND h) {
+    int len = GetWindowTextLengthW(h);
+    if (len <= 0) return {};
+    std::wstring s(len + 1, L'\0');
+    GetWindowTextW(h, s.data(), len + 1);
+    s.resize(len);
+    return s;
+}
+
+static HWND LoginLabel(HWND p, const wchar_t* text, int x, int y, int w) {
+    return CreateWindowExW(0, WC_STATICW, text, WS_CHILD | WS_VISIBLE,
+        x, y, w, 18, p, nullptr, GetModuleHandleW(nullptr), nullptr);
+}
+
+static HWND LoginEdit(HWND p, int id, const std::wstring& text, int x, int y, int w, DWORD extra = 0) {
+    return CreateWindowExW(WS_EX_CLIENTEDGE, WC_EDITW, text.c_str(),
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | extra,
+        x, y, w, 23, p, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr);
+}
+
+static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* st = reinterpret_cast<ServerLoginState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == WM_CREATE) {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        st = reinterpret_cast<ServerLoginState*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)st);
+        st->hwnd = hwnd;
+
+        LoginLabel(hwnd, L"Server URL", 22, 22, 110);
+        st->url = LoginEdit(hwnd, 101, st->cfg->baseUrl.empty() ? L"http://10.0.0.210:8721" : st->cfg->baseUrl, 130, 20, 300);
+        LoginLabel(hwnd, L"Username", 22, 58, 110);
+        st->username = LoginEdit(hwnd, 102, st->cfg->username, 130, 56, 300);
+        LoginLabel(hwnd, L"Password", 22, 94, 110);
+        st->password = LoginEdit(hwnd, 103, st->cfg->password, 130, 92, 300, ES_PASSWORD);
+        LoginLabel(hwnd, L"Install Root", 22, 130, 110);
+        st->installRoot = LoginEdit(hwnd, 104,
+            st->cfg->installRoot.empty() ? GetAppDataPath() + L"\\ServerLibrary" : st->cfg->installRoot,
+            130, 128, 300);
+
+        CreateWindowExW(0, WC_BUTTONW, L"Sign In", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            250, 174, 84, 28, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
+        CreateWindowExW(0, WC_BUTTONW, L"Offline", WS_CHILD | WS_VISIBLE,
+            346, 174, 84, 28, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
+        return 0;
+    }
+    if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+
+    if (msg == WM_COMMAND) {
+        int id = LOWORD(wp);
+        if (id == IDOK) {
+            st->cfg->enabled = true;
+            st->cfg->baseUrl = TextOf(st->url);
+            st->cfg->username = TextOf(st->username);
+            st->cfg->password = TextOf(st->password);
+            st->cfg->installRoot = TextOf(st->installRoot);
+            st->cfg->authToken.clear();
+            st->saved = true;
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        if (id == IDCANCEL) {
+            st->done = true;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+    } else if (msg == WM_CLOSE) {
+        st->done = true;
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static bool ShowServerLoginDialog(HWND owner, ServerConfig& cfg) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ServerLoginWndProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.lpszClassName = SERVER_LOGIN_WNDCLASS;
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    RECT rc{};
+    GetWindowRect(owner, &rc);
+    int w = 470, h = 250;
+    ServerLoginState st{ &cfg, owner };
+    EnableWindow(owner, FALSE);
+    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, SERVER_LOGIN_WNDCLASS,
+        L"ArcadeLauncher Server Sign In", WS_CAPTION | WS_POPUP | WS_SYSMENU,
+        rc.left + ((rc.right - rc.left) - w) / 2,
+        rc.top + ((rc.bottom - rc.top) - h) / 2,
+        w, h, owner, nullptr, GetModuleHandleW(nullptr), &st);
+    if (!hwnd) {
+        EnableWindow(owner, TRUE);
+        return false;
+    }
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+
+    MSG msg{};
+    while (!st.done && GetMessageW(&msg, nullptr, 0, 0)) {
+        if (!IsDialogMessageW(hwnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(owner, TRUE);
+    SetForegroundWindow(owner);
+    return st.saved;
+}
 
 struct CopyProgressState {
     CopyProgressDialog* dialog = nullptr;
@@ -433,6 +563,14 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     } else {
         ShowWindow(m_hwnd, SW_SHOW);
         UpdateWindow(m_hwnd);
+    }
+
+    if (m_config.Get().server.enabled &&
+        (m_config.Get().server.baseUrl.empty() ||
+         m_config.Get().server.username.empty() ||
+         m_config.Get().server.password.empty())) {
+        if (ShowServerLoginDialog(m_hwnd, m_config.Get().server))
+            SaveAll();
     }
 
     // On first launch, offer to download missing emulators.
