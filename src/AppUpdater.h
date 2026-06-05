@@ -10,8 +10,8 @@ static constexpr UINT WM_APP_UPDATE_FOUND = WM_USER + 5;
 static constexpr UINT WM_APP_UPDATE_READY = WM_USER + 6;
 
 struct AppUpdateInfo {
-    std::wstring tag;     // e.g. L"v1.2.3"
-    std::wstring msiUrl;  // direct download URL for ArcadeLauncher-x64.msi
+    std::wstring tag;     // e.g. L"client-v1.2.3"
+    std::wstring msiUrl;  // direct download URL for ArcadeLauncher-Server-Client-x64.msi
 };
 
 // Fires a background thread that checks GitHub for a newer release.

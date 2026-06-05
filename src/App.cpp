@@ -850,7 +850,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // Download failed
             MessageBoxW(hwnd,
                 L"The update could not be downloaded.\n\n"
-                L"Please visit github.com/TheStonedGamer/ArcadeLauncher/releases to update manually.",
+                L"Please visit github.com/TheStonedGamer/ArcadeLauncher-Client/releases to update manually.",
                 L"Update Failed", MB_OK | MB_ICONWARNING);
         } else {
             // msiexec is running — exit immediately so it can replace the binary.

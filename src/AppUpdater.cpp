@@ -167,8 +167,10 @@ static std::string JsonStr(const std::string& json, const std::string& key) {
 // ── Version comparison ────────────────────────────────────────────────────────
 
 static bool IsNewerThanCurrent(const std::wstring& tag) {
-    // tag is e.g. L"v1.2.3"
+    // tag is e.g. L"client-v1.2.3" for this server-connected client.
     std::wstring v = tag;
+    const std::wstring prefix = L"client-v";
+    if (v.rfind(prefix, 0) == 0) v = v.substr(prefix.size());
     if (!v.empty() && (v[0] == L'v' || v[0] == L'V')) v = v.substr(1);
 
     int maj = 0, min_ = 0, pat = 0;
@@ -183,7 +185,7 @@ static bool IsNewerThanCurrent(const std::wstring& tag) {
 
 static void CheckWorker(HWND hwnd) {
     std::string json = HttpGetStr(
-        L"https://api.github.com/repos/TheStonedGamer/ArcadeLauncher/releases/latest");
+        L"https://api.github.com/repos/TheStonedGamer/ArcadeLauncher-Client/releases/latest");
     if (json.empty()) return;
 
     std::wstring tag = ToWide(JsonStr(json, "tag_name"));
@@ -191,8 +193,8 @@ static void CheckWorker(HWND hwnd) {
 
     // Construct the predictable MSI asset URL
     std::wstring msiUrl =
-        L"https://github.com/TheStonedGamer/ArcadeLauncher/releases/download/"
-        + tag + L"/ArcadeLauncher-x64.msi";
+        L"https://github.com/TheStonedGamer/ArcadeLauncher-Client/releases/download/"
+        + tag + L"/ArcadeLauncher-Server-Client-x64.msi";
 
     auto* info = new AppUpdateInfo{ tag, msiUrl };
     PostMessageW(hwnd, WM_APP_UPDATE_FOUND, 0, (LPARAM)info);
