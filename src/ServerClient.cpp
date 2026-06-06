@@ -761,12 +761,20 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
     result.installRoot = installRoot;
     result.launchPath = installRoot + L"\\" + manifest.launchTarget;
     std::replace(result.launchPath.begin(), result.launchPath.end(), L'/', L'\\');
-    result.arguments = manifest.launchArguments.empty() ? L"{rom}" : manifest.launchArguments;
-    size_t ph = result.arguments.find(L"{rom}");
-    if (ph != std::wstring::npos)
-        result.arguments.replace(ph, 5, L"\"" + result.launchPath + L"\"");
-    else
-        result.arguments += L" \"" + result.launchPath + L"\"";
+    bool pcFolder = manifest.installType == L"pc_folder";
+    result.arguments = manifest.launchArguments.empty()
+        ? (pcFolder ? L"" : L"{rom}")
+        : manifest.launchArguments;
+    size_t exePh = result.arguments.find(L"{exe}");
+    if (exePh != std::wstring::npos) {
+        result.arguments.replace(exePh, 5, L"\"" + result.launchPath + L"\"");
+    } else {
+        size_t romPh = result.arguments.find(L"{rom}");
+        if (romPh != std::wstring::npos)
+            result.arguments.replace(romPh, 5, L"\"" + result.launchPath + L"\"");
+        else if (!pcFolder)
+            result.arguments += L" \"" + result.launchPath + L"\"";
+    }
     result.version = manifest.version;
     return result;
 }
