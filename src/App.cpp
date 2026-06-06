@@ -775,7 +775,8 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ? (int)std::min<uint64_t>(1000, progress->done * 1000 / progress->total)
                 : 0;
         }
-        RefreshDownloadStatusWindow();
+        if (m_downloadStatusWnd && IsWindowVisible(m_downloadStatusWnd))
+            RefreshDownloadStatusWindow();
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
     }
@@ -1744,7 +1745,20 @@ void App::DownloadWorker() {
         } else {
             ServerClient client(m_config.Get().server);
             HWND hwnd = m_hwnd;
-            result = client.InstallGame(game, [hwnd, id = game.id](uint64_t done, uint64_t total) {
+            auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>(
+                std::chrono::steady_clock::now() - std::chrono::seconds(1));
+            auto lastPermille = std::make_shared<int>(-1);
+            result = client.InstallGame(game, [hwnd, id = game.id, lastPost, lastPermille](uint64_t done, uint64_t total) {
+                int permille = total > 0
+                    ? (int)std::min<uint64_t>(1000, done * 1000 / total)
+                    : 0;
+                auto now = std::chrono::steady_clock::now();
+                bool meaningfulStep = permille >= 1000 || *lastPermille < 0 || permille >= *lastPermille + 5;
+                bool enoughTime = now - *lastPost >= std::chrono::milliseconds(250);
+                if (!meaningfulStep && !enoughTime)
+                    return;
+                *lastPost = now;
+                *lastPermille = permille;
                 auto* payload = new ServerInstallProgressPayload{ id, done, total };
                 if (!PostMessageW(hwnd, WM_SERVER_INSTALL_PROGRESS, 0, (LPARAM)payload))
                     delete payload;
