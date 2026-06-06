@@ -20,6 +20,19 @@ static void SetF(HWND h, bool bold = false) {
     SendMessageW(h, WM_SETFONT, (WPARAM)(bold ? s_boldFont : s_font), TRUE);
 }
 
+static std::wstring TrimTrailingSlash(std::wstring value) {
+    while (!value.empty() && (value.back() == L'/' || value.back() == L'\\'))
+        value.pop_back();
+    return value;
+}
+
+static std::wstring EmulatorArchiveUrl(const AppConfig& cfg, const wchar_t* archiveName) {
+    std::wstring base = TrimTrailingSlash(cfg.server.baseUrl.empty()
+        ? L"http://10.0.0.210:8721"
+        : cfg.server.baseUrl);
+    return base + L"/emulators/" + archiveName;
+}
+
 // ── Control helpers ───────────────────────────────────────────────────────────
 
 static HWND SL(HWND p, const wchar_t* t, int x, int y, int w, int h = 17,
@@ -226,8 +239,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.nesPath) || !hasExe(cfg.emulators.snesPath))
         m_entries.push_back({
             L"Mesen  \x2014  NES + SNES emulator",
-            { "", L"2.1.1", L"Mesen.exe", L"mesen2",
-              L"https://github.com/SourMesen/Mesen2/releases/download/2.1.1/Mesen_2.1.1_Windows.zip" },
+            { "", L"server", L"Mesen.exe", L"mesen2",
+              EmulatorArchiveUrl(cfg, L"mesen-windows.zip") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.nesPath  = exe;
                 c.emulators.snesPath = exe;

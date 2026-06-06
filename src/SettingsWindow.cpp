@@ -31,6 +31,19 @@ static void ApplyFont(HWND h, bool bold = false) {
     SendMessageW(h, WM_SETFONT, (WPARAM)(bold ? gBoldFont : gFont), TRUE);
 }
 
+static std::wstring TrimTrailingSlash(std::wstring value) {
+    while (!value.empty() && (value.back() == L'/' || value.back() == L'\\'))
+        value.pop_back();
+    return value;
+}
+
+static std::wstring EmulatorArchiveUrl(const AppConfig& cfg, const wchar_t* archiveName) {
+    std::wstring base = TrimTrailingSlash(cfg.server.baseUrl.empty()
+        ? L"http://10.0.0.210:8721"
+        : cfg.server.baseUrl);
+    return base + L"/emulators/" + archiveName;
+}
+
 // ─── Win32 control factory ────────────────────────────────────────────────────
 
 static HWND Label(HWND p, const wchar_t* t, int x, int y, int w, int h = 17, bool bold = false) {
@@ -1111,8 +1124,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading...");
             DownloadEmulatorAsync(m_hwnd, PAGE_DOLPHIN,
-                { "", L"2603a", L"Dolphin.exe", L"dolphin",
-                  L"https://dl.dolphin-emu.org/releases/2603a/dolphin-2603a-x64.7z" },
+                { "", L"server", L"Dolphin.exe", L"dolphin",
+                  EmulatorArchiveUrl(m_work, L"dolphin-x64.7z") },
                 GetAppDataPath());
         }
         break;
@@ -1132,8 +1145,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading...");
             DownloadEmulatorAsync(m_hwnd, PAGE_RYUJINX,
-                { "", L"1.3.309", L"Ryujinx.exe", L"ryujinx",
-                  L"https://git.ryujinx.app/Ryubing/Canary/releases/download/1.3.309/ryujinx-canary-1.3.309-win_x64.zip" },
+                { "", L"server", L"Ryujinx.exe", L"ryujinx",
+                  EmulatorArchiveUrl(m_work, L"ryujinx-win-x64.zip") },
                 GetAppDataPath());
         }
         break;
@@ -1147,7 +1160,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_RPCS3,
-                { "RPCS3/rpcs3-binaries-win", L"win64_msvc.7z", L"rpcs3.exe", L"rpcs3" },
+                { "", L"server", L"rpcs3.exe", L"rpcs3",
+                  EmulatorArchiveUrl(m_work, L"rpcs3-win64.7z") },
                 GetAppDataPath());
         }
         break;
@@ -1161,7 +1175,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_N64,
-                { "gopher64/gopher64", L"windows-x86_64.exe", L"gopher64.exe", L"gopher64" },
+                { "", L"server", L"gopher64.exe", L"gopher64",
+                  EmulatorArchiveUrl(m_work, L"gopher64-windows-x86_64.exe") },
                 GetAppDataPath());
         }
         break;
@@ -1175,8 +1190,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_NES,
-                { "", L"2.1.1", L"Mesen.exe", L"mesen2",
-                  L"https://github.com/SourMesen/Mesen2/releases/download/2.1.1/Mesen_2.1.1_Windows.zip" },
+                { "", L"server", L"Mesen.exe", L"mesen2",
+                  EmulatorArchiveUrl(m_work, L"mesen-windows.zip") },
                 GetAppDataPath());
         }
         break;
@@ -1190,8 +1205,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_SNES,
-                { "", L"2.1.1", L"Mesen.exe", L"mesen2",
-                  L"https://github.com/SourMesen/Mesen2/releases/download/2.1.1/Mesen_2.1.1_Windows.zip" },
+                { "", L"server", L"Mesen.exe", L"mesen2",
+                  EmulatorArchiveUrl(m_work, L"mesen-windows.zip") },
                 GetAppDataPath());
         }
         break;
@@ -1205,8 +1220,9 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_PS1,
-                { "stenzek/duckstation", L"windows-x64-release.zip",
-                  L"duckstation-qt-x64-ReleaseLTCG.exe", L"duckstation" },
+                { "", L"server",
+                  L"duckstation-qt-x64-ReleaseLTCG.exe", L"duckstation",
+                  EmulatorArchiveUrl(m_work, L"duckstation-windows-x64.zip") },
                 GetAppDataPath());
         }
         break;
@@ -1220,8 +1236,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_PS2,
-                { "PCSX2/pcsx2", L"windows-x64-Qt.7z",
-                  L"pcsx2-qt.exe", L"pcsx2" },
+                { "", L"server", L"pcsx2-qt.exe", L"pcsx2",
+                  EmulatorArchiveUrl(m_work, L"pcsx2-windows-x64.7z") },
                 GetAppDataPath());
         }
         break;
@@ -1235,8 +1251,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_XBOX360,
-                { "xenia-canary/xenia-canary", L"xenia_canary_windows.zip",
-                  L"xenia_canary.exe", L"xenia-canary" },
+                { "", L"server", L"xenia_canary.exe", L"xenia-canary",
+                  EmulatorArchiveUrl(m_work, L"xenia-canary-windows.zip") },
                 GetAppDataPath());
         }
         break;
@@ -1250,8 +1266,8 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_XBOX,
-                { "xemu-project/xemu", L"win-x86_64-release.zip",
-                  L"xemu.exe", L"xemu" },
+                { "", L"server", L"xemu.exe", L"xemu",
+                  EmulatorArchiveUrl(m_work, L"xemu-win-x86_64-release.zip") },
                 GetAppDataPath());
         }
         break;
