@@ -319,6 +319,34 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_EMUDOWNLOAD_PROGRESS: {
+        int page = (int)wp;
+        auto* progress = reinterpret_cast<EmuDownloadProgress*>(lp);
+        if (progress && page == m_currentPage) {
+            HWND bar = PC(ID_P_PROG1);
+            HWND stat = PC(ID_P_STAT1);
+            if (bar) {
+                SendMessageW(bar, PBM_SETRANGE32, 0, 1000);
+                int pos = 0;
+                if (progress->total > 0)
+                    pos = (int)std::min<uint64_t>(1000, progress->downloaded * 1000 / progress->total);
+                SendMessageW(bar, PBM_SETPOS, pos, 0);
+            }
+            if (stat) {
+                auto mb = [](uint64_t b) { return (double)b / (1024.0 * 1024.0); };
+                std::wstringstream ss;
+                ss.setf(std::ios::fixed);
+                ss.precision(1);
+                ss << L"Downloading " << mb(progress->downloaded) << L" MB";
+                if (progress->total > 0)
+                    ss << L" / " << mb(progress->total) << L" MB";
+                SetWindowTextW(stat, ss.str().c_str());
+            }
+        }
+        delete progress;
+        return 0;
+    }
+
     case WM_EMUDOWNLOAD_DONE: {
         int  page    = (int)wp;
         auto* result = reinterpret_cast<EmuDownloadResult*>(lp);
@@ -330,6 +358,8 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (onPage) {
                 HWND btnDl = PC(ID_P_BTN5);
                 if (btnDl) { EnableWindow(btnDl, TRUE); SetWindowTextW(btnDl, L"Download latest"); }
+                HWND bar = PC(ID_P_PROG1);
+                if (bar) SendMessageW(bar, PBM_SETPOS, 0, 0);
             }
 
             if (!result->exePath.empty() && result->exePath.substr(0, 4) == L"ERR:") {
@@ -385,6 +415,16 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void SettingsWindow::AddEmulatorProgressBar(int x, int y, int w) {
+    HWND bar = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
+                               WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
+                               x, y, w, 14, m_hwnd,
+                               (HMENU)(intptr_t)ID_P_PROG1, nullptr, nullptr);
+    SendMessageW(bar, PBM_SETRANGE32, 0, 1000);
+    SendMessageW(bar, PBM_SETPOS, 0, 0);
+    AddPC(bar);
 }
 
 // ─── Sidebar drawing ──────────────────────────────────────────────────────────
@@ -648,7 +688,7 @@ void SettingsWindow::BuildGogPage() {
 void SettingsWindow::BuildDolphinPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"Dolphin");
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 124));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 144));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",          ID_P_BTN1, K_BX, y + 20));
@@ -656,16 +696,17 @@ void SettingsWindow::BuildDolphinPage() {
     AddPC(SmallLabel(m_hwnd, L"Searches common install locations for Dolphin.exe.",
                      K_CX + 12, y + 52, K_BX - K_CX - 16));
     AddPC(Btn  (m_hwnd, L"Get Dolphin\x2026",  ID_P_BTN5, K_BX, y + 76));
+    AddEmulatorProgressBar(K_CX + 12, y + 104, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
-                    K_CX + 12, y + 104, K_CW - 24));
-    y += 132;
+                    K_CX + 12, y + 120, K_CW - 24));
+    y += 152;
 }
 
 void SettingsWindow::BuildRyujinxPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"Ryujinx");
 
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 124));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 144));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",          ID_P_BTN1, K_BX, y + 20));
@@ -673,30 +714,32 @@ void SettingsWindow::BuildRyujinxPage() {
     AddPC(SmallLabel(m_hwnd, L"Searches common install locations for Ryujinx.exe.",
                      K_CX + 12, y + 52, K_BX - K_CX - 16));
     AddPC(Btn  (m_hwnd, L"Get Ryujinx\x2026",  ID_P_BTN5, K_BX, y + 76));
+    AddEmulatorProgressBar(K_CX + 12, y + 104, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
-                    K_CX + 12, y + 104, K_CW - 24));
-    y += 132;
+                    K_CX + 12, y + 120, K_CW - 24));
+    y += 152;
 }
 
 void SettingsWindow::BuildRpcs3Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"RPCS3");
 
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 100));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
+    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 76, K_CW - 24, 20));
-    y += 108;
+                    K_CX + 12, y + 92, K_CW - 24, 20));
+    y += 128;
 }
 
 void SettingsWindow::BuildN64Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"N64 Emulator");
 
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 168));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 188));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
@@ -707,16 +750,17 @@ void SettingsWindow::BuildN64Page() {
     AddPC(SmallLabel(m_hwnd,
           L"Also works with: Project64, simple64.  Download: github.com/gopher64/gopher64",
           K_CX + 12, y + 108, K_CW - 24));
+    AddEmulatorProgressBar(K_CX + 12, y + 144, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 144, K_CW - 24, 20));
-    y += 176;
+                    K_CX + 12, y + 160, K_CW - 24, 20));
+    y += 196;
 }
 
 void SettingsWindow::BuildNesPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"NES Emulator");
 
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 136));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 156));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
@@ -724,16 +768,17 @@ void SettingsWindow::BuildNesPage() {
     AddPC(SmallLabel(m_hwnd,
           L"Recommended: Mesen2 (mesen.ca) \x2014 cycle-accurate, 4-player, also handles SNES.",
           K_CX + 12, y + 76, K_CW - 24));
+    AddEmulatorProgressBar(K_CX + 12, y + 112, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 112, K_CW - 24, 20));
-    y += 144;
+                    K_CX + 12, y + 128, K_CW - 24, 20));
+    y += 164;
 }
 
 void SettingsWindow::BuildSnesPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"SNES Emulator");
 
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 136));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 156));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
@@ -741,59 +786,64 @@ void SettingsWindow::BuildSnesPage() {
     AddPC(SmallLabel(m_hwnd,
           L"Recommended: Mesen2 (mesen.ca) \x2014 same exe as NES, cycle-accurate, 4-player.",
           K_CX + 12, y + 76, K_CW - 24));
+    AddEmulatorProgressBar(K_CX + 12, y + 112, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 112, K_CW - 24, 20));
-    y += 144;
+                    K_CX + 12, y + 128, K_CW - 24, 20));
+    y += 164;
 }
 
 // ── PS1 / PS2 / Xbox 360 ──────────────────────────────────────────────────────
 
 void SettingsWindow::BuildPS1Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"PS1 Emulator");
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 100));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
+    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 76, K_CW - 24, 20));
-    y += 108;
+                    K_CX + 12, y + 92, K_CW - 24, 20));
+    y += 128;
 }
 
 void SettingsWindow::BuildPS2Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"PS2 Emulator");
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 100));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
+    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 76, K_CW - 24, 20));
-    y += 108;
+                    K_CX + 12, y + 92, K_CW - 24, 20));
+    y += 128;
 }
 
 void SettingsWindow::BuildXbox360Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"Xbox 360 Emulator");
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 100));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
+    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 76, K_CW - 24, 20));
-    y += 108;
+                    K_CX + 12, y + 92, K_CW - 24, 20));
+    y += 128;
 }
 
 void SettingsWindow::BuildXboxPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"Xbox Emulator");
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 100));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
+    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 76, K_CW - 24, 20));
-    y += 108;
+                    K_CX + 12, y + 92, K_CW - 24, 20));
+    y += 128;
 }
 
 void SettingsWindow::BuildCustomPage(int /*libIdx*/) {

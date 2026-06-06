@@ -552,6 +552,20 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
             m_rt->DrawRoundedRectangle(D2D1::RoundedRect(D2DInsetRect(pill, -1.0f, -1.0f), 5, 5),
                                        m_brushAccent.Get(), 2.0f);
             m_brushAccent->SetColor(C_ACCENT);
+
+            D2D1_RECT_F track = D2D1::RectF(rect.left + 8.0f, rect.top + 34.0f,
+                                            rect.right - 8.0f, rect.top + 39.0f);
+            m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.60f));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(track, 2.0f, 2.0f), m_brushOverlay.Get());
+            float pct = std::clamp(game.installProgressPermille / 1000.0f, 0.0f, 1.0f);
+            if (pct <= 0.0f) {
+                pct = 0.20f + 0.18f * (0.5f + 0.5f * sinf(m_animTime * 4.0f));
+            }
+            D2D1_RECT_F fill = track;
+            fill.right = fill.left + (track.right - track.left) * pct;
+            m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.88f));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(fill, 2.0f, 2.0f), m_brushAccent.Get());
+            m_brushAccent->SetColor(C_ACCENT);
         }
         m_rt->DrawText(state.c_str(), (UINT32)state.size(), m_fmtSmall.Get(), pill,
                        game.installState == InstallState::Installed ? m_brushAccent.Get() : m_brushWhite.Get());

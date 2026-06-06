@@ -29,6 +29,7 @@
 // STL
 #include <string>
 #include <vector>
+#include <deque>
 #include <unordered_map>
 #include <memory>
 #include <functional>

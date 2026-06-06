@@ -4,10 +4,16 @@
 // Posted to the settings window when a download completes.
 // WPARAM = page index, LPARAM = new EmuDownloadResult* (receiver must delete).
 static constexpr UINT WM_EMUDOWNLOAD_DONE = WM_USER + 51;
+static constexpr UINT WM_EMUDOWNLOAD_PROGRESS = WM_USER + 53;
 
 struct EmuDownloadResult {
     std::wstring exePath;   // empty = exe not found after extract; L"ERR:..." = failure
     std::wstring tag;       // GitHub release tag_name; empty if unavailable
+};
+
+struct EmuDownloadProgress {
+    uint64_t downloaded = 0;
+    uint64_t total = 0;
 };
 
 struct EmulatorDownloadSpec {

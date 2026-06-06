@@ -61,7 +61,8 @@ static std::string HttpGet(const std::wstring& url) {
     return body;
 }
 
-static bool DownloadFile(const std::wstring& url, const std::wstring& destPath) {
+static bool DownloadFile(const std::wstring& url, const std::wstring& destPath,
+                         std::function<void(uint64_t, uint64_t)> onProgress = {}) {
     WHttpSession sess;
     if (!sess.h) return false;
 
@@ -93,10 +94,18 @@ static bool DownloadFile(const std::wstring& url, const std::wstring& destPath) 
             WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
             nullptr, &status, &sz, nullptr);
         if (status == 200) {
+            uint64_t total = 0;
+            wchar_t lenBuf[64]{};
+            DWORD lenSize = sizeof(lenBuf);
+            if (WinHttpQueryHeaders(hReq, WINHTTP_QUERY_CONTENT_LENGTH,
+                                    nullptr, lenBuf, &lenSize, nullptr)) {
+                total = _wtoi64(lenBuf);
+            }
             HANDLE hFile = CreateFileW(destPath.c_str(), GENERIC_WRITE, 0, nullptr,
                                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (hFile != INVALID_HANDLE_VALUE) {
                 written = true;
+                uint64_t downloaded = 0;
                 DWORD avail = 0;
                 while (WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
                     std::string chunk(avail, '\0');
@@ -105,6 +114,8 @@ static bool DownloadFile(const std::wstring& url, const std::wstring& destPath) 
                     if (!WriteFile(hFile, chunk.data(), read, &wrote, nullptr) || wrote != read) {
                         written = false; break;
                     }
+                    downloaded += read;
+                    if (onProgress) onProgress(downloaded, total);
                 }
                 CloseHandle(hFile);
                 if (!written) DeleteFileW(destPath.c_str());
@@ -194,6 +205,11 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
     auto post = [&](EmuDownloadResult* result) {
         PostMessageW(hwnd, WM_EMUDOWNLOAD_DONE, (WPARAM)pageIdx, (LPARAM)result);
     };
+    auto postProgress = [&](uint64_t downloaded, uint64_t total) {
+        auto* progress = new EmuDownloadProgress{ downloaded, total };
+        if (!PostMessageW(hwnd, WM_EMUDOWNLOAD_PROGRESS, (WPARAM)pageIdx, (LPARAM)progress))
+            delete progress;
+    };
 
     std::wstring tag;
     std::wstring assetUrl = spec.directUrl;
@@ -231,7 +247,7 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
     if (q  != std::wstring::npos) fileName = fileName.substr(0, q);
 
     std::wstring archivePath = destDir + L"\\" + fileName;
-    if (!DownloadFile(assetUrl, archivePath)) {
+    if (!DownloadFile(assetUrl, archivePath, postProgress)) {
         post(new EmuDownloadResult{ L"ERR:File download failed." });
         return;
     }

@@ -45,6 +45,10 @@ private:
     void ScanAllPlatforms();
     void LaunchGame(const Game& game);
     void DownloadGameInBackground(int visibleIdx);
+    void OpenDownloadStatus();
+    void RefreshDownloadStatusWindow();
+    void StartDownloadWorker();
+    void DownloadWorker();
     void ValidateGame(int visibleIdx);
     void UninstallGame(int visibleIdx);
     void RefreshArt(const Game& game);
@@ -91,6 +95,25 @@ private:
     RenderState      m_renderState;
     std::vector<const Game*> m_visibleGames;
 
+    struct DownloadJob {
+        Game game;
+        std::wstring gameId;
+        std::wstring title;
+        uint64_t done = 0;
+        uint64_t total = 0;
+        bool running = false;
+        bool complete = false;
+        bool failed = false;
+        std::wstring error;
+    };
+    std::mutex m_downloadMutex;
+    std::deque<DownloadJob> m_downloadQueue;
+    bool m_downloadWorkerRunning = false;
+    HWND m_downloadStatusWnd = nullptr;
+    HWND m_downloadList = nullptr;
+    HWND m_downloadProgress = nullptr;
+    HWND m_downloadSummary = nullptr;
+
     bool             m_dragging = false;
     float            m_lastMouseX = 0, m_lastMouseY = 0;
 
@@ -110,6 +133,7 @@ private:
     static constexpr UINT WM_GAME_CLOSED = WM_USER + 101;
     static constexpr UINT WM_ROMDB_READY = WM_USER + 102;
     static constexpr UINT WM_SERVER_INSTALL_DONE = WM_USER + 103;
+    static constexpr UINT WM_SERVER_INSTALL_PROGRESS = WM_USER + 104;
 
     // Context menu command IDs
     static constexpr UINT IDM_LAUNCH      = 5001;
@@ -119,6 +143,7 @@ private:
     static constexpr UINT IDM_VALIDATE_GAME = 5005;
     static constexpr UINT IDM_UNINSTALL_GAME = 5006;
     static constexpr UINT IDM_DOWNLOAD_GAME = 5007;
+    static constexpr UINT IDM_DOWNLOAD_STATUS = 5008;
 
     // Tools menu command IDs
     static constexpr UINT IDM_TOOL_DOLPHIN = 6001;

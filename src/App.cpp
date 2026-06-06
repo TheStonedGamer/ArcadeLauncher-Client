@@ -11,10 +11,17 @@
 static const wchar_t* WNDCLASS_NAME = L"ArcadeLauncherWnd";
 static const wchar_t* COPY_PROGRESS_WNDCLASS = L"ArcadeLauncherCopyProgressWnd";
 static const wchar_t* SERVER_LOGIN_WNDCLASS = L"ArcadeLauncherServerLoginWnd";
+static const wchar_t* DOWNLOAD_STATUS_WNDCLASS = L"ArcadeLauncherDownloadStatusWnd";
 
 struct ServerInstallDonePayload {
     std::wstring gameId;
     ServerInstallResult result;
+};
+
+struct ServerInstallProgressPayload {
+    std::wstring gameId;
+    uint64_t done = 0;
+    uint64_t total = 0;
 };
 
 class CopyProgressDialog {
@@ -708,6 +715,19 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         auto* payload = reinterpret_cast<ServerInstallDonePayload*>(lp);
         if (!payload) return 0;
         std::unique_ptr<ServerInstallDonePayload> done(payload);
+        {
+            std::lock_guard<std::mutex> lk(m_downloadMutex);
+            for (auto& job : m_downloadQueue) {
+                if (job.gameId == done->gameId) {
+                    job.running = false;
+                    job.complete = done->result.ok;
+                    job.failed = !done->result.ok;
+                    job.error = done->result.error;
+                    if (done->result.ok && job.total > 0) job.done = job.total;
+                    break;
+                }
+            }
+        }
         if (auto* stored = m_library.FindById(done->gameId)) {
             if (done->result.ok) {
                 stored->installRoot = done->result.installRoot;
@@ -718,9 +738,11 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 stored->arguments = done->result.arguments;
                 stored->serverVersion = done->result.version;
                 stored->installState = InstallState::Installed;
+                stored->installProgressPermille = 1000;
                 SaveAll();
             } else {
                 stored->installState = InstallState::Missing;
+                stored->installProgressPermille = 0;
                 MessageBoxW(m_hwnd,
                     (L"Background download failed:\n" + done->result.error).c_str(),
                     L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
@@ -728,6 +750,33 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ApplyFilter();
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
+        RefreshDownloadStatusWindow();
+        return 0;
+    }
+
+    case WM_SERVER_INSTALL_PROGRESS: {
+        auto* payload = reinterpret_cast<ServerInstallProgressPayload*>(lp);
+        if (!payload) return 0;
+        std::unique_ptr<ServerInstallProgressPayload> progress(payload);
+        {
+            std::lock_guard<std::mutex> lk(m_downloadMutex);
+            for (auto& job : m_downloadQueue) {
+                if (job.gameId == progress->gameId) {
+                    job.done = progress->done;
+                    job.total = progress->total;
+                    job.running = true;
+                    break;
+                }
+            }
+        }
+        if (auto* stored = m_library.FindById(progress->gameId)) {
+            stored->installState = InstallState::Downloading;
+            stored->installProgressPermille = progress->total > 0
+                ? (int)std::min<uint64_t>(1000, progress->done * 1000 / progress->total)
+                : 0;
+        }
+        RefreshDownloadStatusWindow();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
     }
 
@@ -1624,23 +1673,165 @@ void App::DownloadGameInBackground(int visibleIdx) {
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lk(m_downloadMutex);
+        auto exists = std::find_if(m_downloadQueue.begin(), m_downloadQueue.end(),
+            [&](const DownloadJob& j) {
+                return j.gameId == game.id && !j.complete && !j.failed;
+            });
+        if (exists != m_downloadQueue.end()) {
+            OpenDownloadStatus();
+            return;
+        }
+        DownloadJob job{};
+        job.game = game;
+        job.gameId = game.id;
+        job.title = game.title;
+        m_downloadQueue.push_back(std::move(job));
+    }
+
     if (auto* stored = m_library.FindById(game.id)) {
         stored->installState = InstallState::Downloading;
+        stored->installProgressPermille = 0;
         game = *stored;
     }
     SaveAll();
     ApplyFilter();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 
-    ServerConfig serverCfg = m_config.Get().server;
-    HWND hwnd = m_hwnd;
-    std::thread([hwnd, serverCfg, game]() mutable {
-        ServerClient client(serverCfg);
-        auto result = client.InstallGame(game, nullptr);
-        auto* payload = new ServerInstallDonePayload{ game.id, std::move(result) };
-        if (!PostMessageW(hwnd, WM_SERVER_INSTALL_DONE, 0, (LPARAM)payload))
+    OpenDownloadStatus();
+    StartDownloadWorker();
+}
+
+void App::StartDownloadWorker() {
+    std::lock_guard<std::mutex> lk(m_downloadMutex);
+    if (m_downloadWorkerRunning) return;
+    m_downloadWorkerRunning = true;
+    std::thread([this]() { DownloadWorker(); }).detach();
+}
+
+void App::DownloadWorker() {
+    for (;;) {
+        std::wstring gameId;
+        {
+            std::lock_guard<std::mutex> lk(m_downloadMutex);
+            auto it = std::find_if(m_downloadQueue.begin(), m_downloadQueue.end(),
+                [](const DownloadJob& j) { return !j.complete && !j.failed && !j.running; });
+            if (it == m_downloadQueue.end()) {
+                m_downloadWorkerRunning = false;
+                return;
+            }
+            it->running = true;
+            gameId = it->gameId;
+        }
+
+        Game game;
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lk(m_downloadMutex);
+            for (const auto& job : m_downloadQueue) {
+                if (job.gameId == gameId) {
+                    game = job.game;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        ServerInstallResult result;
+        if (!found) {
+            result.error = L"Queued game is no longer in the library.";
+        } else {
+            ServerClient client(m_config.Get().server);
+            HWND hwnd = m_hwnd;
+            result = client.InstallGame(game, [hwnd, id = game.id](uint64_t done, uint64_t total) {
+                auto* payload = new ServerInstallProgressPayload{ id, done, total };
+                if (!PostMessageW(hwnd, WM_SERVER_INSTALL_PROGRESS, 0, (LPARAM)payload))
+                    delete payload;
+            });
+        }
+
+        auto* payload = new ServerInstallDonePayload{ gameId, std::move(result) };
+        if (!PostMessageW(m_hwnd, WM_SERVER_INSTALL_DONE, 0, (LPARAM)payload))
             delete payload;
-    }).detach();
+    }
+}
+
+static LRESULT CALLBACK DownloadStatusWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_CLOSE) {
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void App::OpenDownloadStatus() {
+    if (!m_downloadStatusWnd) {
+        static bool registered = false;
+        if (!registered) {
+            WNDCLASSEXW wc{};
+            wc.cbSize = sizeof(wc);
+            wc.lpfnWndProc = DownloadStatusWndProc;
+            wc.hInstance = GetModuleHandleW(nullptr);
+            wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+            wc.lpszClassName = DOWNLOAD_STATUS_WNDCLASS;
+            RegisterClassExW(&wc);
+            registered = true;
+        }
+        RECT rc{};
+        GetWindowRect(m_hwnd, &rc);
+        m_downloadStatusWnd = CreateWindowExW(WS_EX_TOOLWINDOW, DOWNLOAD_STATUS_WNDCLASS,
+            L"Download Queue", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX,
+            rc.right - 440, rc.top + 90, 420, 320, m_hwnd, nullptr,
+            GetModuleHandleW(nullptr), nullptr);
+        m_downloadSummary = CreateWindowExW(0, WC_STATICW, L"No active downloads",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            14, 14, 380, 20, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        m_downloadProgress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
+            WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
+            14, 42, 380, 20, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        m_downloadList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTBOXW, nullptr,
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+            14, 76, 380, 190, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        SendMessageW(m_downloadProgress, PBM_SETRANGE32, 0, 1000);
+    }
+    RefreshDownloadStatusWindow();
+    ShowWindow(m_downloadStatusWnd, SW_SHOWNORMAL);
+    SetWindowPos(m_downloadStatusWnd, HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void App::RefreshDownloadStatusWindow() {
+    if (!m_downloadStatusWnd) return;
+    std::deque<DownloadJob> copy;
+    {
+        std::lock_guard<std::mutex> lk(m_downloadMutex);
+        copy = m_downloadQueue;
+    }
+
+    SendMessageW(m_downloadList, LB_RESETCONTENT, 0, 0);
+    uint64_t activeDone = 0, activeTotal = 0;
+    std::wstring summary = L"No active downloads";
+    for (const auto& job : copy) {
+        std::wstring state = job.complete ? L"Done" :
+            job.failed ? L"Failed" :
+            job.running ? L"Downloading" : L"Queued";
+        std::wstring line = state + L" - " + job.title;
+        if (job.running && job.total > 0) {
+            int pct = (int)std::min<uint64_t>(100, job.done * 100 / job.total);
+            line += L" (" + std::to_wstring(pct) + L"%)";
+            activeDone = job.done;
+            activeTotal = job.total;
+            summary = line;
+        } else if (job.failed && !job.error.empty()) {
+            line += L" - " + job.error;
+        }
+        SendMessageW(m_downloadList, LB_ADDSTRING, 0, (LPARAM)line.c_str());
+    }
+    int pos = activeTotal > 0 ? (int)std::min<uint64_t>(1000, activeDone * 1000 / activeTotal) : 0;
+    SendMessageW(m_downloadProgress, PBM_SETPOS, pos, 0);
+    SetWindowTextW(m_downloadSummary, summary.c_str());
 }
 
 void App::ApplyFilter() {
@@ -1763,6 +1954,7 @@ void App::OnRButtonDown(float x, float y) {
     AppendMenuW(menu, MF_STRING, IDM_LAUNCH, L"Launch");
     if (canDownload)
         AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_GAME, L"Download in Background");
+    AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_STATUS, L"Download Queue...");
     if (canValidate)
         AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate Installed Files");
     if (canUninstall)
@@ -1790,6 +1982,8 @@ void App::OnRButtonDown(float x, float y) {
             LaunchGame(*m_visibleGames[idx]);
     } else if (cmd == IDM_DOWNLOAD_GAME) {
         DownloadGameInBackground(idx);
+    } else if (cmd == IDM_DOWNLOAD_STATUS) {
+        OpenDownloadStatus();
     } else if (cmd == IDM_VALIDATE_GAME) {
         ValidateGame(idx);
     } else if (cmd == IDM_UNINSTALL_GAME) {

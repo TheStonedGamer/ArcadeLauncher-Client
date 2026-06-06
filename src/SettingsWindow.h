@@ -51,6 +51,7 @@ private:
         ID_P_BTN4  = 133, ID_P_BTN5  = 134, ID_P_BTN6  = 136,
         ID_P_STAT1 = 135,   // version status label on emulator pages
         ID_P_STAT2 = 137,   // secondary status label (e.g. DB sync state)
+        ID_P_PROG1 = 138,
     };
 
     // Layout
@@ -106,6 +107,7 @@ private:
 
     // Version check helpers
     void        SetVersionLabel(const std::wstring& installed, const std::wstring& latest);
+    void        AddEmulatorProgressBar(int x, int y, int w);
     void        SaveTagForPage(int page, const std::wstring& tag);
     void        SetPathForPage(int page, const std::wstring& exePath);
     std::wstring InstalledTagForPage(int page) const;

@@ -84,6 +84,7 @@ struct Game {
     std::wstring serverVersion;
     std::wstring installRoot;
     InstallState installState = InstallState::Local;
+    int          installProgressPermille = 0;
 
     // Art
     std::wstring coverArtPath;
