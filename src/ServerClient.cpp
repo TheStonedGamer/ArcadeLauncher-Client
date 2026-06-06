@@ -10,6 +10,10 @@ static std::wstring TrimTrailingSlash(std::wstring s) {
     return s;
 }
 
+static bool IsAbsoluteHttpUrl(const std::wstring& s) {
+    return s.rfind(L"http://", 0) == 0 || s.rfind(L"https://", 0) == 0;
+}
+
 static std::wstring PercentEncode(const std::wstring& s) {
     std::string u = ToUtf8(s);
     std::wstring out;
@@ -231,6 +235,9 @@ ServerClient::ServerClient(ServerConfig cfg) : m_cfg(std::move(cfg)) {
 }
 
 std::wstring ServerClient::Url(const std::wstring& path) const {
+    if (IsAbsoluteHttpUrl(path)) return path;
+    if (!path.empty() && path.front() != L'/')
+        return TrimTrailingSlash(m_cfg.baseUrl) + L"/" + path;
     return TrimTrailingSlash(m_cfg.baseUrl) + path;
 }
 
@@ -478,6 +485,7 @@ bool ServerClient::DownloadFile(const std::wstring& url,
                                 uint64_t expectedSize,
                                 std::function<void(uint64_t)> onFileProgress,
                                 std::wstring& error) {
+    std::wstring requestUrl = Url(url);
     std::wstring part = dest + L".part";
     fs::create_directories(ParentPath(dest));
 
@@ -496,7 +504,7 @@ bool ServerClient::DownloadFile(const std::wstring& url,
     uc.lpszHostName = host; uc.dwHostNameLength = _countof(host);
     uc.lpszUrlPath = path; uc.dwUrlPathLength = _countof(path);
     uc.dwSchemeLength = 1;
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
+    if (!WinHttpCrackUrl(requestUrl.c_str(), 0, 0, &uc)) {
         error = L"Invalid file URL";
         return false;
     }
