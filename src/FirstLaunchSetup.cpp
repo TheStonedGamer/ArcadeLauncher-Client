@@ -226,7 +226,7 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.nesPath) || !hasExe(cfg.emulators.snesPath))
         m_entries.push_back({
             L"Mesen  \x2014  NES + SNES emulator",
-            { "SourMesen/Mesen2", L"mesen.zip", L"Mesen.exe", L"mesen2" },
+            { "SourMesen/Mesen2", L"Windows.zip", L"Mesen.exe", L"mesen2" },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.nesPath  = exe;
                 c.emulators.snesPath = exe;

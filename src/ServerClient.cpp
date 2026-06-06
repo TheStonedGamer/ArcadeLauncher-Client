@@ -589,16 +589,40 @@ bool ServerClient::DownloadChunkedFile(const ServerFileEntry& file,
 
     std::wstring part = dest + L".part";
     fs::create_directories(ParentPath(dest));
-    DeleteFileW(part.c_str());
+    uint64_t written = 0;
+    size_t startChunk = 0;
+    if (fs::exists(part)) {
+        uint64_t partialSize = (uint64_t)fs::file_size(part);
+        uint64_t boundary = 0;
+        bool aligned = partialSize == 0;
+        for (size_t i = 0; i < file.chunks.size(); ++i) {
+            boundary += file.chunks[i].size;
+            if (partialSize == boundary) {
+                written = partialSize;
+                startChunk = i + 1;
+                aligned = true;
+                break;
+            }
+            if (partialSize < boundary) {
+                break;
+            }
+        }
+        if (!aligned || partialSize > file.size) {
+            DeleteFileW(part.c_str());
+            written = 0;
+            startChunk = 0;
+        }
+    }
+    if (onFileProgress) onFileProgress(written);
 
-    std::ofstream out(part, std::ios::binary | std::ios::trunc);
+    std::ofstream out(part, std::ios::binary | std::ios::app);
     if (!out) {
         error = L"Could not create partial download";
         return false;
     }
 
-    uint64_t written = 0;
-    for (const auto& chunk : file.chunks) {
+    for (size_t i = startChunk; i < file.chunks.size(); ++i) {
+        const auto& chunk = file.chunks[i];
         if (chunk.compression != L"none") {
             error = L"Unsupported chunk compression: " + chunk.compression;
             return false;

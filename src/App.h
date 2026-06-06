@@ -44,6 +44,7 @@ private:
 
     void ScanAllPlatforms();
     void LaunchGame(const Game& game);
+    void DownloadGameInBackground(int visibleIdx);
     void ValidateGame(int visibleIdx);
     void UninstallGame(int visibleIdx);
     void RefreshArt(const Game& game);
@@ -108,6 +109,7 @@ private:
     static constexpr UINT WM_TRAYICON    = WM_USER + 100;
     static constexpr UINT WM_GAME_CLOSED = WM_USER + 101;
     static constexpr UINT WM_ROMDB_READY = WM_USER + 102;
+    static constexpr UINT WM_SERVER_INSTALL_DONE = WM_USER + 103;
 
     // Context menu command IDs
     static constexpr UINT IDM_LAUNCH      = 5001;
@@ -116,6 +118,7 @@ private:
     static constexpr UINT IDM_DELETE_ROM  = 5004;
     static constexpr UINT IDM_VALIDATE_GAME = 5005;
     static constexpr UINT IDM_UNINSTALL_GAME = 5006;
+    static constexpr UINT IDM_DOWNLOAD_GAME = 5007;
 
     // Tools menu command IDs
     static constexpr UINT IDM_TOOL_DOLPHIN = 6001;

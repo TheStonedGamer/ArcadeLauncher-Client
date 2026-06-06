@@ -12,6 +12,11 @@ static const wchar_t* WNDCLASS_NAME = L"ArcadeLauncherWnd";
 static const wchar_t* COPY_PROGRESS_WNDCLASS = L"ArcadeLauncherCopyProgressWnd";
 static const wchar_t* SERVER_LOGIN_WNDCLASS = L"ArcadeLauncherServerLoginWnd";
 
+struct ServerInstallDonePayload {
+    std::wstring gameId;
+    ServerInstallResult result;
+};
+
 class CopyProgressDialog {
 public:
     bool Create(HWND owner, const std::wstring& title, const std::wstring& verb = L"Copying to local temp cache") {
@@ -698,6 +703,33 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ShowWindow_(true);
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
+
+    case WM_SERVER_INSTALL_DONE: {
+        auto* payload = reinterpret_cast<ServerInstallDonePayload*>(lp);
+        if (!payload) return 0;
+        std::unique_ptr<ServerInstallDonePayload> done(payload);
+        if (auto* stored = m_library.FindById(done->gameId)) {
+            if (done->result.ok) {
+                stored->installRoot = done->result.installRoot;
+                if (stored->emulatorPath.empty())
+                    stored->exePath = done->result.launchPath;
+                else
+                    stored->romPath = done->result.launchPath;
+                stored->arguments = done->result.arguments;
+                stored->serverVersion = done->result.version;
+                stored->installState = InstallState::Installed;
+                SaveAll();
+            } else {
+                stored->installState = InstallState::Missing;
+                MessageBoxW(m_hwnd,
+                    (L"Background download failed:\n" + done->result.error).c_str(),
+                    L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
+            }
+            ApplyFilter();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
 
     case WM_TRAYICON:
         switch (LOWORD(lp)) {
@@ -1584,6 +1616,33 @@ void App::LaunchGame(const Game& game) {
         ShowWindow(m_hwnd, SW_HIDE);  // hide to tray when a game launches
 }
 
+void App::DownloadGameInBackground(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    Game game = *m_visibleGames[visibleIdx];
+    if (!game.serverBacked || game.installState == InstallState::Installed ||
+        game.installState == InstallState::Downloading) {
+        return;
+    }
+
+    if (auto* stored = m_library.FindById(game.id)) {
+        stored->installState = InstallState::Downloading;
+        game = *stored;
+    }
+    SaveAll();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+
+    ServerConfig serverCfg = m_config.Get().server;
+    HWND hwnd = m_hwnd;
+    std::thread([hwnd, serverCfg, game]() mutable {
+        ServerClient client(serverCfg);
+        auto result = client.InstallGame(game, nullptr);
+        auto* payload = new ServerInstallDonePayload{ game.id, std::move(result) };
+        if (!PostMessageW(hwnd, WM_SERVER_INSTALL_DONE, 0, (LPARAM)payload))
+            delete payload;
+    }).detach();
+}
+
 void App::ApplyFilter() {
     if (!m_renderState.searchQuery.empty()) {
         auto res = m_library.Search(m_renderState.searchQuery);
@@ -1696,9 +1755,14 @@ void App::OnRButtonDown(float x, float y) {
         hoveredGame->installState == InstallState::Installed &&
         !hoveredGame->installRoot.empty();
     bool canUninstall = canValidate;
+    bool canDownload = hoveredGame->serverBacked &&
+        (hoveredGame->installState == InstallState::Missing ||
+         hoveredGame->installState == InstallState::UpdateAvailable);
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, IDM_LAUNCH, L"Launch");
+    if (canDownload)
+        AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_GAME, L"Download in Background");
     if (canValidate)
         AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate Installed Files");
     if (canUninstall)
@@ -1724,6 +1788,8 @@ void App::OnRButtonDown(float x, float y) {
     if (cmd == IDM_LAUNCH) {
         if (idx < (int)m_visibleGames.size())
             LaunchGame(*m_visibleGames[idx]);
+    } else if (cmd == IDM_DOWNLOAD_GAME) {
+        DownloadGameInBackground(idx);
     } else if (cmd == IDM_VALIDATE_GAME) {
         ValidateGame(idx);
     } else if (cmd == IDM_UNINSTALL_GAME) {

@@ -195,22 +195,28 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
         PostMessageW(hwnd, WM_EMUDOWNLOAD_DONE, (WPARAM)pageIdx, (LPARAM)result);
     };
 
-    // 1. Fetch GitHub latest release JSON
-    std::wstring apiUrl = L"https://api.github.com/repos/" +
-                          ToWide(spec.githubRepo) + L"/releases/latest";
-    std::string json = HttpGet(apiUrl);
-    if (json.empty()) {
-        post(new EmuDownloadResult{ L"ERR:Could not reach GitHub API. Check your internet connection." });
-        return;
-    }
-
-    std::wstring tag = ParseTagName(json);
-
-    // 2. Find matching asset URL
-    std::wstring assetUrl = FindAssetUrl(json, spec.urlPattern);
+    std::wstring tag;
+    std::wstring assetUrl = spec.directUrl;
     if (assetUrl.empty()) {
-        post(new EmuDownloadResult{ L"ERR:No matching download found for \"" + spec.urlPattern + L"\"." });
-        return;
+        // 1. Fetch GitHub latest release JSON
+        std::wstring apiUrl = L"https://api.github.com/repos/" +
+                              ToWide(spec.githubRepo) + L"/releases/latest";
+        std::string json = HttpGet(apiUrl);
+        if (json.empty()) {
+            post(new EmuDownloadResult{ L"ERR:Could not reach GitHub API. Check your internet connection." });
+            return;
+        }
+
+        tag = ParseTagName(json);
+
+        // 2. Find matching asset URL
+        assetUrl = FindAssetUrl(json, spec.urlPattern);
+        if (assetUrl.empty()) {
+            post(new EmuDownloadResult{ L"ERR:No matching download found for \"" + spec.urlPattern + L"\"." });
+            return;
+        }
+    } else if (tag.empty()) {
+        tag = spec.urlPattern;
     }
 
     // 3. Download archive

@@ -15,6 +15,7 @@ struct EmulatorDownloadSpec {
     std::wstring urlPattern;  // case-insensitive substring matched against asset download URL
     std::wstring exeName;     // exe filename to locate after extraction
     std::wstring destName;    // subfolder under %AppData%\GameLauncher\emulators
+    std::wstring directUrl;    // optional direct archive/exe URL for non-GitHub release hosts
 };
 
 // Launches a background thread that fetches the latest GitHub release, downloads

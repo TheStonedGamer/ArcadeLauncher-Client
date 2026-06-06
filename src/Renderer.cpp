@@ -453,6 +453,7 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
                          bool hovered, bool selected,
                          bool selectionMode, bool multiSelected) {
     float rnd = 8.0f;
+    float hoverPulse = hovered ? (0.5f + 0.5f * sinf(m_animTime * 5.0f)) : 0.0f;
     if (hovered || selected || multiSelected) {
         float lift = selected ? 2.0f : 4.0f;
         rect.top -= lift;
@@ -483,6 +484,11 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
     // Card background
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(rect, rnd, rnd),
                                 hovered ? m_brushCardHover.Get() : m_brushCard.Get());
+    if (hovered) {
+        m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.10f + hoverPulse * 0.07f));
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(rect, rnd, rnd), m_brushAccent.Get());
+        m_brushAccent->SetColor(C_ACCENT);
+    }
 
     // Art / placeholder
     ID2D1Bitmap* bmp = GetArt(game.id);
@@ -540,6 +546,13 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
         m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.68f));
         m_rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 4, 4), m_brushOverlay.Get());
         m_brushOverlay->SetColor(C_OVERLAY);
+        if (game.installState == InstallState::Downloading) {
+            float pulse = 0.35f + 0.25f * (0.5f + 0.5f * sinf(m_animTime * 6.0f));
+            m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, pulse));
+            m_rt->DrawRoundedRectangle(D2D1::RoundedRect(D2DInsetRect(pill, -1.0f, -1.0f), 5, 5),
+                                       m_brushAccent.Get(), 2.0f);
+            m_brushAccent->SetColor(C_ACCENT);
+        }
         m_rt->DrawText(state.c_str(), (UINT32)state.size(), m_fmtSmall.Get(), pill,
                        game.installState == InstallState::Installed ? m_brushAccent.Get() : m_brushWhite.Get());
     }

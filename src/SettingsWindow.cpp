@@ -652,16 +652,17 @@ void SettingsWindow::BuildRyujinxPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"Ryujinx");
 
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 100));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 124));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",          ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Auto-detect",       ID_P_BTN2, K_BX, y + 48));
     AddPC(SmallLabel(m_hwnd, L"Searches common install locations for Ryujinx.exe.",
                      K_CX + 12, y + 52, K_BX - K_CX - 16));
+    AddPC(Btn  (m_hwnd, L"Get Ryujinx\x2026",  ID_P_BTN5, K_BX, y + 76));
     AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
-                    K_CX + 12, y + 76, K_CW - 24));
-    y += 108;
+                    K_CX + 12, y + 104, K_CW - 24));
+    y += 132;
 }
 
 void SettingsWindow::BuildRpcs3Page() {
@@ -1107,8 +1108,12 @@ void SettingsWindow::HandlePageCommand(int id) {
                              L"Auto-detect", MB_OK | MB_ICONINFORMATION);
         }
         else if (id == ID_P_BTN5) {
-            ShellExecuteW(nullptr, L"open", L"https://dolphin-emu.org/download/",
-                          nullptr, nullptr, SW_SHOWNORMAL);
+            EnableWindow(PC(ID_P_BTN5), FALSE);
+            SetWindowTextW(PC(ID_P_BTN5), L"Downloading...");
+            DownloadEmulatorAsync(m_hwnd, PAGE_DOLPHIN,
+                { "", L"2603a", L"Dolphin.exe", L"dolphin",
+                  L"https://dl.dolphin-emu.org/releases/2603a/dolphin-2603a-x64.7z" },
+                GetAppDataPath());
         }
         break;
 
@@ -1122,6 +1127,14 @@ void SettingsWindow::HandlePageCommand(int id) {
             if (!p.empty()) SetWindowTextW(PC(ID_P_EDIT1), p.c_str());
             else MessageBoxW(m_hwnd, L"Ryujinx not found in common locations.",
                              L"Auto-detect", MB_OK | MB_ICONINFORMATION);
+        }
+        else if (id == ID_P_BTN5) {
+            EnableWindow(PC(ID_P_BTN5), FALSE);
+            SetWindowTextW(PC(ID_P_BTN5), L"Downloading...");
+            DownloadEmulatorAsync(m_hwnd, PAGE_RYUJINX,
+                { "", L"1.3.309", L"Ryujinx.exe", L"ryujinx",
+                  L"https://git.ryujinx.app/Ryubing/Canary/releases/download/1.3.309/ryujinx-canary-1.3.309-win_x64.zip" },
+                GetAppDataPath());
         }
         break;
 
@@ -1162,7 +1175,7 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_NES,
-                { "SourMesen/Mesen2", L"mesen.zip", L"Mesen.exe", L"mesen2" },
+                { "SourMesen/Mesen2", L"Windows.zip", L"Mesen.exe", L"mesen2" },
                 GetAppDataPath());
         }
         break;
@@ -1176,7 +1189,7 @@ void SettingsWindow::HandlePageCommand(int id) {
             EnableWindow(PC(ID_P_BTN5), FALSE);
             SetWindowTextW(PC(ID_P_BTN5), L"Downloading…");
             DownloadEmulatorAsync(m_hwnd, PAGE_SNES,
-                { "SourMesen/Mesen2", L"mesen.zip", L"Mesen.exe", L"mesen2" },
+                { "SourMesen/Mesen2", L"Windows.zip", L"Mesen.exe", L"mesen2" },
                 GetAppDataPath());
         }
         break;
