@@ -1867,6 +1867,24 @@ void App::ApplyFilter() {
             if (g.serverBacked && g.installState == InstallState::Missing)
                 m_visibleGames.push_back(&g);
         }
+    } else if (m_renderState.libraryPage == LibraryPage::BackgroundDownloads) {
+        m_visibleGames.clear();
+        std::vector<std::wstring> queueIds;
+        {
+            std::lock_guard<std::mutex> lk(m_downloadMutex);
+            for (const auto& job : m_downloadQueue)
+                queueIds.push_back(job.gameId);
+        }
+        for (const auto& id : queueIds) {
+            if (auto* g = m_library.FindById(id))
+                m_visibleGames.push_back(g);
+        }
+        for (auto& g : m_library.All()) {
+            if (g.installState == InstallState::Downloading &&
+                std::find(queueIds.begin(), queueIds.end(), g.id) == queueIds.end()) {
+                m_visibleGames.push_back(&g);
+            }
+        }
     } else if (m_renderState.libraryPage == LibraryPage::Updates) {
         m_visibleGames.clear();
         for (auto& g : m_library.All()) {
@@ -1877,12 +1895,14 @@ void App::ApplyFilter() {
         m_visibleGames = m_library.Filter(m_renderState.filterPlatform);
     }
 
-    // Sort: most recently played first, then alpha
-    std::sort(m_visibleGames.begin(), m_visibleGames.end(),
-        [](const Game* a, const Game* b) {
-            if (a->lastPlayed != b->lastPlayed) return a->lastPlayed > b->lastPlayed;
-            return a->title < b->title;
-        });
+    // Sort: most recently played first, then alpha. The download page keeps queue order.
+    if (m_renderState.libraryPage != LibraryPage::BackgroundDownloads) {
+        std::sort(m_visibleGames.begin(), m_visibleGames.end(),
+            [](const Game* a, const Game* b) {
+                if (a->lastPlayed != b->lastPlayed) return a->lastPlayed > b->lastPlayed;
+                return a->title < b->title;
+            });
+    }
 
     m_renderState.selectedIndex = -1;
     m_renderState.scrollOffset  = 0;

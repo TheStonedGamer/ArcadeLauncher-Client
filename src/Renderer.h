@@ -6,7 +6,7 @@
 #include <unordered_set>
 
 enum class FocusArea { Grid, Sidebar, Search };
-enum class LibraryPage { All, Installed, ReadyToDownload, Updates, Platform };
+enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform };
 
 struct RenderState {
     int   hoveredIndex  = -1;

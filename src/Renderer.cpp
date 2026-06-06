@@ -261,6 +261,7 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     v.push_back({ L"All Games", true,  Platform::Repacks, LibraryPage::All });
     v.push_back({ L"Installed", false, Platform::Repacks, LibraryPage::Installed });
     v.push_back({ L"Ready to Download", false, Platform::Repacks, LibraryPage::ReadyToDownload });
+    v.push_back({ L"Background Downloads", false, Platform::Repacks, LibraryPage::BackgroundDownloads });
     v.push_back({ L"Updates", false, Platform::Repacks, LibraryPage::Updates });
     if (s.showSteam)   v.push_back({ L"Steam",   false, Platform::Steam,   LibraryPage::Platform });
     if (s.showEpic)    v.push_back({ L"Epic",    false, Platform::Epic,    LibraryPage::Platform });
@@ -346,9 +347,20 @@ void Renderer::DrawSidebar(const RenderState& state) {
                 m_rt->FillEllipse(dot, m_brushAccent.Get());
                 m_brushAccent->SetColor(C_ACCENT);
             }
+        } else if (e.page == LibraryPage::BackgroundDownloads) {
+            D2D1_RECT_F tray = D2D1::RectF(12.0f, y + 11.0f, 28.0f, y + 27.0f);
+            m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, active ? 1.0f : 0.65f));
+            m_rt->DrawRoundedRectangle(D2D1::RoundedRect(tray, 3.0f, 3.0f), m_brushAccent.Get(), 1.5f);
+            m_rt->DrawLine(D2D1::Point2F(tray.left + 4.0f, tray.top + 8.0f),
+                           D2D1::Point2F(tray.left + 8.0f, tray.bottom - 4.0f),
+                           m_brushAccent.Get(), 1.5f);
+            m_rt->DrawLine(D2D1::Point2F(tray.left + 8.0f, tray.bottom - 4.0f),
+                           D2D1::Point2F(tray.right - 4.0f, tray.top + 4.0f),
+                           m_brushAccent.Get(), 1.5f);
+            m_brushAccent->SetColor(C_ACCENT);
         }
 
-        D2D1_RECT_F lbl = D2D1::RectF(e.all ? 16.0f : 34.0f, y, m_sidebarW - 8, y + 38);
+        D2D1_RECT_F lbl = D2D1::RectF((e.all ? 16.0f : 34.0f), y, m_sidebarW - 8, y + 38);
         m_rt->DrawText(e.label, (UINT32)wcslen(e.label), m_fmtSidebar.Get(), lbl,
                        (active || kbFocus) ? m_brushText.Get() : m_brushSubtext.Get());
         y += 42.0f;
@@ -401,10 +413,12 @@ void Renderer::DrawGrid(const std::vector<const Game*>& games, RenderState& stat
         float cy = (m_topbarH + m_height) / 2.0f;
 
         // Dim message above the button
-        static const wchar_t kMsg[] = L"No games in this library";
+        const wchar_t* msg = state.libraryPage == LibraryPage::BackgroundDownloads
+            ? L"No background downloads"
+            : L"No games in this library";
         D2D1_RECT_F msgR = D2D1::RectF(m_sidebarW + 40, cy - 58.0f,
                                         (float)m_width - 40, cy - 16.0f);
-        m_rt->DrawText(kMsg, (UINT32)(sizeof(kMsg)/sizeof(wchar_t) - 1),
+        m_rt->DrawText(msg, (UINT32)wcslen(msg),
                        m_fmtDetail.Get(), msgR, m_brushSubtext.Get());
 
         // "Open Settings" button
