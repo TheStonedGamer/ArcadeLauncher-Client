@@ -4,7 +4,7 @@
 #include "EmulatorDownloader.h"
 
 // Shown automatically on first launch when any downloadable emulator is missing.
-// Downloads RPCS3, Gopher64, and Mesen sequentially, updating AppConfig as each
+// Downloads missing emulator packages sequentially, updating AppConfig as each
 // completes. Simulates modal: disables the parent window while open.
 class EmulatorSetupWindow {
 public:

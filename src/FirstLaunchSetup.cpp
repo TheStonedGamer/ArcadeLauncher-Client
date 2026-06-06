@@ -216,6 +216,28 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
                GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES;
     };
 
+    if (!hasExe(cfg.emulators.dolphinPath))
+        m_entries.push_back({
+            L"Dolphin  \x2014  GameCube + Wii emulator",
+            { "", L"server", L"Dolphin.exe", L"dolphin",
+              EmulatorArchiveUrl(cfg, L"dolphin-x64.7z") },
+            [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
+                c.emulators.dolphinPath = exe;
+                c.emulators.dolphinTag  = tag;
+            }
+        });
+
+    if (!hasExe(cfg.emulators.ryujinxPath))
+        m_entries.push_back({
+            L"Ryujinx  \x2014  Nintendo Switch emulator",
+            { "", L"server", L"Ryujinx.exe", L"ryujinx",
+              EmulatorArchiveUrl(cfg, L"ryujinx-win-x64.zip") },
+            [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
+                c.emulators.ryujinxPath = exe;
+                c.emulators.ryujinxTag  = tag;
+            }
+        });
+
     if (!hasExe(cfg.emulators.rpcs3Path))
         m_entries.push_back({
             L"RPCS3  \x2014  PS3 emulator",
