@@ -41,6 +41,25 @@ std::wstring Find7Zip() {
 // ── ZIP via PowerShell Expand-Archive ─────────────────────────────────────────
 
 static bool ExtractZip(const std::wstring& zipPath, const std::wstring& destDir) {
+    std::wstring sz = Find7Zip();
+    if (!sz.empty()) {
+        std::wstring cmd = L"\"" + sz + L"\" x \"" + zipPath +
+                           L"\" -o\"" + destDir + L"\" -y -aoa";
+        STARTUPINFOW si{}; si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        std::vector<wchar_t> buf(cmd.begin(), cmd.end()); buf.push_back(L'\0');
+        if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                           CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 5 * 60 * 1000);
+            DWORD exitCode = 1;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            if (exitCode == 0) return true;
+        }
+    }
+
     // PowerShell 5.1 (built into Windows 10+) handles ZIP natively.
     std::wstring cmd =
         L"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass "

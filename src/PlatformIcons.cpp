@@ -269,10 +269,13 @@ void PlatformIcons::Load(const EmulatorConfig& emuCfg,
         if (bmp) m_icons[(int)ci.platform] = std::move(bmp);
     }
 
-    // PS1 and PS2 previously shared a web favicon fallback, which made the
-    // sidebar ambiguous and could leave both blank if the download failed.
     // Keep exe/cached icons when available; otherwise use deterministic badges.
-    for (Platform p : { Platform::PS1, Platform::PS2 }) {
+    for (Platform p : {
+        Platform::Steam, Platform::Epic, Platform::GOG, Platform::Dolphin,
+        Platform::Ryujinx, Platform::RPCS3, Platform::N64, Platform::NES,
+        Platform::SNES, Platform::PS1, Platform::PS2, Platform::Xbox360,
+        Platform::Xbox, Platform::Repacks
+    }) {
         if (m_icons.count((int)p)) continue;
         auto bmp = CreateGeneratedIcon(p, rt);
         if (bmp) m_icons[(int)p] = std::move(bmp);
@@ -306,7 +309,11 @@ void PlatformIcons::TryLoadConsoleIcons(ID2D1RenderTarget* rt, IWICImagingFactor
         if (bmp) m_icons[(int)ci.platform] = std::move(bmp);
     }
 
-    for (Platform p : { Platform::PS1, Platform::PS2 }) {
+    for (Platform p : {
+        Platform::Dolphin, Platform::Ryujinx, Platform::RPCS3, Platform::N64,
+        Platform::NES, Platform::SNES, Platform::PS1, Platform::PS2,
+        Platform::Xbox360, Platform::Xbox
+    }) {
         if (m_icons.count((int)p)) continue;
         auto bmp = CreateGeneratedIcon(p, rt);
         if (bmp) m_icons[(int)p] = std::move(bmp);
@@ -472,40 +479,75 @@ ComPtr<ID2D1Bitmap> PlatformIcons::CreateGeneratedIcon(Platform platform,
         }
     }
 
-    static const char* kOne[7] = {
-        "0110",
-        "1110",
-        "0110",
-        "0110",
-        "0110",
-        "0110",
-        "1111",
+    auto glyphFor = [](wchar_t ch) -> const char** {
+        static const char* A[7]={"01110","10001","10001","11111","10001","10001","10001"};
+        static const char* D[7]={"11110","10001","10001","10001","10001","10001","11110"};
+        static const char* E[7]={"11111","10000","10000","11110","10000","10000","11111"};
+        static const char* G[7]={"01111","10000","10000","10011","10001","10001","01110"};
+        static const char* N[7]={"10001","11001","10101","10011","10001","10001","10001"};
+        static const char* P[7]={"11110","10001","10001","11110","10000","10000","10000"};
+        static const char* R[7]={"11110","10001","10001","11110","10100","10010","10001"};
+        static const char* S[7]={"01111","10000","10000","01110","00001","00001","11110"};
+        static const char* W[7]={"10001","10001","10001","10101","10101","10101","01010"};
+        static const char* X[7]={"10001","10001","01010","00100","01010","10001","10001"};
+        static const char* Y[7]={"10001","10001","01010","00100","00100","00100","00100"};
+        static const char* Z[7]={"11111","00001","00010","00100","01000","10000","11111"};
+        static const char* One[7]={"00100","01100","00100","00100","00100","00100","01110"};
+        static const char* Two[7]={"01110","10001","00001","00010","00100","01000","11111"};
+        static const char* Three[7]={"11110","00001","00001","01110","00001","00001","11110"};
+        static const char* Four[7]={"10010","10010","10010","11111","00010","00010","00010"};
+        static const char* Six[7]={"00110","01000","10000","11110","10001","10001","01110"};
+        switch (towupper(ch)) {
+        case L'A': return A; case L'D': return D; case L'E': return E; case L'G': return G;
+        case L'N': return N; case L'P': return P; case L'R': return R; case L'S': return S;
+        case L'W': return W; case L'X': return X; case L'Y': return Y; case L'Z': return Z;
+        case L'1': return One; case L'2': return Two; case L'3': return Three;
+        case L'4': return Four; case L'6': return Six;
+        default: return A;
+        }
     };
-    static const char* kTwo[7] = {
-        "1110",
-        "0001",
-        "0001",
-        "0110",
-        "1000",
-        "1000",
-        "1111",
+    auto labelFor = [](Platform p) -> std::wstring {
+        switch (p) {
+        case Platform::Steam: return L"S";
+        case Platform::Epic: return L"E";
+        case Platform::GOG: return L"G";
+        case Platform::Dolphin: return L"D";
+        case Platform::Ryujinx: return L"R";
+        case Platform::RPCS3: return L"P3";
+        case Platform::N64: return L"64";
+        case Platform::NES: return L"N";
+        case Platform::SNES: return L"SN";
+        case Platform::PS1: return L"P1";
+        case Platform::PS2: return L"P2";
+        case Platform::Xbox360: return L"36";
+        case Platform::Xbox: return L"X";
+        case Platform::Repacks: return L"R";
+        }
+        return L"A";
     };
-    const char** glyph = (platform == Platform::PS2) ? kTwo : kOne;
-    int scale = 3;
-    int glyphW = 4 * scale;
+
+    std::wstring label = labelFor(platform);
+    int scale = label.size() > 1 ? 2 : 3;
+    int glyphW = 5 * scale;
+    int gap = scale;
+    int totalW = (int)label.size() * glyphW + ((int)label.size() - 1) * gap;
     int glyphH = 7 * scale;
-    int ox = (W - glyphW) / 2;
+    int ox = (W - totalW) / 2;
     int oy = (H - glyphH) / 2;
 
-    for (int gy = 0; gy < 7; ++gy) {
-        for (int gx = 0; gx < 4; ++gx) {
-            if (glyph[gy][gx] != '1') continue;
-            for (int sy = 0; sy < scale; ++sy) {
-                for (int sx = 0; sx < scale; ++sx) {
-                    int px = ox + gx * scale + sx;
-                    int py = oy + gy * scale + sy;
-                    if (px >= 0 && px < W && py >= 0 && py < H)
-                        pixels[py * W + px] = pack(255, 255, 255, 255);
+    for (size_t li = 0; li < label.size(); ++li) {
+        const char** glyph = glyphFor(label[li]);
+        int lx = ox + (int)li * (glyphW + gap);
+        for (int gy = 0; gy < 7; ++gy) {
+            for (int gx = 0; gx < 5; ++gx) {
+                if (glyph[gy][gx] != '1') continue;
+                for (int sy = 0; sy < scale; ++sy) {
+                    for (int sx = 0; sx < scale; ++sx) {
+                        int px = lx + gx * scale + sx;
+                        int py = oy + gy * scale + sy;
+                        if (px >= 0 && px < W && py >= 0 && py < H)
+                            pixels[py * W + px] = pack(255, 255, 255, 255);
+                    }
                 }
             }
         }

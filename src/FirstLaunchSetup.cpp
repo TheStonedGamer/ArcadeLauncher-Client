@@ -226,7 +226,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.nesPath) || !hasExe(cfg.emulators.snesPath))
         m_entries.push_back({
             L"Mesen  \x2014  NES + SNES emulator",
-            { "SourMesen/Mesen2", L"Windows.zip", L"Mesen.exe", L"mesen2" },
+            { "", L"2.1.1", L"Mesen.exe", L"mesen2",
+              L"https://github.com/SourMesen/Mesen2/releases/download/2.1.1/Mesen_2.1.1_Windows.zip" },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.nesPath  = exe;
                 c.emulators.snesPath = exe;
