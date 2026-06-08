@@ -131,6 +131,8 @@ struct ServerLoginState {
     HWND password = nullptr;
     HWND totpCode = nullptr;
     HWND installRoot = nullptr;
+    HFONT uiFont = nullptr;
+    HFONT titleFont = nullptr;
     bool done = false;
     bool saved = false;
 };
@@ -151,7 +153,7 @@ static HWND LoginLabel(HWND p, const wchar_t* text, int x, int y, int w) {
 
 static HWND LoginEdit(HWND p, int id, const std::wstring& text, int x, int y, int w, DWORD extra = 0) {
     return CreateWindowExW(WS_EX_CLIENTEDGE, WC_EDITW, text.c_str(),
-        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | extra,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | extra,
         x, y, w, 23, p, (HMENU)(intptr_t)id, GetModuleHandleW(nullptr), nullptr);
 }
 
@@ -183,10 +185,26 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
             st->cfg->installRoot.empty() ? GetAppDataPath() + L"\\ServerLibrary" : st->cfg->installRoot,
             150, 228, 330);
 
-        CreateWindowExW(0, WC_BUTTONW, L"Sign In", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+        CreateWindowExW(0, WC_BUTTONW, L"Sign In", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
             286, 276, 92, 30, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
-        CreateWindowExW(0, WC_BUTTONW, L"Offline", WS_CHILD | WS_VISIBLE,
+        CreateWindowExW(0, WC_BUTTONW, L"Offline", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             388, 276, 92, 30, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
+
+        // Apply a modern UI font to every child control for a cleaner look.
+        HFONT uiFont = CreateFontW(-15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        HFONT titleFont = CreateFontW(-21, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        st->uiFont = uiFont;
+        st->titleFont = titleFont;
+        for (HWND child = GetWindow(hwnd, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT))
+            SendMessageW(child, WM_SETFONT, (WPARAM)uiFont, TRUE);
+        // The first static is the big title — give it the larger font.
+        if (HWND firstChild = GetWindow(hwnd, GW_CHILD))
+            SendMessageW(firstChild, WM_SETFONT, (WPARAM)titleFont, TRUE);
+        SetFocus(st->username);
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
@@ -215,6 +233,9 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
         st->done = true;
         DestroyWindow(hwnd);
         return 0;
+    } else if (msg == WM_NCDESTROY) {
+        if (st->uiFont)    { DeleteObject(st->uiFont);    st->uiFont = nullptr; }
+        if (st->titleFont) { DeleteObject(st->titleFont); st->titleFont = nullptr; }
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -653,6 +674,7 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     // Timers
     SetTimer(m_hwnd, TIMER_ANIM,    16,  nullptr); // ~60fps
     SetTimer(m_hwnd, TIMER_SAVE, 30000,  nullptr); // autosave every 30s
+    SetTimer(m_hwnd, TIMER_RESYNC, 600000, nullptr); // re-sync server catalog every 10 min
 
     return true;
 }
@@ -715,6 +737,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         auto* payload = reinterpret_cast<ServerInstallDonePayload*>(lp);
         if (!payload) return 0;
         std::unique_ptr<ServerInstallDonePayload> done(payload);
+        bool autoLaunch = false;
         {
             std::lock_guard<std::mutex> lk(m_downloadMutex);
             for (auto& job : m_downloadQueue) {
@@ -723,6 +746,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     job.complete = done->result.ok;
                     job.failed = !done->result.ok;
                     job.error = done->result.error;
+                    autoLaunch = job.autoLaunch;
                     if (done->result.ok && job.total > 0) job.done = job.total;
                     break;
                 }
@@ -740,6 +764,14 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 stored->installState = InstallState::Installed;
                 stored->installProgressPermille = 1000;
                 SaveAll();
+                if (autoLaunch) {
+                    Game launchCopy = *stored;
+                    ApplyFilter();
+                    InvalidateRect(m_hwnd, nullptr, FALSE);
+                    RefreshDownloadStatusWindow();
+                    LaunchInstalledGame(launchCopy);
+                    return 0;
+                }
             } else {
                 stored->installState = InstallState::Missing;
                 stored->installProgressPermille = 0;
@@ -811,6 +843,13 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_TIMER:
         OnTimer((UINT)wp);
+        return 0;
+
+    case WM_ACTIVATEAPP:
+        // Re-sync the server catalog when the launcher regains focus
+        // (debounced inside TriggerResync to absorb focus flicker).
+        if (wp /* becoming active */)
+            TriggerResync();
         return 0;
 
     case WM_MOUSEMOVE:
@@ -1005,6 +1044,11 @@ void App::OnTimer(UINT timerId) {
         return;
     }
 
+    if (timerId == TIMER_RESYNC) {
+        TriggerResync();
+        return;
+    }
+
     // TIMER_ANIM: smooth scroll animation
     float& s = m_renderState.scrollOffset;
     float& t = m_renderState.targetScroll;
@@ -1069,6 +1113,11 @@ void App::OnLButtonDown(float x, float y) {
         return;
     }
 
+    if (m_renderer.HitTestDownloadsBtn(x, y)) {
+        OpenDownloadStatus();
+        return;
+    }
+
     if (m_renderer.HitTestSettingsBtn(x, y)) {
         OpenSettings();
         return;
@@ -1080,6 +1129,8 @@ void App::OnLButtonDown(float x, float y) {
         if (!m_renderState.filterAll) {
             switch (m_renderState.filterPlatform) {
             case Platform::Dolphin: page = SettingsWindow::PAGE_DOLPHIN; break;
+            case Platform::GameCube: page = SettingsWindow::PAGE_DOLPHIN; break;
+            case Platform::Wii:     page = SettingsWindow::PAGE_DOLPHIN; break;
             case Platform::Ryujinx: page = SettingsWindow::PAGE_RYUJINX; break;
             case Platform::RPCS3:   page = SettingsWindow::PAGE_RPCS3;   break;
             case Platform::N64:     page = SettingsWindow::PAGE_N64;     break;
@@ -1500,6 +1551,21 @@ void App::ShowMenuBar() {
     }
 }
 
+void App::TriggerResync() {
+    // Debounce: ignore triggers within 30s of the last one (focus-flicker guard)
+    // and skip if a re-sync is already running.
+    ULONGLONG now = GetTickCount64();
+    if (m_lastResyncTick != 0 && now - m_lastResyncTick < 30000) return;
+    bool expected = false;
+    if (!m_resyncRunning.compare_exchange_strong(expected, true)) return;
+    m_lastResyncTick = now;
+
+    std::thread([this]() {
+        ScanAllPlatforms();
+        m_resyncRunning.store(false);
+    }).detach();
+}
+
 void App::ScanAllPlatforms() {
     auto& lib = m_config.Get().libraries;
     auto& emu = m_config.Get().emulators;
@@ -1524,6 +1590,8 @@ void App::ScanAllPlatforms() {
             for (auto& g : serverGames) {
                 switch (g.platform) {
                 case Platform::Dolphin: g.emulatorPath = emu.dolphinPath; break;
+                case Platform::GameCube: g.emulatorPath = emu.dolphinPath; break;
+                case Platform::Wii: g.emulatorPath = emu.dolphinPath; break;
                 case Platform::Ryujinx: g.emulatorPath = emu.ryujinxPath; break;
                 case Platform::RPCS3: g.emulatorPath = emu.rpcs3Path; break;
                 case Platform::N64: g.emulatorPath = emu.n64Path; break;
@@ -1550,59 +1618,57 @@ void App::LaunchGame(const Game& game) {
 
     Game launchGame = game;
     if (launchGame.serverBacked) {
-        bool needsInstall = launchGame.installState != InstallState::Installed ||
-            launchGame.installRoot.empty() || !PathFileExistsW(launchGame.installRoot.c_str());
-        if (needsInstall) {
-            std::wstring prompt = L"Install " + launchGame.title + L" from ArcadeLauncher Server now?";
-            if (MessageBoxW(m_hwnd, prompt.c_str(), L"ArcadeLauncher Server",
-                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON1) != IDYES) {
-                return;
-            }
-        }
-
-        CopyProgressDialog dialog;
-        dialog.Create(m_hwnd, (needsInstall ? L"Installing " : L"Preparing ") + launchGame.title);
-        auto startedAt = std::chrono::steady_clock::now();
-
-        ServerClient client(m_config.Get().server);
-        auto result = client.InstallGame(launchGame, [&](uint64_t copied, uint64_t total) {
-            double seconds = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - startedAt).count();
-            double mbps = seconds > 0.0
-                ? ((double)copied / (1024.0 * 1024.0)) / seconds
-                : 0.0;
-            dialog.SetProgress(copied, total, mbps);
-        });
-        dialog.Close();
-
-        if (!result.ok) {
-            MessageBoxW(m_hwnd,
-                ((needsInstall ? L"Could not install game:\n" : L"Could not prepare game:\n") + result.error).c_str(),
-                L"ArcadeLauncher Server", MB_ICONERROR);
+        bool ready = launchGame.installState == InstallState::Installed &&
+            !launchGame.installRoot.empty() && PathFileExistsW(launchGame.installRoot.c_str());
+        if (ready) {
+            // Already installed: launch immediately, no UI-thread install work.
+            LaunchInstalledGame(launchGame);
             return;
         }
-
-        launchGame.installRoot = result.installRoot;
-        if (launchGame.emulatorPath.empty())
-            launchGame.exePath = result.launchPath;
-        else
-            launchGame.romPath = result.launchPath;
-        launchGame.arguments = result.arguments;
-        launchGame.serverVersion = result.version;
-        launchGame.installState = InstallState::Installed;
-
-        if (auto* stored = m_library.FindById(launchGame.id)) {
-            stored->installRoot = launchGame.installRoot;
-            stored->romPath = launchGame.romPath;
-            stored->exePath = launchGame.exePath;
-            stored->arguments = launchGame.arguments;
-            stored->serverVersion = launchGame.serverVersion;
-            stored->installState = InstallState::Installed;
-        }
-        SaveAll();
-        ApplyFilter();
+        // Not installed: install on the background worker and auto-launch when
+        // it finishes. Returns immediately so the UI never freezes.
+        QueueServerInstall(launchGame, /*autoLaunch=*/true);
+        return;
     }
 
+    LaunchInstalledGame(launchGame);
+}
+
+// Enqueue a server game for background install (optionally auto-launching when
+// the install completes). Shared by the Play action and the Download button.
+void App::QueueServerInstall(const Game& game, bool autoLaunch) {
+    if (!game.serverBacked) return;
+    {
+        std::lock_guard<std::mutex> lk(m_downloadMutex);
+        auto exists = std::find_if(m_downloadQueue.begin(), m_downloadQueue.end(),
+            [&](const DownloadJob& j) {
+                return j.gameId == game.id && !j.complete && !j.failed;
+            });
+        if (exists != m_downloadQueue.end()) {
+            if (autoLaunch) exists->autoLaunch = true;
+            OpenDownloadStatus();
+            StartDownloadWorker();
+            return;
+        }
+        DownloadJob job{};
+        job.game = game;
+        job.gameId = game.id;
+        job.title = game.title;
+        job.autoLaunch = autoLaunch;
+        m_downloadQueue.push_back(std::move(job));
+    }
+    if (auto* stored = m_library.FindById(game.id)) {
+        stored->installState = InstallState::Downloading;
+        stored->installProgressPermille = 0;
+    }
+    SaveAll();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+    OpenDownloadStatus();
+    StartDownloadWorker();
+}
+
+void App::LaunchInstalledGame(Game launchGame) {
     bool ok = false;
 
     if (!launchGame.launchUri.empty()) {
@@ -1929,6 +1995,8 @@ void App::UpdateSidebarFlags() {
     m_renderState.showEpic    = true;
     m_renderState.showGog     = true;
     m_renderState.showDolphin = true;
+    m_renderState.showGameCube = true;
+    m_renderState.showWii     = true;
     m_renderState.showRyujinx = true;
     m_renderState.showRPCS3   = true;
     m_renderState.showN64     = true;
@@ -2117,6 +2185,8 @@ void App::OpenEditTitle(int visibleIdx) {
     if (!g) return;
 
     bool isEmulated = (g->platform == Platform::Dolphin ||
+                       g->platform == Platform::GameCube ||
+                       g->platform == Platform::Wii     ||
                        g->platform == Platform::Ryujinx ||
                        g->platform == Platform::RPCS3   ||
                        g->platform == Platform::N64     ||

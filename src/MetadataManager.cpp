@@ -92,6 +92,8 @@ void MetadataManager::ProcessItem(const WorkItem& item) {
     static const auto igdbPlatforms = [](Platform p) -> std::vector<int> {
         switch (p) {
         case Platform::Dolphin: return { 21, 5 };  // GameCube, Wii
+        case Platform::GameCube: return { 21 };    // GameCube
+        case Platform::Wii:     return { 5 };      // Wii
         case Platform::Ryujinx: return { 130 };    // Nintendo Switch
         case Platform::RPCS3:   return { 9 };      // PS3
         case Platform::N64:     return { 4 };      // Nintendo 64

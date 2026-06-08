@@ -233,6 +233,8 @@ void PlatformIcons::Load(const EmulatorConfig& emuCfg,
         { Platform::Epic,    FindEpicExe() },
         { Platform::GOG,     FindGogExe() },
         { Platform::Dolphin, FindDolphinExe(emuCfg.dolphinPath) },
+        { Platform::GameCube, FindDolphinExe(emuCfg.dolphinPath) },
+        { Platform::Wii,     FindDolphinExe(emuCfg.dolphinPath) },
         { Platform::Ryujinx, FindRyujinxExe(emuCfg.ryujinxPath) },
         { Platform::RPCS3,   emuCfg.rpcs3Path       },
         { Platform::N64,     emuCfg.n64Path         },
@@ -272,6 +274,7 @@ void PlatformIcons::Load(const EmulatorConfig& emuCfg,
     // Keep exe/cached icons when available; otherwise use deterministic badges.
     for (Platform p : {
         Platform::Steam, Platform::Epic, Platform::GOG, Platform::Dolphin,
+        Platform::GameCube, Platform::Wii,
         Platform::Ryujinx, Platform::RPCS3, Platform::N64, Platform::NES,
         Platform::SNES, Platform::PS1, Platform::PS2, Platform::Xbox360,
         Platform::Xbox, Platform::Repacks
@@ -310,7 +313,8 @@ void PlatformIcons::TryLoadConsoleIcons(ID2D1RenderTarget* rt, IWICImagingFactor
     }
 
     for (Platform p : {
-        Platform::Dolphin, Platform::Ryujinx, Platform::RPCS3, Platform::N64,
+        Platform::Dolphin, Platform::GameCube, Platform::Wii,
+        Platform::Ryujinx, Platform::RPCS3, Platform::N64,
         Platform::NES, Platform::SNES, Platform::PS1, Platform::PS2,
         Platform::Xbox360, Platform::Xbox
     }) {
@@ -512,6 +516,8 @@ ComPtr<ID2D1Bitmap> PlatformIcons::CreateGeneratedIcon(Platform platform,
         case Platform::Epic: return L"E";
         case Platform::GOG: return L"G";
         case Platform::Dolphin: return L"D";
+        case Platform::GameCube: return L"GC";
+        case Platform::Wii: return L"Wii";
         case Platform::Ryujinx: return L"R";
         case Platform::RPCS3: return L"P3";
         case Platform::N64: return L"64";
@@ -521,7 +527,7 @@ ComPtr<ID2D1Bitmap> PlatformIcons::CreateGeneratedIcon(Platform platform,
         case Platform::PS2: return L"P2";
         case Platform::Xbox360: return L"36";
         case Platform::Xbox: return L"X";
-        case Platform::Repacks: return L"R";
+        case Platform::Repacks: return L"PC";
         }
         return L"A";
     };

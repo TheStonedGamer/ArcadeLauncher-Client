@@ -44,6 +44,8 @@ private:
 
     void ScanAllPlatforms();
     void LaunchGame(const Game& game);
+    void LaunchInstalledGame(Game launchGame);
+    void QueueServerInstall(const Game& game, bool autoLaunch);
     void DownloadGameInBackground(int visibleIdx);
     void OpenDownloadStatus();
     void RefreshDownloadStatusWindow();
@@ -104,6 +106,7 @@ private:
         bool running = false;
         bool complete = false;
         bool failed = false;
+        bool autoLaunch = false;  // launch the game when this install completes
         std::wstring error;
     };
     std::mutex m_downloadMutex;
@@ -127,6 +130,12 @@ private:
     static constexpr UINT TIMER_ANIM   = 1;
     static constexpr UINT TIMER_SCROLL = 2;
     static constexpr UINT TIMER_SAVE   = 3;
+    static constexpr UINT TIMER_RESYNC = 4;
+
+    // Periodic / focus-driven server re-sync
+    void TriggerResync();
+    std::atomic<bool> m_resyncRunning{ false };
+    ULONGLONG m_lastResyncTick = 0;
 
     // Window messages
     static constexpr UINT WM_TRAYICON    = WM_USER + 100;

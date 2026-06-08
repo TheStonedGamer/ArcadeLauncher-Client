@@ -35,6 +35,10 @@
     <!-- Embed the cab into the MSI (single-file installer) -->
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
+    <!-- Application icon: shown in Programs & Features (ARPPRODUCTICON) and on shortcuts -->
+    <Icon Id="AppIcon.ico" SourceFile="resources\icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+
     <!-- ── Installation directories ─────────────────────────────────────────── -->
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="ArcadeLauncher">
@@ -58,7 +62,8 @@
                     Name="ArcadeLauncher"
                     Description="Your all-in-one game library front-end"
                     Target="[INSTALLFOLDER]ArcadeLauncher.exe"
-                    WorkingDirectory="INSTALLFOLDER" />
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="AppIcon.ico" />
           <!-- RemoveFolder cleans up the Start-menu directory on uninstall -->
           <RemoveFolder Id="CleanupStartMenuDir" Directory="StartMenuAppFolder" On="uninstall" />
           <!-- RegistryValue is the KeyPath so the component can be detected -->
@@ -77,7 +82,8 @@
         <Shortcut Id="DesktopLink"
                   Name="ArcadeLauncher"
                   Target="[INSTALLFOLDER]ArcadeLauncher.exe"
-                  WorkingDirectory="INSTALLFOLDER" />
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon.ico" />
         <RegistryValue Root="HKCU"
                        Key="Software\ArcadeLauncher"
                        Name="DesktopInstalled"

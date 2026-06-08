@@ -73,6 +73,7 @@ private:
                       std::string& body,
                       std::wstring& error);
     bool EnsureAuthenticated(std::wstring& error);
+    bool TryChallengeResponse(std::wstring& error);
     bool DownloadFile(const std::wstring& url,
                       const std::wstring& dest,
                       uint64_t expectedSize,

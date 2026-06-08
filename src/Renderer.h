@@ -30,6 +30,8 @@ struct RenderState {
     bool showEpic    = true;
     bool showGog     = true;
     bool showDolphin = true;
+    bool showGameCube = true;
+    bool showWii     = true;
     bool showRyujinx = true;
     bool showRPCS3   = true;
     bool showN64     = true;
@@ -73,6 +75,7 @@ public:
     bool HitTestLaunchBtn(float x, float y) const;
     bool HitTestSettingsBtn(float x, float y) const;
     bool HitTestSelectModeBtn(float x, float y) const;
+    bool HitTestDownloadsBtn(float x, float y) const;
     bool HitTestEmptyStateBtn(float x, float y) const;
 
     // Returns the recommended targetScroll so that game at idx is fully visible.
@@ -158,5 +161,6 @@ private:
     D2D1_RECT_F m_launchBtnRect{};
     D2D1_RECT_F m_settingsBtnRect{};
     D2D1_RECT_F m_selectModeBtnRect{};
+    D2D1_RECT_F m_downloadsBtnRect{};
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
 };

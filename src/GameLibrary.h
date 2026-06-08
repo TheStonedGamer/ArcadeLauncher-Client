@@ -6,6 +6,8 @@ enum class Platform {
     Epic,
     GOG,
     Dolphin,
+    GameCube,
+    Wii,
     Ryujinx,
     RPCS3,
     N64,
@@ -32,6 +34,8 @@ inline std::wstring PlatformName(Platform p) {
     case Platform::Epic:    return L"Epic";
     case Platform::GOG:     return L"GOG";
     case Platform::Dolphin: return L"Dolphin";
+    case Platform::GameCube: return L"GameCube";
+    case Platform::Wii:     return L"Wii";
     case Platform::Ryujinx: return L"Ryujinx";
     case Platform::RPCS3:   return L"RPCS3";
     case Platform::N64:     return L"N64";
@@ -41,7 +45,7 @@ inline std::wstring PlatformName(Platform p) {
     case Platform::PS2:     return L"PS2";
     case Platform::Xbox360: return L"Xbox360";
     case Platform::Xbox:    return L"Xbox";
-    default:                return L"Repacks";
+    default:                return L"PC";
     }
 }
 
@@ -51,6 +55,8 @@ inline D2D1_COLOR_F PlatformColor(Platform p) {
     case Platform::Epic:    return D2D1::ColorF(0xC8C8C8);  // Epic silver
     case Platform::GOG:     return D2D1::ColorF(0xAC6EE8);  // GOG purple
     case Platform::Dolphin: return D2D1::ColorF(0x4ECDC4);  // teal
+    case Platform::GameCube: return D2D1::ColorF(0x6A5ACD);  // GameCube indigo
+    case Platform::Wii:     return D2D1::ColorF(0x7FB2E5);  // Wii light blue
     case Platform::Ryujinx: return D2D1::ColorF(0xFF4A4A);  // red
     case Platform::RPCS3:   return D2D1::ColorF(0x003791);  // PlayStation blue
     case Platform::N64:     return D2D1::ColorF(0x009B77);  // N64 green

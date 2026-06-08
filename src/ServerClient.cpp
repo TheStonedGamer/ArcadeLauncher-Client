@@ -109,6 +109,8 @@ static Platform ParsePlatform(const std::wstring& p) {
     if (p == L"Epic") return Platform::Epic;
     if (p == L"GOG") return Platform::GOG;
     if (p == L"Dolphin") return Platform::Dolphin;
+    if (p == L"GameCube") return Platform::GameCube;
+    if (p == L"Wii") return Platform::Wii;
     if (p == L"Ryujinx") return Platform::Ryujinx;
     if (p == L"RPCS3") return Platform::RPCS3;
     if (p == L"N64") return Platform::N64;
@@ -118,7 +120,8 @@ static Platform ParsePlatform(const std::wstring& p) {
     if (p == L"PS2") return Platform::PS2;
     if (p == L"Xbox360") return Platform::Xbox360;
     if (p == L"Xbox") return Platform::Xbox;
-    return Platform::Repacks;
+    if (p == L"PC") return Platform::Repacks;        // PC games (formerly "Repacks")
+    return Platform::Repacks;                         // legacy "Repacks" + unknown
 }
 
 static std::wstring SafeFilePart(std::wstring s) {
@@ -228,6 +231,77 @@ static bool Sha256File(const std::wstring& path, std::wstring& hex) {
     return true;
 }
 
+// ─── Challenge-response crypto helpers ───────────────────────────────────────
+// Mirror of the server: shared key = SHA-256(lower(username) 0x1f password),
+// proof = HMAC-SHA256(key, nonce), token decrypted with HMAC-CTR keystream.
+static std::vector<BYTE> Sha256Bytes(const BYTE* data, size_t len) {
+    std::vector<BYTE> out;
+    HCRYPTPROV prov = 0; HCRYPTHASH h = 0;
+    if (!CryptAcquireContextW(&prov, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) return out;
+    if (!CryptCreateHash(prov, CALG_SHA_256, 0, 0, &h)) { CryptReleaseContext(prov, 0); return out; }
+    if (len == 0 || CryptHashData(h, data, (DWORD)len, 0)) {
+        BYTE d[32]{}; DWORD dl = 32;
+        if (CryptGetHashParam(h, HP_HASHVAL, d, &dl, 0)) out.assign(d, d + dl);
+    }
+    CryptDestroyHash(h); CryptReleaseContext(prov, 0);
+    return out;
+}
+
+static std::vector<BYTE> HmacSha256(const std::vector<BYTE>& key, const std::vector<BYTE>& msg) {
+    std::vector<BYTE> k = key;
+    if (k.size() > 64) k = Sha256Bytes(k.data(), k.size());
+    k.resize(64, 0);
+    std::vector<BYTE> inner(64), outer(64);
+    for (int i = 0; i < 64; ++i) { inner[i] = k[i] ^ 0x36; outer[i] = k[i] ^ 0x5c; }
+    inner.insert(inner.end(), msg.begin(), msg.end());
+    std::vector<BYTE> ih = Sha256Bytes(inner.data(), inner.size());
+    outer.insert(outer.end(), ih.begin(), ih.end());
+    return Sha256Bytes(outer.data(), outer.size());
+}
+
+static std::string HexEncodeBytes(const std::vector<BYTE>& b) {
+    static const char* hexd = "0123456789abcdef";
+    std::string s; s.reserve(b.size() * 2);
+    for (BYTE v : b) { s.push_back(hexd[v >> 4]); s.push_back(hexd[v & 0xf]); }
+    return s;
+}
+
+static std::vector<BYTE> HexDecodeBytes(const std::string& s) {
+    auto nib = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    std::vector<BYTE> out;
+    for (size_t i = 0; i + 1 < s.size(); i += 2) {
+        int hi = nib(s[i]), lo = nib(s[i + 1]);
+        if (hi < 0 || lo < 0) break;
+        out.push_back((BYTE)((hi << 4) | lo));
+    }
+    return out;
+}
+
+static std::vector<BYTE> HmacCtrXor(const std::vector<BYTE>& key,
+                                    const std::vector<BYTE>& iv,
+                                    const std::vector<BYTE>& data) {
+    std::vector<BYTE> out; out.reserve(data.size());
+    uint32_t counter = 0;
+    std::vector<BYTE> block;
+    size_t bi = 32;
+    for (BYTE d : data) {
+        if (bi >= 32) {
+            std::vector<BYTE> msg = iv;
+            BYTE cb[4] = { (BYTE)(counter >> 24), (BYTE)(counter >> 16), (BYTE)(counter >> 8), (BYTE)counter };
+            msg.insert(msg.end(), cb, cb + 4);
+            block = HmacSha256(key, msg);
+            ++counter; bi = 0;
+        }
+        out.push_back(d ^ block[bi++]);
+    }
+    return out;
+}
+
 ServerClient::ServerClient(ServerConfig cfg) : m_cfg(std::move(cfg)) {
     m_cfg.baseUrl = TrimTrailingSlash(m_cfg.baseUrl);
     if (m_cfg.installRoot.empty())
@@ -245,7 +319,9 @@ bool ServerClient::HttpGet(const std::wstring& url,
                            std::string& body,
                            std::wstring& error,
                            const std::wstring& rangeHeader) {
-    if (url.find(L"/api/login") == std::wstring::npos && !EnsureAuthenticated(error))
+    if (url.find(L"/api/login") == std::wstring::npos &&
+        url.find(L"/api/auth/") == std::wstring::npos &&
+        !EnsureAuthenticated(error))
         return false;
     URL_COMPONENTSW uc{ sizeof(uc) };
     wchar_t host[256]{}, path[2048]{};
@@ -383,9 +459,60 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
     return true;
 }
 
+bool ServerClient::TryChallengeResponse(std::wstring& error) {
+    // 1. Request a single-use nonce for this user.
+    std::string chBody;
+    std::wstring chUrl = Url(L"/api/auth/challenge?username=" + PercentEncode(m_cfg.username));
+    if (!HttpGet(chUrl, chBody, error)) return false;
+    std::string nonce = JsonString(chBody, "nonce");
+    if (nonce.empty()) { error = L"Server did not issue an auth challenge"; return false; }
+
+    // 2. Derive the shared key: SHA-256(lower(username) 0x1f password).
+    std::string un = ToUtf8(m_cfg.username);
+    // trim + ASCII-lowercase to match server's normalization
+    size_t a = un.find_first_not_of(" \t\r\n");
+    size_t b = un.find_last_not_of(" \t\r\n");
+    un = (a == std::string::npos) ? std::string() : un.substr(a, b - a + 1);
+    for (char& c : un) if (c >= 'A' && c <= 'Z') c = c - 'A' + 'a';
+    std::string pw = ToUtf8(m_cfg.password);
+    std::vector<BYTE> keymat(un.begin(), un.end());
+    keymat.push_back(0x1f);
+    keymat.insert(keymat.end(), pw.begin(), pw.end());
+    std::vector<BYTE> key = Sha256Bytes(keymat.data(), keymat.size());
+
+    // 3. proof = HMAC-SHA256(key, nonce)
+    std::vector<BYTE> nbytes(nonce.begin(), nonce.end());
+    std::string proof = HexEncodeBytes(HmacSha256(key, nbytes));
+
+    // 4. Submit the proof.
+    std::wstring form = L"username=" + PercentEncode(m_cfg.username) +
+        L"&proof=" + ToWide(proof);
+    if (!m_cfg.totpCode.empty())
+        form += L"&totpCode=" + PercentEncode(m_cfg.totpCode);
+    std::string body;
+    if (!HttpPostForm(Url(L"/api/auth/verify"), form, body, error)) return false;
+
+    // 5. Decrypt the returned token.
+    std::string ivHex = JsonString(body, "iv");
+    std::string tokHex = JsonString(body, "token");
+    if (ivHex.empty() || tokHex.empty()) { error = L"Auth verify did not return a token"; return false; }
+    std::vector<BYTE> iv = HexDecodeBytes(ivHex);
+    std::vector<BYTE> cipher = HexDecodeBytes(tokHex);
+    std::vector<BYTE> plain = HmacCtrXor(key, iv, cipher);
+    std::string token(plain.begin(), plain.end());
+    if (token.empty()) { error = L"Failed to decrypt auth token"; return false; }
+    m_cfg.authToken = ToWide(token);
+    return true;
+}
+
 bool ServerClient::EnsureAuthenticated(std::wstring& error) {
     if (!m_cfg.authToken.empty()) return true;
     if (m_cfg.username.empty() || m_cfg.password.empty()) return true;
+
+    // Prefer challenge-response (password never crosses the wire); fall back to
+    // the legacy password login for accounts created before the auth_key column.
+    std::wstring chError;
+    if (TryChallengeResponse(chError)) return true;
 
     std::wstring form = L"username=" + PercentEncode(m_cfg.username) +
         L"&password=" + PercentEncode(m_cfg.password);

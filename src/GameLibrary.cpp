@@ -355,7 +355,8 @@ void GameLibrary::Load(const std::wstring& path) {
         else if (plat == "PS2")     g.platform = Platform::PS2;
         else if (plat == "Xbox360") g.platform = Platform::Xbox360;
         else if (plat == "Xbox")    g.platform = Platform::Xbox;
-        else                        g.platform = Platform::Repacks;
+        else if (plat == "PC")      g.platform = Platform::Repacks;  // PC (formerly "Repacks")
+        else                        g.platform = Platform::Repacks;  // legacy + unknown
 
         m_games.push_back(std::move(g));
     }

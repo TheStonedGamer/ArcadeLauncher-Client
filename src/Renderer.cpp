@@ -125,7 +125,7 @@ void Renderer::Resize(UINT w, UINT h) {
     float gridW = (float)w - m_sidebarW;
     m_cols = std::max(1, (int)((gridW + m_tileGap) / (m_tileW + m_tileGap)));
 
-    float actionsLeft = (float)w - 102.0f;
+    float actionsLeft = (float)w - 148.0f;
     float searchLeft = std::max(m_sidebarW + 168.0f, (float)w * 0.34f);
     float searchRight = std::min(actionsLeft - 12.0f, (float)w * 0.66f);
     if (searchRight - searchLeft < 180.0f) {
@@ -135,6 +135,7 @@ void Renderer::Resize(UINT w, UINT h) {
     m_searchRect = D2D1::RectF(searchLeft, 14.0f, searchRight, 50.0f);
     m_settingsBtnRect = D2D1::RectF((float)w - 50.0f, 16.0f, (float)w - 14.0f, 48.0f);
     m_selectModeBtnRect = D2D1::RectF((float)w - 96.0f, 16.0f, (float)w - 58.0f, 48.0f);
+    m_downloadsBtnRect = D2D1::RectF((float)w - 142.0f, 16.0f, (float)w - 104.0f, 48.0f);
     m_launchBtnRect = {}; // set during detail panel draw
 }
 
@@ -248,6 +249,13 @@ void Renderer::DrawTopBar(const RenderState& state) {
                        badge, m_brushBg.Get());
     }
 
+    // Downloads button (Segoe MDL2 Assets U+E896 download glyph)
+    auto& dl = m_downloadsBtnRect;
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(dl, 6, 6), m_brushCard.Get());
+    m_rt->DrawText(L"\xE896", 1, m_fmtIcon.Get(),
+                   D2D1::RectF(dl.left, dl.top, dl.right, dl.bottom),
+                   m_brushSubtext.Get());
+
     auto& sb = m_settingsBtnRect;
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(sb, 6, 6), m_brushCard.Get());
     m_rt->DrawText(L"", 1, m_fmtIcon.Get(),
@@ -267,6 +275,8 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     if (s.showEpic)    v.push_back({ L"Epic",    false, Platform::Epic,    LibraryPage::Platform });
     if (s.showGog)     v.push_back({ L"GOG",     false, Platform::GOG,     LibraryPage::Platform });
     if (s.showDolphin) v.push_back({ L"Dolphin", false, Platform::Dolphin, LibraryPage::Platform });
+    if (s.showGameCube) v.push_back({ L"GameCube", false, Platform::GameCube, LibraryPage::Platform });
+    if (s.showWii)     v.push_back({ L"Wii",     false, Platform::Wii,     LibraryPage::Platform });
     if (s.showRyujinx) v.push_back({ L"Ryujinx", false, Platform::Ryujinx, LibraryPage::Platform });
     if (s.showRPCS3)   v.push_back({ L"RPCS3",   false, Platform::RPCS3,   LibraryPage::Platform });
     if (s.showN64)     v.push_back({ L"N64",     false, Platform::N64,     LibraryPage::Platform });
@@ -276,7 +286,7 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     if (s.showPS2)     v.push_back({ L"PS2",      false, Platform::PS2,     LibraryPage::Platform });
     if (s.showXbox360) v.push_back({ L"Xbox 360", false, Platform::Xbox360, LibraryPage::Platform });
     if (s.showXbox)    v.push_back({ L"Xbox",     false, Platform::Xbox,    LibraryPage::Platform });
-    if (s.showRepacks) v.push_back({ L"Repacks",  false, Platform::Repacks, LibraryPage::Platform });
+    if (s.showRepacks) v.push_back({ L"PC",  false, Platform::Repacks, LibraryPage::Platform });
     return v;
 }
 
@@ -910,6 +920,11 @@ bool Renderer::HitTestLaunchBtn(float x, float y) const {
 bool Renderer::HitTestSettingsBtn(float x, float y) const {
     return x >= m_settingsBtnRect.left && x <= m_settingsBtnRect.right &&
            y >= m_settingsBtnRect.top  && y <= m_settingsBtnRect.bottom;
+}
+
+bool Renderer::HitTestDownloadsBtn(float x, float y) const {
+    return x >= m_downloadsBtnRect.left && x <= m_downloadsBtnRect.right &&
+           y >= m_downloadsBtnRect.top  && y <= m_downloadsBtnRect.bottom;
 }
 
 bool Renderer::HitTestSelectModeBtn(float x, float y) const {
