@@ -259,6 +259,27 @@ static std::vector<BYTE> HmacSha256(const std::vector<BYTE>& key, const std::vec
     return Sha256Bytes(outer.data(), outer.size());
 }
 
+// True if a relative path contains a parent-directory ("..") component, i.e. it
+// could escape the install root. Splits on both separators so "a/../b",
+// "a\..\b", and a bare ".." are caught, while legitimate names like "foo..bar"
+// (no standalone "..") are allowed.
+static bool HasPathTraversal(const std::wstring& path) {
+    std::wstring cur;
+    auto check = [&]() {
+        if (cur == L"..") return true;
+        cur.clear();
+        return false;
+    };
+    for (wchar_t c : path) {
+        if (c == L'/' || c == L'\\') {
+            if (check()) return true;
+        } else {
+            cur.push_back(c);
+        }
+    }
+    return cur == L"..";
+}
+
 static std::string HexEncodeBytes(const std::vector<BYTE>& b) {
     static const char* hexd = "0123456789abcdef";
     std::string s; s.reserve(b.size() * 2);
@@ -833,6 +854,14 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
     for (const auto& f : manifest.files) total += f.size;
 
     for (const auto& f : manifest.files) {
+        // Defensive: a manifest path must never escape the install root. The
+        // server is trusted, but a compromised/buggy server shouldn't be able to
+        // write arbitrary files via "../" components in f.path.
+        if (HasPathTraversal(f.path)) {
+            result.error = L"Refusing unsafe file path in manifest: " + f.path;
+            return result;
+        }
+
         std::wstring dest = installRoot + L"\\" + f.path;
         std::replace(dest.begin(), dest.end(), L'/', L'\\');
 
@@ -847,9 +876,14 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
             auto progress = [&](uint64_t fileDone) {
                 if (onProgress) onProgress(done + fileDone, total);
             };
-            bool downloaded = !f.chunks.empty()
-                ? DownloadChunkedFile(f, dest, progress, error)
-                : DownloadFile(f.url, dest, f.size, progress, error);
+            // Prefer a single resumable ranged GET of the whole file: one
+            // connection (keep-alive friendly), streamed straight to .part, with
+            // the authoritative full-file SHA-256 verified below. The per-chunk
+            // path opens a fresh HTTPS connection and triple-buffers each chunk to
+            // disk, so it's only a fallback for when the server omits a file URL.
+            bool downloaded = !f.url.empty()
+                ? DownloadFile(f.url, dest, f.size, progress, error)
+                : DownloadChunkedFile(f, dest, progress, error);
             if (!downloaded) {
                 result.error = error;
                 return result;
@@ -953,6 +987,11 @@ ServerValidateResult ServerClient::ValidateGame(const Game& game,
     for (const auto& f : manifest.files) total += f.size;
 
     for (const auto& f : manifest.files) {
+        if (HasPathTraversal(f.path)) {
+            result.badFiles.push_back(f.path);
+            result.checkedFiles++;
+            continue;
+        }
         std::wstring dest = installRoot + L"\\" + f.path;
         std::replace(dest.begin(), dest.end(), L'/', L'\\');
 
