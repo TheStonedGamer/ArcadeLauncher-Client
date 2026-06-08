@@ -251,10 +251,23 @@ void Renderer::DrawTopBar(const RenderState& state) {
 
     // Downloads button (Segoe MDL2 Assets U+E896 download glyph)
     auto& dl = m_downloadsBtnRect;
-    m_rt->FillRoundedRectangle(D2D1::RoundedRect(dl, 6, 6), m_brushCard.Get());
+    bool dlActive = state.activeDownloadCount > 0;
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(dl, 6, 6),
+                               dlActive ? m_brushCardHover.Get() : m_brushCard.Get());
     m_rt->DrawText(L"\xE896", 1, m_fmtIcon.Get(),
                    D2D1::RectF(dl.left, dl.top, dl.right, dl.bottom),
-                   m_brushSubtext.Get());
+                   dlActive ? m_brushAccent.Get() : m_brushSubtext.Get());
+
+    if (dlActive) {
+        std::wstring count = std::to_wstring(state.activeDownloadCount);
+        D2D1_RECT_F badge = D2D1::RectF(dl.right - 10.0f, dl.top - 4.0f,
+                                         dl.right + 10.0f, dl.top + 16.0f);
+        m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F((badge.left + badge.right) * 0.5f,
+                                                       (badge.top + badge.bottom) * 0.5f),
+                                        10.0f, 10.0f), m_brushAccent.Get());
+        m_rt->DrawText(count.c_str(), (UINT32)count.size(), m_fmtCardSub.Get(),
+                       badge, m_brushBg.Get());
+    }
 
     auto& sb = m_settingsBtnRect;
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(sb, 6, 6), m_brushCard.Get());

@@ -12,6 +12,23 @@ static const wchar_t* WNDCLASS_NAME = L"ArcadeLauncherWnd";
 static const wchar_t* COPY_PROGRESS_WNDCLASS = L"ArcadeLauncherCopyProgressWnd";
 static const wchar_t* SERVER_LOGIN_WNDCLASS = L"ArcadeLauncherServerLoginWnd";
 static const wchar_t* DOWNLOAD_STATUS_WNDCLASS = L"ArcadeLauncherDownloadStatusWnd";
+static const wchar_t* DOWNLOAD_GRAPH_WNDCLASS = L"ArcadeLauncherDownloadGraphWnd";
+
+// Timer that drives throughput sampling + graph repaint while the download
+// status window is visible. Local to that window, not the main window.
+static constexpr UINT TIMER_DLSPEED = 1;
+
+// Format a bytes/second rate as a compact human string (e.g. "12.4 MB/s").
+static std::wstring FormatSpeed(double bps) {
+    const wchar_t* unit = L"B/s";
+    double v = bps;
+    if (v >= 1024.0 * 1024.0 * 1024.0) { v /= 1024.0 * 1024.0 * 1024.0; unit = L"GB/s"; }
+    else if (v >= 1024.0 * 1024.0)      { v /= 1024.0 * 1024.0;          unit = L"MB/s"; }
+    else if (v >= 1024.0)               { v /= 1024.0;                   unit = L"KB/s"; }
+    wchar_t buf[48];
+    swprintf(buf, 48, (v >= 100.0 || unit[0] == L'B') ? L"%.0f %s" : L"%.1f %s", v, unit);
+    return buf;
+}
 
 struct ServerInstallDonePayload {
     std::wstring gameId;
@@ -1045,6 +1062,13 @@ void App::OnSize(UINT w, UINT h) {
 
 void App::OnPaint() {
     m_renderState.metaScanning = m_metaManager && m_metaManager->IsRunning();
+    {
+        std::lock_guard<std::mutex> lk(m_downloadMutex);
+        int active = 0;
+        for (const auto& job : m_downloadQueue)
+            if (!job.complete && !job.failed) ++active;
+        m_renderState.activeDownloadCount = active;
+    }
     m_renderer.Render(m_visibleGames, m_renderState);
 }
 
@@ -1848,8 +1872,117 @@ void App::DownloadWorker() {
     }
 }
 
+void App::SampleDownloadSpeed() {
+    uint64_t totalDone = 0;
+    bool anyRunning = false;
+    {
+        std::lock_guard<std::mutex> lk(m_downloadMutex);
+        for (const auto& job : m_downloadQueue) {
+            if (job.running && !job.complete && !job.failed) {
+                totalDone += job.done;
+                anyRunning = true;
+            }
+        }
+    }
+    ULONGLONG now = GetTickCount64();
+    if (m_speedLastTick != 0 && now > m_speedLastTick) {
+        double secs = (now - m_speedLastTick) / 1000.0;
+        // Treat a drop (one job finished, the next reset its counter) as zero
+        // rather than a negative spike.
+        double delta = totalDone >= m_speedLastBytes ? (double)(totalDone - m_speedLastBytes) : 0.0;
+        double bps = anyRunning && secs > 0 ? delta / secs : 0.0;
+        m_curSpeedBps = bps;
+        if (bps > m_peakSpeedBps) m_peakSpeedBps = bps;
+        m_speedHistory.push_back((float)bps);
+        while (m_speedHistory.size() > 120) m_speedHistory.pop_front();
+    }
+    m_speedLastBytes = totalDone;
+    m_speedLastTick = now;
+    if (!anyRunning) m_curSpeedBps = 0.0;
+}
+
+// Owner-drawn, Steam-style filled line graph of recent download throughput.
+static LRESULT CALLBACK DownloadGraphWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_PAINT) {
+        App* app = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc; GetClientRect(hwnd, &rc);
+        int w = rc.right, h = rc.bottom;
+
+        // Double-buffer to avoid flicker on the timer-driven repaints.
+        HDC mem = CreateCompatibleDC(hdc);
+        HBITMAP bmp = CreateCompatibleBitmap(hdc, w, h);
+        HBITMAP old = (HBITMAP)SelectObject(mem, bmp);
+
+        HBRUSH bg = CreateSolidBrush(RGB(18, 22, 28));
+        FillRect(mem, &rc, bg);
+        DeleteObject(bg);
+
+        // Grid lines.
+        HPEN grid = CreatePen(PS_SOLID, 1, RGB(40, 48, 58));
+        HPEN oldPen = (HPEN)SelectObject(mem, grid);
+        for (int i = 1; i < 4; ++i) {
+            int y = h * i / 4;
+            MoveToEx(mem, 0, y, nullptr);
+            LineTo(mem, w, y);
+        }
+        SelectObject(mem, oldPen);
+        DeleteObject(grid);
+
+        if (app && app->SpeedHistorySize() >= 2) {
+            std::vector<float> hist = app->SpeedHistoryCopy();
+            float peak = 1.0f;
+            for (float v : hist) peak = std::max(peak, v);
+            peak *= 1.15f; // headroom
+
+            int n = (int)hist.size();
+            auto px = [&](int i) { return (n <= 1) ? 0 : (LONG)((LONGLONG)i * (w - 1) / (n - 1)); };
+            auto py = [&](float v) { return (LONG)(h - 1 - (v / peak) * (h - 2)); };
+
+            // Filled area under the curve.
+            std::vector<POINT> poly;
+            poly.reserve(n + 2);
+            poly.push_back({ 0, h });
+            for (int i = 0; i < n; ++i) poly.push_back({ px(i), py(hist[i]) });
+            poly.push_back({ px(n - 1), h });
+            HBRUSH fill = CreateSolidBrush(RGB(28, 64, 96));
+            HPEN noPen = (HPEN)GetStockObject(NULL_PEN);
+            HBRUSH oldB = (HBRUSH)SelectObject(mem, fill);
+            HPEN oldP2 = (HPEN)SelectObject(mem, noPen);
+            Polygon(mem, poly.data(), (int)poly.size());
+            SelectObject(mem, oldB);
+            SelectObject(mem, oldP2);
+            DeleteObject(fill);
+
+            // The line itself.
+            HPEN line = CreatePen(PS_SOLID, 2, RGB(76, 194, 255));
+            HPEN op = (HPEN)SelectObject(mem, line);
+            MoveToEx(mem, px(0), py(hist[0]), nullptr);
+            for (int i = 1; i < n; ++i) LineTo(mem, px(i), py(hist[i]));
+            SelectObject(mem, op);
+            DeleteObject(line);
+        }
+
+        BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    if (msg == WM_ERASEBKGND) return 1; // handled in WM_PAINT
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 static LRESULT CALLBACK DownloadStatusWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    App* app = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == WM_TIMER && wp == TIMER_DLSPEED && app) {
+        app->TickDownloadStatus();
+        return 0;
+    }
     if (msg == WM_CLOSE) {
+        KillTimer(hwnd, TIMER_DLSPEED);
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     }
@@ -1868,29 +2001,64 @@ void App::OpenDownloadStatus() {
             wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
             wc.lpszClassName = DOWNLOAD_STATUS_WNDCLASS;
             RegisterClassExW(&wc);
+
+            WNDCLASSEXW gc{};
+            gc.cbSize = sizeof(gc);
+            gc.lpfnWndProc = DownloadGraphWndProc;
+            gc.hInstance = GetModuleHandleW(nullptr);
+            gc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            gc.hbrBackground = nullptr;
+            gc.lpszClassName = DOWNLOAD_GRAPH_WNDCLASS;
+            RegisterClassExW(&gc);
+
             registered = true;
         }
         RECT rc{};
         GetWindowRect(m_hwnd, &rc);
         m_downloadStatusWnd = CreateWindowExW(WS_EX_TOOLWINDOW, DOWNLOAD_STATUS_WNDCLASS,
-            L"Download Queue", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX,
-            rc.right - 440, rc.top + 90, 420, 320, m_hwnd, nullptr,
+            L"Downloads", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX,
+            rc.right - 500, rc.top + 90, 480, 548, m_hwnd, nullptr,
             GetModuleHandleW(nullptr), nullptr);
+        SetWindowLongPtrW(m_downloadStatusWnd, GWLP_USERDATA, (LONG_PTR)this);
+
         m_downloadSummary = CreateWindowExW(0, WC_STATICW, L"No active downloads",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            14, 14, 380, 20, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+            14, 14, 452, 20, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         m_downloadProgress = CreateWindowExW(0, PROGRESS_CLASSW, nullptr,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
-            14, 42, 380, 20, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+            14, 42, 452, 18, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        m_downloadSpeed = CreateWindowExW(0, WC_STATICW, L"",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            14, 68, 452, 20, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        m_downloadGraph = CreateWindowExW(WS_EX_CLIENTEDGE, DOWNLOAD_GRAPH_WNDCLASS, nullptr,
+            WS_CHILD | WS_VISIBLE,
+            14, 94, 452, 150, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        SetWindowLongPtrW(m_downloadGraph, GWLP_USERDATA, (LONG_PTR)this);
         m_downloadList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTBOXW, nullptr,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-            14, 76, 380, 190, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+            14, 256, 452, 250, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         SendMessageW(m_downloadProgress, PBM_SETRANGE32, 0, 1000);
     }
+    // Reset sampling so the graph starts clean each time it is opened.
+    m_speedLastTick = 0;
+    m_speedLastBytes = 0;
     RefreshDownloadStatusWindow();
     ShowWindow(m_downloadStatusWnd, SW_SHOWNORMAL);
+    SetTimer(m_downloadStatusWnd, TIMER_DLSPEED, 500, nullptr);
     SetWindowPos(m_downloadStatusWnd, HWND_TOP, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void App::TickDownloadStatus() {
+    SampleDownloadSpeed();
+    RefreshDownloadStatusWindow();
+    if (m_downloadGraph) InvalidateRect(m_downloadGraph, nullptr, FALSE);
+}
+
+size_t App::SpeedHistorySize() const { return m_speedHistory.size(); }
+
+std::vector<float> App::SpeedHistoryCopy() const {
+    return std::vector<float>(m_speedHistory.begin(), m_speedHistory.end());
 }
 
 void App::RefreshDownloadStatusWindow() {
@@ -1923,6 +2091,17 @@ void App::RefreshDownloadStatusWindow() {
     int pos = activeTotal > 0 ? (int)std::min<uint64_t>(1000, activeDone * 1000 / activeTotal) : 0;
     SendMessageW(m_downloadProgress, PBM_SETPOS, pos, 0);
     SetWindowTextW(m_downloadSummary, summary.c_str());
+
+    if (m_downloadSpeed) {
+        // Download and disk-write throughput are the same here: the client
+        // streams each received byte straight to disk (write-through install).
+        std::wstring speed = activeTotal > 0
+            ? L"Download " + FormatSpeed(m_curSpeedBps) +
+              L"   \x2022   Disk write " + FormatSpeed(m_curSpeedBps) +
+              L"   \x2022   Peak " + FormatSpeed(m_peakSpeedBps)
+            : L"Idle";
+        SetWindowTextW(m_downloadSpeed, speed.c_str());
+    }
 }
 
 void App::ApplyFilter() {

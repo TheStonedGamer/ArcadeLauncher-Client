@@ -44,6 +44,10 @@ struct RenderState {
     bool showRepacks = true;
 
     bool metaScanning = false;
+
+    // Number of active (running or queued) background downloads, shown as a
+    // badge on the Downloads topbar button.
+    int activeDownloadCount = 0;
 };
 
 class Renderer {

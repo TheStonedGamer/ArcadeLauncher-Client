@@ -116,6 +116,24 @@ private:
     HWND m_downloadList = nullptr;
     HWND m_downloadProgress = nullptr;
     HWND m_downloadSummary = nullptr;
+    HWND m_downloadSpeed = nullptr;   // current / disk-write / peak readout
+    HWND m_downloadGraph = nullptr;   // owner-drawn Steam-style speed graph
+
+    // Throughput sampling for the download status window. All accessed on the
+    // UI thread only (timer, progress messages, paint), so no extra locking.
+    uint64_t  m_speedLastBytes = 0;
+    ULONGLONG m_speedLastTick  = 0;
+    double    m_curSpeedBps    = 0.0;   // current throughput (bytes/sec)
+    double    m_peakSpeedBps   = 0.0;
+    std::deque<float> m_speedHistory;   // recent throughput samples (bytes/sec)
+    void SampleDownloadSpeed();
+
+public:
+    // Driven by the download status window's 500ms timer + its graph child.
+    void TickDownloadStatus();
+    size_t SpeedHistorySize() const;
+    std::vector<float> SpeedHistoryCopy() const;
+private:
 
     bool             m_dragging = false;
     float            m_lastMouseX = 0, m_lastMouseY = 0;
