@@ -28,6 +28,16 @@ struct ServerGameManifest {
     std::wstring launchTarget;
     std::wstring launchArguments;
     std::vector<ServerFileEntry> files;
+
+    // Optional Dolphin custom-texture pack (GameCube/Wii only). When present the
+    // client downloads the .zip and extracts it into Dolphin's Load/Textures.
+    struct TexturePack {
+        std::wstring url;
+        std::wstring sha256;
+        uint64_t size = 0;
+    };
+    bool hasTexturePack = false;
+    TexturePack texturePack;
 };
 
 struct ServerInstallResult {
@@ -54,6 +64,24 @@ public:
 
     bool FetchCatalog(std::vector<Game>& games, std::wstring& error);
     bool FetchManifest(const std::wstring& gameId, ServerGameManifest& manifest, std::wstring& error);
+
+    // ── Account self-service (#21 / #22) ────────────────────────────────────
+    struct AccountInfo {
+        std::wstring username;
+        std::wstring email;
+        bool isAdmin = false;
+        bool totpEnabled = false;
+        bool mustChangePassword = false;
+    };
+    bool GetAccount(AccountInfo& info, std::wstring& error);
+    bool ChangePassword(const std::wstring& currentPassword,
+                        const std::wstring& newPassword, std::wstring& error);
+    // Begin TOTP enrollment: returns the base32 secret + otpauth:// URI for QR.
+    bool TotpSetup(const std::wstring& password, std::wstring& secret,
+                   std::wstring& otpauthUri, std::wstring& error);
+    bool TotpEnable(const std::wstring& code, std::wstring& error);
+    bool TotpDisable(const std::wstring& password, const std::wstring& code,
+                     std::wstring& error);
     ServerInstallResult InstallGame(const Game& game,
                                     std::function<void(uint64_t, uint64_t)> onProgress = {});
     ServerValidateResult ValidateGame(const Game& game,
@@ -76,7 +104,8 @@ private:
     bool HttpPostForm(const std::wstring& url,
                       const std::wstring& formBody,
                       std::string& body,
-                      std::wstring& error);
+                      std::wstring& error,
+                      bool withAuth = false);
     bool EnsureAuthenticated(std::wstring& error);
     bool TryChallengeResponse(std::wstring& error);
     bool DownloadFile(const std::wstring& url,

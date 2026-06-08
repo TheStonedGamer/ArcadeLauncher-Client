@@ -73,6 +73,9 @@ struct ServerConfig {
     // major hardware or software change), at which point we re-authenticate.
     std::wstring tokenFingerprint;
     std::wstring installRoot;
+    // Runtime-only (not persisted): path to Dolphin.exe, used to locate the
+    // Dolphin user directory when extracting GameCube/Wii custom texture packs.
+    std::wstring dolphinPath;
 };
 
 struct AppConfig {

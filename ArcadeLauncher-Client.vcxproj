@@ -122,6 +122,8 @@
     <ClCompile Include="src\MetadataPickerDialog.cpp" />
     <ClCompile Include="src\GameEditDialog.cpp" />
     <ClCompile Include="src\FirstLaunchSetup.cpp" />
+    <ClCompile Include="src\QrCode.cpp" />
+    <ClCompile Include="src\AccountDialog.cpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -145,6 +147,8 @@
     <ClInclude Include="src\MetadataPickerDialog.h" />
     <ClInclude Include="src\GameEditDialog.h" />
     <ClInclude Include="src\FirstLaunchSetup.h" />
+    <ClInclude Include="src\QrCode.h" />
+    <ClInclude Include="src\AccountDialog.h" />
     <ClInclude Include="src\Platform\SteamScanner.h" />
     <ClInclude Include="src\Platform\EpicScanner.h" />
     <ClInclude Include="src\Platform\GogScanner.h" />

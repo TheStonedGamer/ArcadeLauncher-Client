@@ -68,7 +68,6 @@ private:
     void OpenSettings(int startPage = 0);
     void OpenMetadataPicker(const std::wstring& gameId, const std::wstring& gameTitle);
     void OpenEditTitle(int visibleIdx);
-    void DeleteRom(int visibleIdx);
     void ShowMenuBar();
 
     void SaveAll();
@@ -77,6 +76,9 @@ private:
     // ── Tray icon ──────────────────────────────────────────────────────────────
     void CreateTrayIcon();
     void RemoveTrayIcon();
+    // Steam-style toast via the tray icon's balloon notification. Safe to call
+    // even when the main window is hidden/minimized to tray.
+    void ShowToast(const std::wstring& title, const std::wstring& message);
     void ShowTrayMenu();
     bool IsStartupEnabled() const;
     void SetStartup(bool enable);
@@ -174,7 +176,6 @@ private:
     static constexpr UINT IDM_LAUNCH      = 5001;
     static constexpr UINT IDM_MATCH_META  = 5002;
     static constexpr UINT IDM_EDIT_TITLE  = 5003;
-    static constexpr UINT IDM_DELETE_ROM  = 5004;
     static constexpr UINT IDM_VALIDATE_GAME = 5005;
     static constexpr UINT IDM_UNINSTALL_GAME = 5006;
     static constexpr UINT IDM_DOWNLOAD_GAME = 5007;
@@ -195,6 +196,7 @@ private:
     // Tray menu command IDs
     static constexpr UINT IDM_TRAY_SHOW    = 7001;
     static constexpr UINT IDM_TRAY_SETTINGS = 7002;
+    static constexpr UINT IDM_TRAY_ACCOUNT = 7005;
     static constexpr UINT IDM_TRAY_STARTUP = 7003;
     static constexpr UINT IDM_TRAY_EXIT    = 7004;
     static constexpr UINT IDM_TRAY_GAME0   = 7100;  // + 0..4 for 5 recent games

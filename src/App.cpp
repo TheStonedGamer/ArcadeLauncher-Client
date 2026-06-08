@@ -4,6 +4,7 @@
 #include "Platform/EpicScanner.h"
 #include "Platform/GogScanner.h"
 #include "IgdbSync.h"
+#include "AccountDialog.h"
 #include <commctrl.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -685,6 +686,20 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     // Kick off initial scan in background
     std::thread([this]() { ScanAllPlatforms(); }).detach();
 
+    // If a server library is configured, check whether the admin has flagged this
+    // account for a forced password change. Done off the UI thread; the modal is
+    // shown via WM_USER+5 once we know.
+    if (m_config.Get().server.enabled) {
+        std::thread([this]() {
+            ServerConfig sc = m_config.Get().server;
+            ServerClient client(sc);
+            ServerClient::AccountInfo info;
+            std::wstring err;
+            if (client.GetAccount(info, err) && info.mustChangePassword)
+                PostMessageW(m_hwnd, WM_USER + 7, 0, 0);
+        }).detach();
+    }
+
     // Check for a newer release on GitHub (silent — only fires WM_APP_UPDATE_FOUND if one exists)
     CheckForAppUpdateAsync(m_hwnd);
 
@@ -781,6 +796,9 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 stored->installState = InstallState::Installed;
                 stored->installProgressPermille = 1000;
                 SaveAll();
+                if (!autoLaunch)
+                    ShowToast(L"Download complete",
+                              stored->title + L" is ready to play.");
                 if (autoLaunch) {
                     Game launchCopy = *stored;
                     ApplyFilter();
@@ -927,8 +945,30 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // and repaint. This runs on the main thread (safe to touch render state).
         auto* scanned = reinterpret_cast<std::vector<Game>*>(lp);
         if (scanned) {
+            // Snapshot which games already showed an update so a resync only
+            // toasts newly-discovered ones (Steam-style "update available").
+            std::unordered_set<std::wstring> wasUpdatable;
+            for (const auto& g : m_library.All())
+                if (g.installState == InstallState::UpdateAvailable)
+                    wasUpdatable.insert(g.id);
+
             m_library.MergeGames(std::move(*scanned));
             delete scanned;
+
+            int newUpdates = 0;
+            std::wstring lastTitle;
+            for (const auto& g : m_library.All()) {
+                if (g.serverBacked && g.installState == InstallState::UpdateAvailable &&
+                    wasUpdatable.count(g.id) == 0) {
+                    ++newUpdates;
+                    lastTitle = g.title;
+                }
+            }
+            if (newUpdates == 1)
+                ShowToast(L"Update available", lastTitle + L" has a new version.");
+            else if (newUpdates > 1)
+                ShowToast(L"Updates available",
+                          std::to_wstring(newUpdates) + L" games have new versions.");
         }
 
         if (m_metaManager) {
@@ -987,6 +1027,18 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 m_renderer.LoadGameArt(g->id, g->coverArtPath);
         }
         InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_USER + 7: {
+        // The server flagged this account for a forced password change.
+        ShowWindow_(true);
+        ServerConfig sc = m_config.Get().server;
+        if (ShowForcedPasswordChange(m_hwnd, sc)) {
+            m_config.Get().server.password = sc.password;
+            m_config.Get().server.authToken = sc.authToken;
+            SaveAll();
+        }
         return 0;
     }
 
@@ -1932,7 +1984,9 @@ void App::DownloadWorker() {
         if (!found) {
             result.error = L"Queued game is no longer in the library.";
         } else {
-            ServerClient client(m_config.Get().server);
+            ServerConfig sc = m_config.Get().server;
+            sc.dolphinPath = m_config.Get().emulators.dolphinPath;
+            ServerClient client(sc);
             HWND hwnd = m_hwnd;
             auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>(
                 std::chrono::steady_clock::now() - std::chrono::seconds(1));
@@ -2327,7 +2381,6 @@ void App::OnRButtonDown(float x, float y) {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 
     const Game* hoveredGame = m_visibleGames[idx];
-    bool hasRomFile = !hoveredGame->romPath.empty();
     bool canValidate = hoveredGame->serverBacked &&
         hoveredGame->installState == InstallState::Installed &&
         !hoveredGame->installRoot.empty();
@@ -2349,10 +2402,6 @@ void App::OnRButtonDown(float x, float y) {
     AppendMenuW(menu, MF_STRING, IDM_EDIT_TITLE, L"Edit Title…");
     UINT matchFlags = MF_STRING | (m_metaManager ? 0 : MF_GRAYED);
     AppendMenuW(menu, matchFlags, IDM_MATCH_META, L"Match Metadata…");
-    if (hasRomFile) {
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, IDM_DELETE_ROM, L"Delete ROM File…");
-    }
 
     if (m_monitor.IsRunning())
         EnableMenuItem(menu, IDM_LAUNCH, MF_BYCOMMAND | MF_GRAYED);
@@ -2379,8 +2428,6 @@ void App::OnRButtonDown(float x, float y) {
     } else if (cmd == IDM_MATCH_META) {
         if (idx < (int)m_visibleGames.size())
             OpenMetadataPicker(m_visibleGames[idx]->id, m_visibleGames[idx]->title);
-    } else if (cmd == IDM_DELETE_ROM) {
-        DeleteRom(idx);
     }
 }
 
@@ -2426,15 +2473,43 @@ void App::ValidateGame(int visibleIdx) {
 
     std::wstring authErr;
     EnsureServerToken(authErr);
-    ServerClient client(m_config.Get().server);
-    auto result = client.ValidateGame(game, [&](uint64_t checked, uint64_t total) {
+
+    // Hashing is CPU/IO heavy and the progress callback only fires once *per
+    // file*, so verifying a single large file (Xbox 360 / PC repack) on the UI
+    // thread froze the window solid ("not responding"). Run the hash loop on a
+    // worker thread and keep the UI thread pumping messages + refreshing the
+    // dialog from shared progress until it finishes.
+    ServerConfig serverCfg = m_config.Get().server;
+    std::atomic<uint64_t> progChecked{0};
+    std::atomic<uint64_t> progTotal{0};
+    std::atomic<bool> finished{false};
+    ServerValidateResult result;
+    std::thread worker([&]() {
+        ServerClient client(serverCfg);
+        result = client.ValidateGame(game, [&](uint64_t checked, uint64_t total) {
+            progTotal.store(total, std::memory_order_relaxed);
+            progChecked.store(checked, std::memory_order_relaxed);
+        });
+        finished.store(true, std::memory_order_release);
+    });
+
+    while (!finished.load(std::memory_order_acquire)) {
+        MSG msg{};
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        uint64_t checked = progChecked.load(std::memory_order_relaxed);
+        uint64_t total = progTotal.load(std::memory_order_relaxed);
         double seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - startedAt).count();
         double mbps = seconds > 0.0
             ? ((double)checked / (1024.0 * 1024.0)) / seconds
             : 0.0;
         dialog.SetProgress(checked, total, mbps);
-    });
+        Sleep(50);
+    }
+    worker.join();
     dialog.Close();
 
     if (result.ok) {
@@ -2554,34 +2629,6 @@ void App::OpenEditTitle(int visibleIdx) {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
-void App::DeleteRom(int visibleIdx) {
-    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
-    const Game* cv = m_visibleGames[visibleIdx];
-    Game* g = m_library.FindById(cv->id);
-    if (!g || g->romPath.empty()) return;
-
-    std::wstring prompt =
-        L"Permanently delete this ROM file from disk?\n\n" + g->romPath;
-    if (MessageBoxW(m_hwnd, prompt.c_str(), L"Delete ROM",
-                    MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
-        return;
-
-    if (!DeleteFileW(g->romPath.c_str())) {
-        wchar_t err[300];
-        swprintf_s(err, L"Could not delete file (error %lu):\n%s",
-                   GetLastError(), g->romPath.c_str());
-        MessageBoxW(m_hwnd, err, L"Delete Failed", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    std::wstring id = g->id;
-    m_renderer.UnloadGameArt(id);
-    m_library.RemoveGame(id);
-    SaveAll();
-    ApplyFilter();
-    InvalidateRect(m_hwnd, nullptr, FALSE);
-}
-
 void App::OpenMetadataPicker(const std::wstring& gameId, const std::wstring& gameTitle) {
     if (!m_metaManager || m_picker.IsOpen()) return;
 
@@ -2683,6 +2730,17 @@ void App::RemoveTrayIcon() {
     m_nid.hWnd = nullptr;
 }
 
+void App::ShowToast(const std::wstring& title, const std::wstring& message) {
+    if (!m_nid.hWnd) return;
+    NOTIFYICONDATAW nid = m_nid;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
+    nid.uTimeout = 5000;  // honored only on older shells; modern toasts auto-dismiss
+    wcsncpy_s(nid.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(nid.szInfo, message.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
 void App::ShowWindow_(bool show) {
     if (show) {
         ShowWindow(m_hwnd, SW_SHOW);
@@ -2761,6 +2819,11 @@ void App::ShowTrayMenu() {
         }
     }
 
+    // Account (only when a server library is configured)
+    if (m_config.Get().server.enabled) {
+        AppendMenuW(menu, MF_STRING, IDM_TRAY_ACCOUNT, L"Account…");
+    }
+
     // Settings
     AppendMenuW(menu, MF_STRING, IDM_TRAY_SETTINGS, L"Settings");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -2787,6 +2850,17 @@ void App::ShowTrayMenu() {
         ShowWindow_(true);
         OpenSettings();
         break;
+    case IDM_TRAY_ACCOUNT: {
+        ShowWindow_(true);
+        ServerConfig sc = m_config.Get().server;
+        if (ShowAccountDialog(m_hwnd, sc)) {
+            // Password (and cleared token) may have changed — persist.
+            m_config.Get().server.password = sc.password;
+            m_config.Get().server.authToken = sc.authToken;
+            SaveAll();
+        }
+        break;
+    }
     case IDM_TRAY_EXIT:
         RemoveTrayIcon();
         DestroyWindow(m_hwnd);

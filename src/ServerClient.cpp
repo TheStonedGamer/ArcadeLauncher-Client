@@ -161,6 +161,88 @@ static std::wstring ReadTextFile(const std::wstring& path) {
     return ToWide(text);
 }
 
+// Resolve Dolphin's user directory the same way Dolphin itself does on Windows:
+// a portable install keeps its data in a "User" folder next to the exe (marked
+// by portable.txt or an existing User dir); otherwise it lives under the user's
+// Documents folder. `dolphinExe` may be empty, in which case we fall back to the
+// Documents location.
+static std::wstring DolphinUserDir(const std::wstring& dolphinExe) {
+    if (!dolphinExe.empty()) {
+        std::wstring exeDir = ParentPath(dolphinExe);
+        if (!exeDir.empty()) {
+            std::wstring portableMarker = exeDir + L"\\portable.txt";
+            std::wstring userDir = exeDir + L"\\User";
+            if (fs::exists(portableMarker) || fs::exists(userDir))
+                return userDir;
+        }
+    }
+    wchar_t profile[MAX_PATH]{};
+    DWORD n = GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    return std::wstring(profile) + L"\\Documents\\Dolphin Emulator";
+}
+
+// Set HiresTextures = True under [Settings] in Dolphin's GFX.ini so extracted
+// custom texture packs are actually loaded. Creates the file/section/key if
+// missing and preserves everything else. Best-effort: returns false on I/O
+// failure but never throws.
+static bool EnableDolphinHiresTextures(const std::wstring& userDir) {
+    if (userDir.empty()) return false;
+    std::wstring configDir = userDir + L"\\Config";
+    std::wstring gfxIni = configDir + L"\\GFX.ini";
+    std::error_code ec;
+    fs::create_directories(configDir, ec);
+
+    std::vector<std::string> lines;
+    {
+        std::string content = ToUtf8(ReadTextFile(gfxIni));
+        std::string cur;
+        for (char c : content) {
+            if (c == '\n') { lines.push_back(cur); cur.clear(); }
+            else if (c != '\r') cur.push_back(c);
+        }
+        if (!cur.empty()) lines.push_back(cur);
+    }
+
+    auto trim = [](const std::string& s) {
+        size_t a = s.find_first_not_of(" \t");
+        if (a == std::string::npos) return std::string();
+        size_t b = s.find_last_not_of(" \t");
+        return s.substr(a, b - a + 1);
+    };
+
+    bool inSettings = false, done = false;
+    int settingsHeaderIdx = -1;
+    for (size_t i = 0; i < lines.size() && !done; ++i) {
+        std::string t = trim(lines[i]);
+        if (!t.empty() && t.front() == '[') {
+            inSettings = (t == "[Settings]");
+            if (inSettings) settingsHeaderIdx = (int)i;
+            continue;
+        }
+        if (inSettings) {
+            std::string key = trim(t.substr(0, t.find('=')));
+            if (_stricmp(key.c_str(), "HiresTextures") == 0) {
+                lines[i] = "HiresTextures = True";
+                done = true;
+            }
+        }
+    }
+    if (!done) {
+        if (settingsHeaderIdx >= 0) {
+            lines.insert(lines.begin() + settingsHeaderIdx + 1, "HiresTextures = True");
+        } else {
+            if (!lines.empty()) lines.push_back("");
+            lines.push_back("[Settings]");
+            lines.push_back("HiresTextures = True");
+        }
+    }
+
+    std::string out;
+    for (const auto& l : lines) { out += l; out += "\r\n"; }
+    return WriteTextFile(gfxIni, ToWide(out));
+}
+
 static bool IsLikelyInstallerExe(std::wstring name) {
     for (auto& c : name) c = (wchar_t)towlower(c);
     return name.find(L"setup") != std::wstring::npos ||
@@ -424,7 +506,9 @@ bool ServerClient::HttpGet(const std::wstring& url,
 bool ServerClient::HttpPostForm(const std::wstring& url,
                                 const std::wstring& formBody,
                                 std::string& body,
-                                std::wstring& error) {
+                                std::wstring& error,
+                                bool withAuth) {
+    if (withAuth && !EnsureAuthenticated(error)) return false;
     URL_COMPONENTSW uc{ sizeof(uc) };
     wchar_t host[256]{}, path[2048]{};
     uc.lpszHostName = host; uc.dwHostNameLength = _countof(host);
@@ -455,6 +539,8 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
 
     std::string post = ToUtf8(formBody);
     std::wstring headers = L"Content-Type: application/x-www-form-urlencoded\r\n";
+    if (withAuth && !m_cfg.authToken.empty())
+        headers += L"Authorization: Bearer " + m_cfg.authToken + L"\r\n";
     BOOL ok = WinHttpSendRequest(req, headers.c_str(), (DWORD)-1,
         post.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)post.data(),
         (DWORD)post.size(), (DWORD)post.size(), 0);
@@ -468,12 +554,9 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
     DWORD status = 0, statusSize = sizeof(status);
     WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
         nullptr, &status, &statusSize, nullptr);
-    if (status < 200 || status >= 300) {
-        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
-        error = L"Server returned HTTP " + std::to_wstring(status);
-        return false;
-    }
 
+    // Read the body regardless of status so we can surface the server's JSON
+    // {"error": "..."} message on a 4xx instead of a bare status code.
     body.clear();
     for (;;) {
         DWORD avail = 0;
@@ -487,6 +570,14 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(sess);
+
+    if (status < 200 || status >= 300) {
+        std::string serverMsg = JsonString(body, "error");
+        error = serverMsg.empty()
+            ? L"Server returned HTTP " + std::to_wstring(status)
+            : ToWide(serverMsg);
+        return false;
+    }
     return true;
 }
 
@@ -538,6 +629,71 @@ bool ServerClient::TryChallengeResponse(std::wstring& error) {
 
 bool ServerClient::Authenticate(std::wstring& error) {
     return EnsureAuthenticated(error);
+}
+
+// Parse a JSON boolean field ("key": true/false). Returns false if absent.
+static bool JsonBool(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    size_t p = json.find(search);
+    if (p == std::string::npos) return false;
+    p += search.size();
+    while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) ++p;
+    return json.compare(p, 4, "true") == 0;
+}
+
+bool ServerClient::GetAccount(AccountInfo& info, std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::string body;
+    if (!HttpGet(Url(L"/api/account"), body, error)) return false;
+    info.username = ToWide(JsonString(body, "username"));
+    info.email = ToWide(JsonString(body, "email"));
+    info.isAdmin = JsonBool(body, "isAdmin");
+    info.totpEnabled = JsonBool(body, "totpEnabled");
+    info.mustChangePassword = JsonBool(body, "mustChangePassword");
+    return true;
+}
+
+bool ServerClient::ChangePassword(const std::wstring& currentPassword,
+                                  const std::wstring& newPassword,
+                                  std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::wstring form = L"current_password=" + PercentEncode(currentPassword) +
+                        L"&new_password=" + PercentEncode(newPassword);
+    std::string body;
+    if (!HttpPostForm(Url(L"/api/account/password"), form, body, error, true)) return false;
+    // The password just changed: any cached token derived from the old password
+    // (challenge-response) stays valid, but force a clean re-auth next time so
+    // the stored credentials and token stay consistent.
+    m_cfg.password = newPassword;
+    return true;
+}
+
+bool ServerClient::TotpSetup(const std::wstring& password, std::wstring& secret,
+                             std::wstring& otpauthUri, std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::wstring form = L"password=" + PercentEncode(password);
+    std::string body;
+    if (!HttpPostForm(Url(L"/api/account/totp/setup"), form, body, error, true)) return false;
+    secret = ToWide(JsonString(body, "secret"));
+    otpauthUri = ToWide(JsonString(body, "otpauthUri"));
+    if (otpauthUri.empty()) { error = L"Server did not return a setup URI"; return false; }
+    return true;
+}
+
+bool ServerClient::TotpEnable(const std::wstring& code, std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::wstring form = L"code=" + PercentEncode(code);
+    std::string body;
+    return HttpPostForm(Url(L"/api/account/totp/enable"), form, body, error, true);
+}
+
+bool ServerClient::TotpDisable(const std::wstring& password, const std::wstring& code,
+                               std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::wstring form = L"password=" + PercentEncode(password) +
+                        L"&code=" + PercentEncode(code);
+    std::string body;
+    return HttpPostForm(Url(L"/api/account/totp/disable"), form, body, error, true);
 }
 
 bool ServerClient::EnsureAuthenticated(std::wstring& error) {
@@ -638,6 +794,21 @@ bool ServerClient::FetchManifest(const std::wstring& gameId,
                 f.chunks.push_back(std::move(c));
         }
         if (!f.path.empty()) manifest.files.push_back(std::move(f));
+    }
+
+    // Optional Dolphin texture pack (GameCube/Wii). Promoted server-side out of
+    // the installable file list into its own object, served via /textures/<id>.
+    size_t tpPos = body.find("\"texturePack\":");
+    if (tpPos != std::string::npos) {
+        size_t objStart = body.find('{', tpPos);
+        size_t objEnd = objStart == std::string::npos ? std::string::npos : FindObjectEnd(body, objStart);
+        if (objEnd != std::string::npos) {
+            std::string tp = body.substr(objStart, objEnd - objStart + 1);
+            manifest.texturePack.url = ToWide(JsonString(tp, "url"));
+            manifest.texturePack.sha256 = ToWide(JsonString(tp, "sha256"));
+            manifest.texturePack.size = JsonNumber(tp, "size");
+            manifest.hasTexturePack = !manifest.texturePack.url.empty();
+        }
     }
     return !manifest.id.empty();
 }
@@ -966,6 +1137,44 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
         }
     } catch (...) {
         // A sweep failure is non-fatal: the real files are intact and verified.
+    }
+
+    // Dolphin custom textures (GameCube/Wii). The server advertises an optional
+    // texture pack zip; download it, verify, extract into Dolphin's
+    // Load/Textures, and flip HiresTextures on so it's actually used. The pack
+    // is keyed to the game's version so it re-installs when the pack changes.
+    // Failures here are non-fatal — the game itself is already installed.
+    if (manifest.hasTexturePack && !manifest.texturePack.url.empty()) {
+        const auto& tp = manifest.texturePack;
+        std::wstring texMarker = installRoot + L"\\.arcadelauncher-textures";
+        std::wstring stamp = manifest.version + L"|" + tp.sha256;
+        if (ReadTextFile(texMarker) != stamp) {
+            std::wstring zipDest = installRoot + L"\\textures.zip";
+            std::wstring texError;
+            bool gotZip = false;
+            for (int attempt = 0; attempt < 4 && !gotZip; ++attempt) {
+                if (attempt > 0)
+                    std::this_thread::sleep_for(std::chrono::seconds(2 * attempt));
+                texError.clear();
+                gotZip = DownloadFile(tp.url, zipDest, tp.size, {}, texError);
+            }
+            std::wstring zipHash;
+            bool zipOk = gotZip && Sha256File(zipDest, zipHash) &&
+                         _wcsicmp(zipHash.c_str(), tp.sha256.c_str()) == 0;
+            if (zipOk) {
+                std::wstring userDir = DolphinUserDir(m_cfg.dolphinPath);
+                std::wstring loadTextures = userDir.empty() ? L"" : userDir + L"\\Load\\Textures";
+                if (!loadTextures.empty()) {
+                    fs::create_directories(loadTextures);
+                    if (ExtractArchive(zipDest, loadTextures)) {
+                        EnableDolphinHiresTextures(userDir);
+                        WriteTextFile(texMarker, stamp);
+                    }
+                }
+            }
+            std::error_code ec;
+            fs::remove(zipDest, ec); // cleanup regardless of outcome
+        }
     }
 
     if (pcArchive) {
