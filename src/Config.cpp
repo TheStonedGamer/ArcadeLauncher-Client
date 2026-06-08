@@ -120,6 +120,10 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"serverAuthToken\":\"" + Escape(m_cfg.server.authToken) + "\",\n";
     out += "  \"serverTokenFingerprint\":\"" + Escape(m_cfg.server.tokenFingerprint) + "\",\n";
     out += "  \"serverInstallRoot\":\"" + Escape(m_cfg.server.installRoot) + "\",\n";
+    out += writeArr(m_cfg.server.libraryFolders, "serverLibraryFolders") + ",\n";
+    out += "  \"serverDefaultLibrary\":" + std::to_string(m_cfg.server.defaultLibraryIndex) + ",\n";
+    out += "  \"serverAlwaysAskInstall\":" + B(m_cfg.server.alwaysAskInstallLocation) + ",\n";
+    out += writeArr(m_cfg.collections, "collections") + ",\n";
     // Library settings
     out += "  \"steamPath\":\"" + Escape(lb.steamPath) + "\",\n";
     out += writeArr(lb.steamExtraFolders, "steamExtraFolders") + ",\n";
@@ -205,6 +209,18 @@ void Config::Load(const std::wstring& path) {
     m_cfg.server.authToken   = ToWide(ReadField(json, "serverAuthToken"));
     m_cfg.server.tokenFingerprint = ToWide(ReadField(json, "serverTokenFingerprint"));
     m_cfg.server.installRoot = ToWide(ReadField(json, "serverInstallRoot"));
+    m_cfg.server.libraryFolders = ReadStringArray(json, "serverLibraryFolders");
+    m_cfg.server.defaultLibraryIndex = ReadInt(json, "serverDefaultLibrary");
+    // alwaysAskInstallLocation defaults to true; only honor a stored false.
+    if (json.find("\"serverAlwaysAskInstall\":") != std::string::npos)
+        m_cfg.server.alwaysAskInstallLocation = ReadBool(json, "serverAlwaysAskInstall");
+    // Migrate the legacy single installRoot into the library folder list.
+    if (m_cfg.server.libraryFolders.empty() && !m_cfg.server.installRoot.empty())
+        m_cfg.server.libraryFolders.push_back(m_cfg.server.installRoot);
+    if (m_cfg.server.defaultLibraryIndex < 0 ||
+        m_cfg.server.defaultLibraryIndex >= (int)m_cfg.server.libraryFolders.size())
+        m_cfg.server.defaultLibraryIndex = 0;
+    m_cfg.collections = ReadStringArray(json, "collections");
 
     m_cfg.libraries.steamPath         = ToWide(ReadField(json, "steamPath"));
     m_cfg.libraries.steamExtraFolders = ReadStringArray(json, "steamExtraFolders");

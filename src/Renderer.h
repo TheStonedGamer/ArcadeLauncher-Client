@@ -6,7 +6,7 @@
 #include <unordered_set>
 
 enum class FocusArea { Grid, Sidebar, Search };
-enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform };
+enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection };
 
 struct RenderState {
     int   hoveredIndex  = -1;
@@ -19,6 +19,8 @@ struct RenderState {
     Platform filterPlatform = Platform::Repacks;
     bool filterAll = true;
     LibraryPage libraryPage = LibraryPage::All;
+    std::wstring filterCollection;             // active when libraryPage==Collection
+    std::vector<std::wstring> collections;     // user collections shown in sidebar
     FocusArea focusArea     = FocusArea::Grid;
     int sidebarFocusIdx     = 0;
     bool selectionMode      = false;
@@ -74,7 +76,7 @@ public:
     // Sidebar hit test: returns platform or filterAll flag.
     bool HitTestSidebar(float x, float y, const RenderState& state,
                         Platform& outPlatform, bool& outAll,
-                        LibraryPage& outPage) const;
+                        LibraryPage& outPage, std::wstring& outCollection) const;
     bool HitTestSearch(float x, float y) const;
     bool HitTestLaunchBtn(float x, float y) const;
     bool HitTestSettingsBtn(float x, float y) const;
@@ -88,7 +90,10 @@ public:
     int GetCols() const { return m_cols; }
     float GridRowHeight() const { return m_tileH + m_tileGap + 22.0f; }
 
-    struct SidebarEntry { const wchar_t* label; bool all; Platform p; LibraryPage page; };
+    struct SidebarEntry {
+        std::wstring label; bool all; Platform p; LibraryPage page;
+        std::wstring collection;  // set only for LibraryPage::Collection entries
+    };
     static std::vector<SidebarEntry> BuildSidebarEntries(const RenderState& s);
     static int GetSidebarEntryCount(const RenderState& s) {
         return (int)BuildSidebarEntries(s).size();

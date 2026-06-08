@@ -72,6 +72,8 @@ void GameLibrary::MergeGames(std::vector<Game> scanned) {
             s.igdbRating      = old->igdbRating;
             s.releaseDate     = old->releaseDate;
             s.igdbPlatformId  = old->igdbPlatformId;
+            s.launchOptions   = old->launchOptions;
+            s.collections     = old->collections;
 
             // Preserve local install / launch state for server-backed games.
             // FetchCatalog only knows the catalog (title, version, installRoot
@@ -258,7 +260,15 @@ void GameLibrary::Save(const std::wstring& path) const {
         out += JField(L"genres", g.genres) + L",";
         out += JFieldF(L"igdbRating", g.igdbRating) + L",";
         out += JFieldN(L"releaseDate", (uint64_t)g.releaseDate) + L",";
-        out += JFieldN(L"igdbPlatformId", (uint64_t)g.igdbPlatformId);
+        out += JFieldN(L"igdbPlatformId", (uint64_t)g.igdbPlatformId) + L",";
+        out += JField(L"launchOptions", g.launchOptions) + L",";
+        // Collections joined by newline (JEsc escapes \n; ReadJsonField reverses).
+        std::wstring colJoined;
+        for (size_t c = 0; c < g.collections.size(); ++c) {
+            if (c) colJoined += L"\n";
+            colJoined += g.collections[c];
+        }
+        out += JField(L"collections", colJoined);
         out += L"}";
         if (i + 1 < m_games.size()) out += L",";
         out += L"\n";
@@ -346,6 +356,18 @@ void GameLibrary::Load(const std::wstring& path) {
         g.genres          = ToWide(ReadJsonField(obj, "genres"));
         g.releaseDate     = (int64_t)ReadJsonNum(obj, "releaseDate");
         g.igdbPlatformId  = (int)ReadJsonNum(obj, "igdbPlatformId");
+        g.launchOptions   = ToWide(ReadJsonField(obj, "launchOptions"));
+        {
+            std::wstring col = ToWide(ReadJsonField(obj, "collections"));
+            size_t cp = 0;
+            while (cp < col.size()) {
+                size_t nl = col.find(L'\n', cp);
+                if (nl == std::wstring::npos) nl = col.size();
+                std::wstring one = col.substr(cp, nl - cp);
+                if (!one.empty()) g.collections.push_back(one);
+                cp = nl + 1;
+            }
+        }
 
         // igdbMatched — look for boolean true/false
         {
@@ -377,6 +399,8 @@ void GameLibrary::Load(const std::wstring& path) {
         else if (plat == "Epic")    g.platform = Platform::Epic;
         else if (plat == "GOG")     g.platform = Platform::GOG;
         else if (plat == "Dolphin") g.platform = Platform::Dolphin;
+        else if (plat == "GameCube") g.platform = Platform::GameCube;
+        else if (plat == "Wii")     g.platform = Platform::Wii;
         else if (plat == "Ryujinx") g.platform = Platform::Ryujinx;
         else if (plat == "RPCS3")   g.platform = Platform::RPCS3;
         else if (plat == "N64")     g.platform = Platform::N64;

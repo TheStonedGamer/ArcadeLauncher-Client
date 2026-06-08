@@ -300,6 +300,8 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     if (s.showXbox360) v.push_back({ L"Xbox 360", false, Platform::Xbox360, LibraryPage::Platform });
     if (s.showXbox)    v.push_back({ L"Xbox",     false, Platform::Xbox,    LibraryPage::Platform });
     if (s.showRepacks) v.push_back({ L"PC",  false, Platform::Repacks, LibraryPage::Platform });
+    for (const auto& c : s.collections)
+        v.push_back({ c, false, Platform::Repacks, LibraryPage::Collection, c });
     return v;
 }
 
@@ -328,7 +330,9 @@ void Renderer::DrawSidebar(const RenderState& state) {
     for (auto& e : entries) {
         bool active = (e.page == state.libraryPage) &&
                       (e.page != LibraryPage::Platform ||
-                       state.filterPlatform == e.p);
+                       state.filterPlatform == e.p) &&
+                      (e.page != LibraryPage::Collection ||
+                       state.filterCollection == e.collection);
         bool kbFocus = sidebarKbFocus && (entryIdx == state.sidebarFocusIdx);
         D2D1_RECT_F row = D2D1::RectF(0, y, m_sidebarW, y + 38.0f);
 
@@ -370,6 +374,13 @@ void Renderer::DrawSidebar(const RenderState& state) {
                 m_rt->FillEllipse(dot, m_brushAccent.Get());
                 m_brushAccent->SetColor(C_ACCENT);
             }
+        } else if (e.page == LibraryPage::Collection) {
+            // Small bookmark/star dot to distinguish user collections.
+            D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(20.0f, y + 19.0f), 4, 4);
+            m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b,
+                                                 active ? 1.0f : 0.6f));
+            m_rt->DrawEllipse(dot, m_brushAccent.Get(), 1.5f);
+            m_brushAccent->SetColor(C_ACCENT);
         } else if (e.page == LibraryPage::BackgroundDownloads) {
             D2D1_RECT_F tray = D2D1::RectF(12.0f, y + 11.0f, 28.0f, y + 27.0f);
             m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, active ? 1.0f : 0.65f));
@@ -384,7 +395,7 @@ void Renderer::DrawSidebar(const RenderState& state) {
         }
 
         D2D1_RECT_F lbl = D2D1::RectF((e.all ? 16.0f : 34.0f), y, m_sidebarW - 8, y + 38);
-        m_rt->DrawText(e.label, (UINT32)wcslen(e.label), m_fmtSidebar.Get(), lbl,
+        m_rt->DrawText(e.label.c_str(), (UINT32)e.label.size(), m_fmtSidebar.Get(), lbl,
                        (active || kbFocus) ? m_brushText.Get() : m_brushSubtext.Get());
         y += 42.0f;
         ++entryIdx;
@@ -893,7 +904,7 @@ int Renderer::HitTestGrid(float x, float y, const RenderState& state,
 
 bool Renderer::HitTestSidebar(float x, float y, const RenderState& state,
                                Platform& outPlatform, bool& outAll,
-                               LibraryPage& outPage) const {
+                               LibraryPage& outPage, std::wstring& outCollection) const {
     if (x >= m_sidebarW) return false;
     auto entries = BuildSidebarEntries(state);
     float listTop = m_topbarH + 12.0f;
@@ -903,9 +914,10 @@ bool Renderer::HitTestSidebar(float x, float y, const RenderState& state,
     float ey = listTop - std::clamp(state.sidebarScroll, 0.0f, MaxSidebarScroll(state));
     for (auto& e : entries) {
         if (y >= ey && y <= ey + 38.0f) {
-            outAll      = e.all;
-            outPlatform = e.p;
-            outPage     = e.page;
+            outAll        = e.all;
+            outPlatform   = e.p;
+            outPage       = e.page;
+            outCollection = e.collection;
             return true;
         }
         ey += 42.0f;

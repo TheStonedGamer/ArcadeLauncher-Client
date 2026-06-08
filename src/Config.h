@@ -73,6 +73,11 @@ struct ServerConfig {
     // major hardware or software change), at which point we re-authenticate.
     std::wstring tokenFingerprint;
     std::wstring installRoot;
+    // Steam-style library folders: games may install to any of these roots. The
+    // legacy single `installRoot` is migrated into libraryFolders[0] on load.
+    std::vector<std::wstring> libraryFolders;
+    int  defaultLibraryIndex = 0;          // which folder is offered by default
+    bool alwaysAskInstallLocation = true;  // show the drive picker on each install
     // Runtime-only (not persisted): path to Dolphin.exe, used to locate the
     // Dolphin user directory when extracting GameCube/Wii custom texture packs.
     std::wstring dolphinPath;
@@ -93,6 +98,9 @@ struct AppConfig {
     // Cached OAuth token
     std::wstring igdbAccessToken;
     int64_t      igdbTokenExpiry = 0;
+
+    // User-defined collections (Steam-style). Games reference these by name.
+    std::vector<std::wstring> collections;
 
     LibraryConfig  libraries;
     EmulatorConfig emulators;

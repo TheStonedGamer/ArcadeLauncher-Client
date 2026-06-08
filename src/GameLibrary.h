@@ -96,6 +96,13 @@ struct Game {
     std::wstring coverArtPath;
     std::wstring coverArtUrl;
 
+    // Per-game custom launch options (Steam-style). Appended to the launch
+    // command line; "%command%" if present is replaced by the base target.
+    std::wstring launchOptions;
+
+    // Collections this game belongs to (names matching AppConfig::collections).
+    std::vector<std::wstring> collections;
+
     // Stats
     uint64_t playtimeSeconds = 0;
     int64_t  lastPlayed = 0;

@@ -5,6 +5,7 @@
 #include "Platform/GogScanner.h"
 #include "IgdbSync.h"
 #include "AccountDialog.h"
+#include "LibraryDialog.h"
 #include <commctrl.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -1238,12 +1239,13 @@ void App::OnLButtonDown(float x, float y) {
         return;
     }
 
-    Platform p; bool all; LibraryPage page;
-    if (m_renderer.HitTestSidebar(x, y, m_renderState, p, all, page)) {
-        m_renderState.filterAll      = all;
-        m_renderState.filterPlatform = p;
-        m_renderState.libraryPage    = page;
-        m_renderState.focusArea      = FocusArea::Sidebar;
+    Platform p; bool all; LibraryPage page; std::wstring col;
+    if (m_renderer.HitTestSidebar(x, y, m_renderState, p, all, page, col)) {
+        m_renderState.filterAll        = all;
+        m_renderState.filterPlatform   = p;
+        m_renderState.libraryPage      = page;
+        m_renderState.filterCollection = col;
+        m_renderState.focusArea        = FocusArea::Sidebar;
         ApplyFilter();
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return;
@@ -1608,6 +1610,9 @@ void App::ShowMenuBar() {
     addTool(IDM_TOOL_XBOX360, L"Launch Xenia Canary",    emu.xeniaPath);
     addTool(IDM_TOOL_XBOX,    L"Launch XEMU",             emu.xemuPath);
 
+    AppendMenuW(hTools, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hTools, MF_STRING, IDM_TOOL_LIBRARY, L"Library Folders\x2026");
+
     HMENU hMenuBar = CreatePopupMenu();
     AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hTools, L"Tools");
 
@@ -1639,6 +1644,10 @@ void App::ShowMenuBar() {
     case IDM_TOOL_PS2:     launchStandalone(emu.pcsx2Path,         emu.pcsx2Args);         break;
     case IDM_TOOL_XBOX360: launchStandalone(emu.xeniaPath,         emu.xeniaArgs);         break;
     case IDM_TOOL_XBOX:    launchStandalone(emu.xemuPath,          emu.xemuArgs);          break;
+    case IDM_TOOL_LIBRARY:
+        if (ShowLibraryFoldersDialog(m_hwnd, m_config.Get().server))
+            SaveAll();
+        break;
     }
 }
 
@@ -1804,8 +1813,30 @@ void App::LaunchGame(const Game& game) {
 
 // Enqueue a server game for background install (optionally auto-launching when
 // the install completes). Shared by the Play action and the Download button.
+bool App::ChooseInstallRoot(const std::wstring& title, std::wstring& outRoot) {
+    ServerConfig& server = m_config.Get().server;
+    outRoot.clear();
+    if (server.libraryFolders.empty()) return true;  // server default installRoot
+    if (server.alwaysAskInstallLocation) {
+        if (!ShowInstallLocationDialog(m_hwnd, server, title, outRoot, false))
+            return false;
+        SaveAll();  // dialog may have added a folder or changed the default
+        return true;
+    }
+    int di = server.defaultLibraryIndex;
+    if (di < 0 || di >= (int)server.libraryFolders.size()) di = 0;
+    outRoot = server.libraryFolders[di];
+    return true;
+}
+
 void App::QueueServerInstall(const Game& game, bool autoLaunch) {
     if (!game.serverBacked) return;
+
+    // Steam-style install-location selection. Pick the target library folder
+    // before queuing so the worker installs into the chosen drive.
+    std::wstring chosenRoot;
+    if (!ChooseInstallRoot(game.title, chosenRoot)) return;  // cancelled
+
     // Make sure a valid shared token is in the config before the background
     // worker (which reads m_config) starts hitting the server.
     std::wstring authErr;
@@ -1827,6 +1858,7 @@ void App::QueueServerInstall(const Game& game, bool autoLaunch) {
         job.gameId = game.id;
         job.title = game.title;
         job.autoLaunch = autoLaunch;
+        job.installRoot = chosenRoot;
         m_downloadQueue.push_back(std::move(job));
     }
     if (auto* stored = m_library.FindById(game.id)) {
@@ -1838,6 +1870,21 @@ void App::QueueServerInstall(const Game& game, bool autoLaunch) {
     InvalidateRect(m_hwnd, nullptr, FALSE);
     OpenDownloadStatus();
     StartDownloadWorker();
+}
+
+// Combine a game's base arguments with its custom launch options (Steam-style).
+// "%command%" in the options is replaced by the base args; otherwise the options
+// are appended.
+static std::wstring ApplyLaunchOptions(const std::wstring& baseArgs,
+                                       const std::wstring& opts) {
+    if (opts.empty()) return baseArgs;
+    size_t p = opts.find(L"%command%");
+    if (p != std::wstring::npos) {
+        std::wstring r = opts;
+        r.replace(p, wcslen(L"%command%"), baseArgs);
+        return r;
+    }
+    return baseArgs.empty() ? opts : baseArgs + L" " + opts;
 }
 
 void App::LaunchInstalledGame(Game launchGame) {
@@ -1871,6 +1918,7 @@ void App::LaunchInstalledGame(Game launchGame) {
         std::wstring godCacheRoot;
         if (EnsureXbox360GodLocalCache(launchGame, cachedRomPath, godCacheRoot, m_hwnd))
             args = RebuildArgsForCachedRom(launchGame, cachedRomPath);
+        args = ApplyLaunchOptions(args, launchGame.launchOptions);
 
         ok = m_monitor.Launch(launchGame.emulatorPath, args, {},
             [this, id = launchGame.id, godCacheRoot](uint64_t elapsed) {
@@ -1888,7 +1936,8 @@ void App::LaunchInstalledGame(Game launchGame) {
         std::wstring workDir;
         size_t sep = launchGame.exePath.rfind(L'\\');
         if (sep != std::wstring::npos) workDir = launchGame.exePath.substr(0, sep);
-        ok = m_monitor.Launch(launchGame.exePath, launchGame.arguments, workDir,
+        std::wstring exeArgs = ApplyLaunchOptions(launchGame.arguments, launchGame.launchOptions);
+        ok = m_monitor.Launch(launchGame.exePath, exeArgs, workDir,
             [this, id = launchGame.id](uint64_t elapsed) {
                 if (auto* g = m_library.FindById(id)) {
                     g->playtimeSeconds += elapsed;
@@ -1912,6 +1961,9 @@ void App::DownloadGameInBackground(int visibleIdx) {
         return;
     }
 
+    std::wstring chosenRoot;
+    if (!ChooseInstallRoot(game.title, chosenRoot)) return;  // cancelled
+
     std::wstring authErr;
     EnsureServerToken(authErr); // shared token ready before the worker starts
 
@@ -1929,6 +1981,7 @@ void App::DownloadGameInBackground(int visibleIdx) {
         job.game = game;
         job.gameId = game.id;
         job.title = game.title;
+        job.installRoot = chosenRoot;
         m_downloadQueue.push_back(std::move(job));
     }
 
@@ -1968,12 +2021,14 @@ void App::DownloadWorker() {
         }
 
         Game game;
+        std::wstring jobRoot;
         bool found = false;
         {
             std::lock_guard<std::mutex> lk(m_downloadMutex);
             for (const auto& job : m_downloadQueue) {
                 if (job.gameId == gameId) {
                     game = job.game;
+                    jobRoot = job.installRoot;
                     found = true;
                     break;
                 }
@@ -1986,6 +2041,8 @@ void App::DownloadWorker() {
         } else {
             ServerConfig sc = m_config.Get().server;
             sc.dolphinPath = m_config.Get().emulators.dolphinPath;
+            // Per-job library folder override (Steam-style install location).
+            if (!jobRoot.empty()) sc.installRoot = jobRoot;
             ServerClient client(sc);
             HWND hwnd = m_hwnd;
             auto lastPost = std::make_shared<std::chrono::steady_clock::time_point>(
@@ -2295,6 +2352,14 @@ void App::ApplyFilter() {
             if (g.serverBacked && g.installState == InstallState::UpdateAvailable)
                 m_visibleGames.push_back(&g);
         }
+    } else if (m_renderState.libraryPage == LibraryPage::Collection) {
+        m_visibleGames.clear();
+        const std::wstring& name = m_renderState.filterCollection;
+        for (auto& g : m_library.All()) {
+            if (std::find(g.collections.begin(), g.collections.end(), name)
+                    != g.collections.end())
+                m_visibleGames.push_back(&g);
+        }
     } else {
         m_visibleGames = m_library.Filter(m_renderState.filterPlatform);
     }
@@ -2345,6 +2410,7 @@ void App::UpdateSidebarFlags() {
     m_renderState.showXbox360 = true;
     m_renderState.showXbox    = true;
     m_renderState.showRepacks = true;
+    m_renderState.collections = m_config.Get().collections;
     int count = Renderer::GetSidebarEntryCount(m_renderState);
     if (m_renderState.sidebarFocusIdx >= count)
         m_renderState.sidebarFocusIdx = count - 1;
@@ -2355,9 +2421,10 @@ void App::UpdateSidebarFlags() {
 void App::ApplySidebarFilter(int idx) {
     auto entries = Renderer::BuildSidebarEntries(m_renderState);
     if (idx < 0 || idx >= (int)entries.size()) return;
-    m_renderState.filterAll      = entries[idx].all;
-    m_renderState.filterPlatform = entries[idx].p;
-    m_renderState.libraryPage    = entries[idx].page;
+    m_renderState.filterAll        = entries[idx].all;
+    m_renderState.filterPlatform   = entries[idx].p;
+    m_renderState.libraryPage      = entries[idx].page;
+    m_renderState.filterCollection = entries[idx].collection;
     ApplyFilter();
 }
 
@@ -2398,6 +2465,32 @@ void App::OnRButtonDown(float x, float y) {
         AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate && Repair Installed Files");
     if (canUninstall)
         AppendMenuW(menu, MF_STRING, IDM_UNINSTALL_GAME, L"Uninstall Local Files");
+
+    // Move an installed game between library folders (needs >1 destination).
+    bool canMove = hoveredGame->serverBacked &&
+        hoveredGame->installState == InstallState::Installed &&
+        !hoveredGame->installRoot.empty() &&
+        m_config.Get().server.libraryFolders.size() > 1;
+    if (canMove)
+        AppendMenuW(menu, MF_STRING, IDM_MOVE_GAME, L"Move Install Folder…");
+
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_LAUNCH_OPTIONS, L"Set Launch Options…");
+
+    // Collections submenu: toggle membership, or create a new collection.
+    HMENU colMenu = CreatePopupMenu();
+    AppendMenuW(colMenu, MF_STRING, IDM_COLLECTION_NEW, L"New Collection…");
+    const auto& collections = m_config.Get().collections;
+    if (!collections.empty()) AppendMenuW(colMenu, MF_SEPARATOR, 0, nullptr);
+    for (size_t i = 0; i < collections.size(); ++i) {
+        bool inIt = std::find(hoveredGame->collections.begin(),
+                              hoveredGame->collections.end(),
+                              collections[i]) != hoveredGame->collections.end();
+        AppendMenuW(colMenu, MF_STRING | (inIt ? MF_CHECKED : 0),
+                    IDM_COLLECTION_BASE + (UINT)i, collections[i].c_str());
+    }
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)colMenu, L"Collections");
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EDIT_TITLE, L"Edit Title…");
     UINT matchFlags = MF_STRING | (m_metaManager ? 0 : MF_GRAYED);
@@ -2428,6 +2521,15 @@ void App::OnRButtonDown(float x, float y) {
     } else if (cmd == IDM_MATCH_META) {
         if (idx < (int)m_visibleGames.size())
             OpenMetadataPicker(m_visibleGames[idx]->id, m_visibleGames[idx]->title);
+    } else if (cmd == IDM_MOVE_GAME) {
+        MoveGame(idx);
+    } else if (cmd == IDM_LAUNCH_OPTIONS) {
+        SetLaunchOptions(idx);
+    } else if (cmd == IDM_COLLECTION_NEW) {
+        NewCollectionForGame(idx);
+    } else if (cmd >= (int)IDM_COLLECTION_BASE &&
+               cmd < (int)IDM_COLLECTION_BASE + (int)m_config.Get().collections.size()) {
+        ToggleGameCollection(idx, cmd - IDM_COLLECTION_BASE);
     }
 }
 
@@ -2458,6 +2560,164 @@ void App::UninstallGame(int visibleIdx) {
         stored->exePath.clear();
     }
     SaveAll();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::MoveGame(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const Game game = *m_visibleGames[visibleIdx];
+    if (!game.serverBacked || game.installState != InstallState::Installed ||
+        game.installRoot.empty())
+        return;
+
+    ServerConfig& server = m_config.Get().server;
+    std::wstring newLibRoot;
+    if (!ShowInstallLocationDialog(m_hwnd, server, game.title, newLibRoot, true))
+        return;
+    SaveAll();  // dialog may have added a folder
+    if (newLibRoot.empty()) return;
+
+    // New per-game folder = newLibRoot \ <basename of current install folder>.
+    std::wstring oldRoot = game.installRoot;
+    std::wstring trimmed = oldRoot;
+    while (!trimmed.empty() && (trimmed.back() == L'\\' || trimmed.back() == L'/'))
+        trimmed.pop_back();
+    size_t sl = trimmed.find_last_of(L"\\/");
+    std::wstring leaf = (sl == std::wstring::npos) ? trimmed : trimmed.substr(sl + 1);
+    std::wstring newRoot = newLibRoot;
+    if (!newRoot.empty() && newRoot.back() != L'\\') newRoot += L'\\';
+    newRoot += leaf;
+
+    if (_wcsicmp(newRoot.c_str(), oldRoot.c_str()) == 0) return;  // already there
+    if (fs::exists(newRoot)) {
+        MessageBoxW(m_hwnd,
+            L"The destination library already contains a folder for this game.",
+            L"Move Failed", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    CopyProgressDialog dialog;
+    dialog.Create(m_hwnd, L"Moving " + game.title, L"Moving files");
+    auto startedAt = std::chrono::steady_clock::now();
+    std::atomic<uint64_t> copied{0}, total{0};
+    std::atomic<bool> finished{false}, success{false};
+    std::wstring moveErr;
+    std::thread worker([&]() {
+        try {
+            // Same-volume rename is instant; cross-volume needs copy + delete.
+            std::error_code ec;
+            fs::rename(oldRoot, newRoot, ec);
+            if (!ec) { success.store(true); finished.store(true); return; }
+            for (auto& e : fs::recursive_directory_iterator(oldRoot))
+                if (e.is_regular_file()) total += e.file_size();
+            fs::create_directories(newRoot);
+            for (auto& e : fs::recursive_directory_iterator(oldRoot)) {
+                std::wstring rel = fs::relative(e.path(), oldRoot).wstring();
+                fs::path dst = fs::path(newRoot) / rel;
+                if (e.is_directory()) {
+                    fs::create_directories(dst);
+                } else if (e.is_regular_file()) {
+                    fs::create_directories(dst.parent_path());
+                    fs::copy_file(e.path(), dst, fs::copy_options::overwrite_existing);
+                    copied += e.file_size();
+                }
+            }
+            fs::remove_all(oldRoot);
+            success.store(true);
+        } catch (const std::exception& ex) {
+            moveErr = ToWide(ex.what());
+        }
+        finished.store(true);
+    });
+    while (!finished.load()) {
+        MSG msg{};
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        uint64_t c = copied.load(), t = total.load();
+        double secs = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - startedAt).count();
+        double mbps = secs > 0.0 ? ((double)c / (1024.0 * 1024.0)) / secs : 0.0;
+        dialog.SetProgress(c, t, mbps);
+        Sleep(50);
+    }
+    worker.join();
+    dialog.Close();
+
+    if (!success.load()) {
+        MessageBoxW(m_hwnd,
+            moveErr.empty() ? L"Could not move the game files." : moveErr.c_str(),
+            L"Move Failed", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    // Re-point stored paths from the old install root to the new one.
+    if (auto* stored = m_library.FindById(game.id)) {
+        auto repath = [&](std::wstring& p) {
+            if (p.size() >= oldRoot.size() &&
+                _wcsnicmp(p.c_str(), oldRoot.c_str(), oldRoot.size()) == 0)
+                p = newRoot + p.substr(oldRoot.size());
+        };
+        stored->installRoot = newRoot;
+        repath(stored->romPath);
+        repath(stored->exePath);
+    }
+    SaveAll();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::SetLaunchOptions(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const Game game = *m_visibleGames[visibleIdx];
+    std::wstring opts = game.launchOptions;
+    std::wstring label =
+        L"Custom launch options for " + game.title + L".\n"
+        L"Passed to the game when it launches. Use %command% to reference the "
+        L"default command line.";
+    if (!ShowTextPrompt(m_hwnd, L"Launch Options", label, opts)) return;
+    if (auto* stored = m_library.FindById(game.id))
+        stored->launchOptions = opts;
+    SaveAll();
+}
+
+void App::NewCollectionForGame(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const std::wstring gameId = m_visibleGames[visibleIdx]->id;
+    std::wstring name;
+    if (!ShowTextPrompt(m_hwnd, L"New Collection", L"Collection name:", name)) return;
+    while (!name.empty() && iswspace(name.front()))  name.erase(name.begin());
+    while (!name.empty() && iswspace(name.back()))   name.pop_back();
+    if (name.empty()) return;
+
+    auto& cols = m_config.Get().collections;
+    if (std::find(cols.begin(), cols.end(), name) == cols.end())
+        cols.push_back(name);
+    if (auto* stored = m_library.FindById(gameId)) {
+        if (std::find(stored->collections.begin(), stored->collections.end(), name)
+                == stored->collections.end())
+            stored->collections.push_back(name);
+    }
+    SaveAll();
+    UpdateSidebarFlags();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::ToggleGameCollection(int visibleIdx, int collectionIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    auto& cols = m_config.Get().collections;
+    if (collectionIdx < 0 || collectionIdx >= (int)cols.size()) return;
+    std::wstring name = cols[collectionIdx];
+    if (auto* stored = m_library.FindById(m_visibleGames[visibleIdx]->id)) {
+        auto it = std::find(stored->collections.begin(), stored->collections.end(), name);
+        if (it == stored->collections.end()) stored->collections.push_back(name);
+        else                                 stored->collections.erase(it);
+    }
+    SaveAll();
+    UpdateSidebarFlags();
     ApplyFilter();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }

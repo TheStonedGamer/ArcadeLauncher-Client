@@ -53,6 +53,10 @@ private:
     void LaunchGame(const Game& game);
     void LaunchInstalledGame(Game launchGame);
     void QueueServerInstall(const Game& game, bool autoLaunch);
+    // Resolve the install location (library folder) for a server game. Returns
+    // false if the user cancelled the picker. outRoot is empty when no library
+    // folders are configured (the server default installRoot is then used).
+    bool ChooseInstallRoot(const std::wstring& title, std::wstring& outRoot);
     void DownloadGameInBackground(int visibleIdx);
     void OpenDownloadStatus();
     void RefreshDownloadStatusWindow();
@@ -60,6 +64,10 @@ private:
     void DownloadWorker();
     void ValidateGame(int visibleIdx);
     void UninstallGame(int visibleIdx);
+    void MoveGame(int visibleIdx);              // relocate install between libraries
+    void SetLaunchOptions(int visibleIdx);      // per-game custom launch args
+    void NewCollectionForGame(int visibleIdx);  // create + assign a collection
+    void ToggleGameCollection(int visibleIdx, int collectionIdx);
     void RefreshArt(const Game& game);
     void ApplyFilter();
     void ApplySidebarFilter(int idx);
@@ -116,6 +124,7 @@ private:
         bool complete = false;
         bool failed = false;
         bool autoLaunch = false;  // launch the game when this install completes
+        std::wstring installRoot; // chosen library folder (empty = server default)
         std::wstring error;
     };
     std::mutex m_downloadMutex;
@@ -180,6 +189,11 @@ private:
     static constexpr UINT IDM_UNINSTALL_GAME = 5006;
     static constexpr UINT IDM_DOWNLOAD_GAME = 5007;
     static constexpr UINT IDM_DOWNLOAD_STATUS = 5008;
+    static constexpr UINT IDM_MOVE_GAME    = 5009;
+    static constexpr UINT IDM_LAUNCH_OPTIONS = 5010;
+    // Collections submenu: "New collection…" then one id per existing collection.
+    static constexpr UINT IDM_COLLECTION_NEW  = 5200;
+    static constexpr UINT IDM_COLLECTION_BASE = 5201;  // + collection index
 
     // Tools menu command IDs
     static constexpr UINT IDM_TOOL_DOLPHIN = 6001;
@@ -192,6 +206,7 @@ private:
     static constexpr UINT IDM_TOOL_PS2     = 6008;
     static constexpr UINT IDM_TOOL_XBOX360 = 6009;
     static constexpr UINT IDM_TOOL_XBOX    = 6010;
+    static constexpr UINT IDM_TOOL_LIBRARY = 6011;
 
     // Tray menu command IDs
     static constexpr UINT IDM_TRAY_SHOW    = 7001;
