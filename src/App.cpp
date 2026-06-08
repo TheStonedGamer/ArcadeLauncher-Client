@@ -2248,7 +2248,7 @@ void App::OnRButtonDown(float x, float y) {
         AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_GAME, L"Download in Background");
     AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_STATUS, L"Download Queue...");
     if (canValidate)
-        AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate Installed Files");
+        AppendMenuW(menu, MF_STRING, IDM_VALIDATE_GAME, L"Validate && Repair Installed Files");
     if (canUninstall)
         AppendMenuW(menu, MF_STRING, IDM_UNINSTALL_GAME, L"Uninstall Local Files");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -2363,7 +2363,26 @@ void App::ValidateGame(int visibleIdx) {
     appendList(L"Missing", result.missingFiles);
     appendList(L"Corrupt or changed", result.badFiles);
 
-    MessageBoxW(m_hwnd, details.c_str(), L"Validation Failed", MB_OK | MB_ICONWARNING);
+    size_t badCount = result.missingFiles.size() + result.badFiles.size();
+    if (badCount == 0) {
+        // Validation failed without identifiable files (e.g. manifest fetch
+        // error) — nothing to repair, just report.
+        MessageBoxW(m_hwnd, details.c_str(), L"Validation Failed", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    details += L"\n\nRe-download and repair these " + std::to_wstring(badCount) +
+               L" file(s)?\n(Only the missing/corrupt files are fetched; valid files are kept.)";
+    if (MessageBoxW(m_hwnd, details.c_str(), L"Validation Failed",
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON1) != IDYES) {
+        return;
+    }
+
+    // InstallGame re-fetches only files that fail size+hash verification, so
+    // queuing a (re)install acts as an efficient repair. QueueServerInstall is
+    // not gated on installState==Installed (unlike DownloadGameInBackground),
+    // so this works for an installed-but-corrupt game.
+    QueueServerInstall(game, /*autoLaunch=*/false);
 }
 
 void App::OpenEditTitle(int visibleIdx) {
