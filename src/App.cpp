@@ -1635,9 +1635,10 @@ void App::LaunchGame(const Game& game) {
             LaunchInstalledGame(launchGame);
             return;
         }
-        // Not installed: install on the background worker and auto-launch when
-        // it finishes. Returns immediately so the UI never freezes.
-        QueueServerInstall(launchGame, /*autoLaunch=*/true);
+        // Not installed: install on the background worker. Returns immediately so
+        // the UI never freezes. The game is NOT auto-launched on completion — the
+        // user starts it manually once the download finishes.
+        QueueServerInstall(launchGame, /*autoLaunch=*/false);
         return;
     }
 
