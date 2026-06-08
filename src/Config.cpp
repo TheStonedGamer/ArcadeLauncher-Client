@@ -118,6 +118,7 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"serverPassword\":\"" + Escape(m_cfg.server.password) + "\",\n";
     out += "  \"serverTotpCode\":\"\",\n";
     out += "  \"serverAuthToken\":\"" + Escape(m_cfg.server.authToken) + "\",\n";
+    out += "  \"serverTokenFingerprint\":\"" + Escape(m_cfg.server.tokenFingerprint) + "\",\n";
     out += "  \"serverInstallRoot\":\"" + Escape(m_cfg.server.installRoot) + "\",\n";
     // Library settings
     out += "  \"steamPath\":\"" + Escape(lb.steamPath) + "\",\n";
@@ -202,6 +203,7 @@ void Config::Load(const std::wstring& path) {
     m_cfg.server.password    = ToWide(ReadField(json, "serverPassword"));
     m_cfg.server.totpCode.clear();
     m_cfg.server.authToken   = ToWide(ReadField(json, "serverAuthToken"));
+    m_cfg.server.tokenFingerprint = ToWide(ReadField(json, "serverTokenFingerprint"));
     m_cfg.server.installRoot = ToWide(ReadField(json, "serverInstallRoot"));
 
     m_cfg.libraries.steamPath         = ToWide(ReadField(json, "steamPath"));

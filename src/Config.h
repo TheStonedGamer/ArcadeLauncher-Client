@@ -68,6 +68,10 @@ struct ServerConfig {
     std::wstring password;
     std::wstring totpCode;
     std::wstring authToken;
+    // Machine fingerprint the cached authToken was bound to. The token is
+    // reused across launches and concurrent clients until this changes (a
+    // major hardware or software change), at which point we re-authenticate.
+    std::wstring tokenFingerprint;
     std::wstring installRoot;
 };
 

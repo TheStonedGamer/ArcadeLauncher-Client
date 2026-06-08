@@ -536,6 +536,10 @@ bool ServerClient::TryChallengeResponse(std::wstring& error) {
     return true;
 }
 
+bool ServerClient::Authenticate(std::wstring& error) {
+    return EnsureAuthenticated(error);
+}
+
 bool ServerClient::EnsureAuthenticated(std::wstring& error) {
     if (!m_cfg.authToken.empty()) return true;
     if (m_cfg.username.empty() || m_cfg.password.empty()) return true;

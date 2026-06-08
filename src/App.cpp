@@ -792,6 +792,11 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else {
                 stored->installState = InstallState::Missing;
                 stored->installProgressPermille = 0;
+                // A 401 means the cached token was rejected (e.g. revoked or the
+                // machine fingerprint drifted) — drop it so the next attempt
+                // re-authenticates instead of failing again with a stale token.
+                if (done->result.error.find(L"401") != std::wstring::npos)
+                    InvalidateServerToken();
                 MessageBoxW(m_hwnd,
                     (L"Background download failed:\n" + done->result.error).c_str(),
                     L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
@@ -1600,6 +1605,78 @@ void App::TriggerResync() {
     }).detach();
 }
 
+static std::wstring RegStringHKLM(const wchar_t* subkey, const wchar_t* value) {
+    wchar_t buf[256]{};
+    DWORD sz = sizeof(buf);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, subkey, value, RRF_RT_REG_SZ,
+                     nullptr, buf, &sz) == ERROR_SUCCESS)
+        return buf;
+    return L"";
+}
+
+// A stable identity for this install that changes on a major hardware or
+// software change, so a cached server token is reused until then.
+//  - MachineGuid  : regenerated on an OS reinstall (software).
+//  - CurrentBuild : bumps on a major Windows feature update (software).
+//  - C: volume serial : changes on a disk swap / fresh install (hardware).
+//  - computer name + CPU arch/count : board/CPU swaps (hardware).
+static std::wstring MachineFingerprint() {
+    std::wstring guid  = RegStringHKLM(L"SOFTWARE\\Microsoft\\Cryptography", L"MachineGuid");
+    std::wstring build = RegStringHKLM(L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"CurrentBuild");
+
+    wchar_t name[256]{}; DWORD nameLen = _countof(name);
+    if (!GetComputerNameW(name, &nameLen)) name[0] = 0;
+
+    DWORD volSerial = 0;
+    GetVolumeInformationW(L"C:\\", nullptr, 0, &volSerial, nullptr, nullptr, nullptr, 0);
+
+    SYSTEM_INFO si{}; GetNativeSystemInfo(&si);
+
+    return guid + L"|" + build + L"|" + name + L"|" +
+        std::to_wstring(volSerial) + L"|" +
+        std::to_wstring(si.wProcessorArchitecture) + L"|" +
+        std::to_wstring(si.dwNumberOfProcessors);
+}
+
+bool App::EnsureServerToken(std::wstring& error) {
+    std::lock_guard<std::mutex> lk(m_authMutex);
+    auto& s = m_config.Get().server;
+    if (!s.enabled) return true;
+    if (s.baseUrl.empty() || s.username.empty() || s.password.empty()) {
+        error = L"Server credentials are not configured.";
+        return false;
+    }
+
+    std::wstring fp = MachineFingerprint();
+    if (!s.authToken.empty() && s.tokenFingerprint == fp)
+        return true; // reuse the cached, machine-bound token
+
+    // No token, or the machine fingerprint changed: authenticate once and
+    // persist the issued token. The server reuses one stable token per user,
+    // so this credential is shared by every later client (re-sync + worker)
+    // without re-logging in.
+    ServerConfig probe = s;
+    probe.authToken.clear();
+    ServerClient client(probe);
+    if (!client.Authenticate(error)) {
+        if (error.empty()) error = L"Server authentication failed.";
+        return false;
+    }
+    s.authToken = client.AuthToken();
+    s.tokenFingerprint = fp;
+    m_config.Save(GetAppDataPath() + L"\\config.json");
+    return true;
+}
+
+void App::InvalidateServerToken() {
+    std::lock_guard<std::mutex> lk(m_authMutex);
+    auto& s = m_config.Get().server;
+    if (s.authToken.empty()) return;
+    s.authToken.clear();
+    s.tokenFingerprint.clear();
+    m_config.Save(GetAppDataPath() + L"\\config.json");
+}
+
 void App::ScanAllPlatforms() {
     auto& lib = m_config.Get().libraries;
     auto& emu = m_config.Get().emulators;
@@ -1615,6 +1692,10 @@ void App::ScanAllPlatforms() {
         all.insert(all.end(), games.begin(), games.end());
     }
 
+    if (m_config.Get().server.enabled) {
+        std::wstring authErr;
+        EnsureServerToken(authErr); // populate/refresh the shared token first
+    }
     const auto serverCfg = m_config.Get().server;
     if (serverCfg.enabled && !serverCfg.baseUrl.empty()) {
         ServerClient client(serverCfg);
@@ -1673,6 +1754,10 @@ void App::LaunchGame(const Game& game) {
 // the install completes). Shared by the Play action and the Download button.
 void App::QueueServerInstall(const Game& game, bool autoLaunch) {
     if (!game.serverBacked) return;
+    // Make sure a valid shared token is in the config before the background
+    // worker (which reads m_config) starts hitting the server.
+    std::wstring authErr;
+    EnsureServerToken(authErr);
     {
         std::lock_guard<std::mutex> lk(m_downloadMutex);
         auto exists = std::find_if(m_downloadQueue.begin(), m_downloadQueue.end(),
@@ -1774,6 +1859,9 @@ void App::DownloadGameInBackground(int visibleIdx) {
         game.installState == InstallState::Downloading) {
         return;
     }
+
+    std::wstring authErr;
+    EnsureServerToken(authErr); // shared token ready before the worker starts
 
     {
         std::lock_guard<std::mutex> lk(m_downloadMutex);
@@ -2303,6 +2391,7 @@ void App::UninstallGame(int visibleIdx) {
     }
 
     std::wstring error;
+    EnsureServerToken(error);
     ServerClient client(m_config.Get().server);
     if (!client.UninstallGame(game, error)) {
         MessageBoxW(m_hwnd, error.c_str(), L"Uninstall Failed", MB_OK | MB_ICONERROR);
@@ -2329,6 +2418,8 @@ void App::ValidateGame(int visibleIdx) {
     dialog.Create(m_hwnd, L"Validating " + game.title, L"Validating installed files");
     auto startedAt = std::chrono::steady_clock::now();
 
+    std::wstring authErr;
+    EnsureServerToken(authErr);
     ServerClient client(m_config.Get().server);
     auto result = client.ValidateGame(game, [&](uint64_t checked, uint64_t total) {
         double seconds = std::chrono::duration<double>(

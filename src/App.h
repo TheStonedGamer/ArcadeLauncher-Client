@@ -43,6 +43,13 @@ private:
     void OnScroll(float delta);
 
     void ScanAllPlatforms();
+    // Ensure m_config holds a valid, machine-bound server token, logging in
+    // (once) only when there is no token or the machine fingerprint changed.
+    // Thread-safe; cheap no-op after the first successful login.
+    bool EnsureServerToken(std::wstring& error);
+    // Drop the cached token so the next EnsureServerToken re-authenticates
+    // (called when a server request is rejected with 401).
+    void InvalidateServerToken();
     void LaunchGame(const Game& game);
     void LaunchInstalledGame(Game launchGame);
     void QueueServerInstall(const Game& game, bool autoLaunch);
@@ -110,6 +117,7 @@ private:
         std::wstring error;
     };
     std::mutex m_downloadMutex;
+    std::mutex m_authMutex;  // serializes server token refresh
     std::deque<DownloadJob> m_downloadQueue;
     bool m_downloadWorkerRunning = false;
     HWND m_downloadStatusWnd = nullptr;

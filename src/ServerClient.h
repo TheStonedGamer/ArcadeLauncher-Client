@@ -60,6 +60,11 @@ public:
                                       std::function<void(uint64_t, uint64_t)> onProgress = {});
     bool UninstallGame(const Game& game, std::wstring& error);
 
+    // Authenticate now (logs in only if no token is cached) and expose the
+    // resulting token so the caller can persist and share it across clients.
+    bool Authenticate(std::wstring& error);
+    const std::wstring& AuthToken() const { return m_cfg.authToken; }
+
 private:
     ServerConfig m_cfg;
 
