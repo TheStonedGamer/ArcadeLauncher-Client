@@ -274,7 +274,7 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     if (s.showSteam)   v.push_back({ L"Steam",   false, Platform::Steam,   LibraryPage::Platform });
     if (s.showEpic)    v.push_back({ L"Epic",    false, Platform::Epic,    LibraryPage::Platform });
     if (s.showGog)     v.push_back({ L"GOG",     false, Platform::GOG,     LibraryPage::Platform });
-    if (s.showDolphin) v.push_back({ L"Dolphin", false, Platform::Dolphin, LibraryPage::Platform });
+    // Dolphin tab removed — GameCube and Wii are surfaced as their own tabs.
     if (s.showGameCube) v.push_back({ L"GameCube", false, Platform::GameCube, LibraryPage::Platform });
     if (s.showWii)     v.push_back({ L"Wii",     false, Platform::Wii,     LibraryPage::Platform });
     if (s.showRyujinx) v.push_back({ L"Ryujinx", false, Platform::Ryujinx, LibraryPage::Platform });

@@ -910,6 +910,16 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         if (m_metaManager) {
+            // The server marks a game igdbMatched as soon as it has an igdbId, even
+            // if it never produced a cover URL (e.g. the freshly-split GameCube/Wii
+            // entries). Without this, ScanAllAsync would skip them and they'd never
+            // get box art. Re-arm the IGDB search for any game with no cover at all.
+            for (const auto& g : m_library.All()) {
+                if (g.coverArtUrl.empty() && g.coverArtPath.empty()) {
+                    if (Game* gm = m_library.FindById(g.id))
+                        gm->igdbMatched = false;
+                }
+            }
             m_metaManager->ScanAllAsync([this](const std::wstring& id, bool /*matched*/) {
                 PostMessageW(m_hwnd, WM_USER + 4, 0, (LPARAM)new std::wstring(id));
             });
