@@ -1979,9 +1979,15 @@ void App::SampleDownloadSpeed() {
         // rather than a negative spike.
         double delta = totalDone >= m_speedLastBytes ? (double)(totalDone - m_speedLastBytes) : 0.0;
         double bps = anyRunning && secs > 0 ? delta / secs : 0.0;
-        m_curSpeedBps = bps;
-        if (bps > m_peakSpeedBps) m_peakSpeedBps = bps;
-        m_speedHistory.push_back((float)bps);
+        // Exponential moving average so the readout and graph glide instead of
+        // jittering with per-tick network variance. Seed directly on the first
+        // sample after idle (m_curSpeedBps == 0) so there's no slow ramp-up.
+        constexpr double kSmoothing = 0.35;
+        m_curSpeedBps = m_curSpeedBps > 0.0
+            ? kSmoothing * bps + (1.0 - kSmoothing) * m_curSpeedBps
+            : bps;
+        if (m_curSpeedBps > m_peakSpeedBps) m_peakSpeedBps = m_curSpeedBps;
+        m_speedHistory.push_back((float)m_curSpeedBps);
         while (m_speedHistory.size() > 120) m_speedHistory.pop_front();
     }
     m_speedLastBytes = totalDone;

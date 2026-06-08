@@ -738,11 +738,19 @@ bool ServerClient::DownloadFile(const std::wstring& url,
             if (onFileProgress) onFileProgress(downloaded);
         }
     }
+    bool writeOk = out.good();
     out.close();
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(sess);
 
+    if (!writeOk) {
+        // A write failure (disk full, etc.) only flips the stream's fail bit —
+        // surface it plainly instead of letting it masquerade as a network
+        // "size mismatch". The partial .part is left intact so a retry resumes.
+        error = L"Disk write failed (out of space?)";
+        return false;
+    }
     if ((uint64_t)fs::file_size(part) != expectedSize) {
         error = L"Downloaded size mismatch";
         return false;
