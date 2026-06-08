@@ -803,8 +803,15 @@ bool ServerClient::DownloadChunkedFile(const ServerFileEntry& file,
         }
 
         std::wstring chunkPath = part + L".chunk";
-        if (!DownloadFile(chunk.url, chunkPath, chunk.size, {}, error))
+        if (!DownloadFile(chunk.url, chunkPath, chunk.size, {}, error)) {
+            // A failed chunk download can leave a partial temp file (and its
+            // own ".part" resume file) behind. Remove both so the install tree
+            // never accumulates strays — Xenia counts every file in a GOD/SVOD
+            // ".data" directory and rejects the title when the count is off.
+            DeleteFileW(chunkPath.c_str());
+            DeleteFileW((chunkPath + L".part").c_str());
             return false;
+        }
 
         std::wstring hash;
         if (!Sha256File(chunkPath, hash) || _wcsicmp(hash.c_str(), chunk.sha256.c_str()) != 0) {
@@ -926,6 +933,31 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
 
         done += f.size;
         if (onProgress) onProgress(done, total);
+    }
+
+    // Every real file is now downloaded and SHA-verified. Sweep any orphaned
+    // ".part"/".part.chunk" temp files an interrupted-then-retried download may
+    // have left in the tree. Xenia (and other tools) count files in a GOD/SVOD
+    // ".data" directory; a single stray file makes the container look corrupt
+    // ("expecting N data fragments, but N+k are present"). This also self-heals
+    // installs polluted by an older client when the user re-runs Validate&Repair.
+    try {
+        if (fs::exists(installRoot)) {
+            std::vector<fs::path> strays;
+            for (const auto& entry : fs::recursive_directory_iterator(installRoot)) {
+                if (!entry.is_regular_file()) continue;
+                const std::wstring name = entry.path().filename().wstring();
+                bool isPart = name.size() >= 5 && name.compare(name.size() - 5, 5, L".part") == 0;
+                bool isChunk = name.size() >= 11 && name.compare(name.size() - 11, 11, L".part.chunk") == 0;
+                if (isPart || isChunk) strays.push_back(entry.path());
+            }
+            for (const auto& p : strays) {
+                std::error_code ec;
+                fs::remove(p, ec);
+            }
+        }
+    } catch (...) {
+        // A sweep failure is non-fatal: the real files are intact and verified.
     }
 
     if (pcArchive) {
