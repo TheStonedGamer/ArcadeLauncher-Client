@@ -15,8 +15,12 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
 ## Server / networking
 - Talks to the ArcadeLauncher Server via reverse proxy `arcade.orlandoaio.net`
   (nginx on `10.0.0.203`) → upstream `http://10.0.0.210:8721`.
-- Downloads send `Authorization: Bearer <token>` + `Range`. Multi-chunk files use
-  the `/chunks/` endpoint; single files use `/files/`.
+- Downloads send `Authorization: Bearer <token>` + `Range`. `InstallGame` pulls
+  each file as a **single resumable ranged GET** of `/files/<id>/<rel>` (one
+  connection per file, streamed to `.part`, full-file SHA-256 verified after).
+  The per-chunk `/chunks/` path (`DownloadChunkedFile`) is a fallback only when a
+  manifest file has no `url`. Manifest paths with a `..` component are rejected
+  before any write (`HasPathTraversal`).
 
 ## Key code locations
 - `App.cpp` — message loop, `QueueServerInstall` (install button → background
