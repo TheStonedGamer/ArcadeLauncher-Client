@@ -72,6 +72,37 @@ void GameLibrary::MergeGames(std::vector<Game> scanned) {
             s.igdbRating      = old->igdbRating;
             s.releaseDate     = old->releaseDate;
             s.igdbPlatformId  = old->igdbPlatformId;
+
+            // Preserve local install / launch state for server-backed games.
+            // FetchCatalog only knows the catalog (title, version, installRoot
+            // by convention) — it has no idea about an in-flight download or the
+            // resolved launch path (romPath/exePath come back EMPTY). Without
+            // this, a re-sync (10-min timer or focus-regain) wipes those: a
+            // downloading game reverts mid-flight and an installed game becomes
+            // unlaunchable. Keep the worker's progress untouched.
+            if (s.serverBacked && old->serverBacked) {
+                if (!old->romPath.empty())     s.romPath   = old->romPath;
+                if (!old->exePath.empty())     s.exePath   = old->exePath;
+                if (!old->arguments.empty())   s.arguments = old->arguments;
+                if (!old->installRoot.empty()) s.installRoot = old->installRoot;
+
+                if (old->installState == InstallState::Downloading) {
+                    // A background worker is mid-flight — never disturb it.
+                    s.installState = InstallState::Downloading;
+                    s.installProgressPermille = old->installProgressPermille;
+                } else if (old->installState == InstallState::Installed ||
+                           old->installState == InstallState::UpdateAvailable) {
+                    // Keep it installed; flag an update if the catalog version
+                    // moved past the locally-installed version.
+                    bool updated = !s.serverVersion.empty() &&
+                                   !old->serverVersion.empty() &&
+                                   s.serverVersion != old->serverVersion;
+                    s.installState = updated ? InstallState::UpdateAvailable
+                                             : InstallState::Installed;
+                    if (!updated) s.serverVersion = old->serverVersion;
+                }
+                // else: leave the fresh Missing/Local state as-is.
+            }
         }
     }
 

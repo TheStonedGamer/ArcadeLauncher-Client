@@ -2,6 +2,8 @@
 #include "ServerClient.h"
 #include "ArchiveExtractor.h"
 #include <wincrypt.h>
+#include <thread>
+#include <chrono>
 
 #pragma comment(lib, "crypt32.lib")
 
@@ -358,6 +360,10 @@ bool ServerClient::HttpGet(const std::wstring& url,
     HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/ServerClient",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!sess) { error = L"WinHTTP open failed"; return false; }
+    // Explicit, generous timeouts. The defaults (30s send/receive) can trip a
+    // long download when the server or proxy stalls briefly; a stalled read
+    // then surfaces as a truncated file. Callers retry-with-resume on failure.
+    WinHttpSetTimeouts(sess, 30000, 30000, 60000, 60000);
 
     HINTERNET conn = WinHttpConnect(sess, std::wstring(host, uc.dwHostNameLength).c_str(),
         uc.nPort, 0);
@@ -433,6 +439,10 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
     HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/ServerClient",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!sess) { error = L"WinHTTP open failed"; return false; }
+    // Explicit, generous timeouts. The defaults (30s send/receive) can trip a
+    // long download when the server or proxy stalls briefly; a stalled read
+    // then surfaces as a truncated file. Callers retry-with-resume on failure.
+    WinHttpSetTimeouts(sess, 30000, 30000, 60000, 60000);
     HINTERNET conn = WinHttpConnect(sess, std::wstring(host, uc.dwHostNameLength).c_str(), uc.nPort, 0);
     if (!conn) { WinHttpCloseHandle(sess); error = L"Server connect failed"; return false; }
     HINTERNET req = WinHttpOpenRequest(conn, L"POST", std::wstring(path, uc.dwUrlPathLength).c_str(),
@@ -661,6 +671,10 @@ bool ServerClient::DownloadFile(const std::wstring& url,
     HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/ServerClient",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!sess) { error = L"WinHTTP open failed"; return false; }
+    // Explicit, generous timeouts. The defaults (30s send/receive) can trip a
+    // long download when the server or proxy stalls briefly; a stalled read
+    // then surfaces as a truncated file. Callers retry-with-resume on failure.
+    WinHttpSetTimeouts(sess, 30000, 30000, 60000, 60000);
     HINTERNET conn = WinHttpConnect(sess, std::wstring(host, uc.dwHostNameLength).c_str(),
         uc.nPort, 0);
     if (!conn) { WinHttpCloseHandle(sess); error = L"Server connect failed"; return false; }
@@ -881,9 +895,20 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
             // the authoritative full-file SHA-256 verified below. The per-chunk
             // path opens a fresh HTTPS connection and triple-buffers each chunk to
             // disk, so it's only a fallback for when the server omits a file URL.
-            bool downloaded = !f.url.empty()
-                ? DownloadFile(f.url, dest, f.size, progress, error)
-                : DownloadChunkedFile(f, dest, progress, error);
+            // Retry-with-resume: a transient network/proxy stall truncates the
+            // stream, which DownloadFile reports as a size mismatch but leaves
+            // the .part intact. Each retry issues a ranged GET that resumes from
+            // the partial bytes, so a long download survives brief blips instead
+            // of failing the whole install.
+            bool downloaded = false;
+            for (int attempt = 0; attempt < 4 && !downloaded; ++attempt) {
+                if (attempt > 0)
+                    std::this_thread::sleep_for(std::chrono::seconds(2 * attempt));
+                error.clear();
+                downloaded = !f.url.empty()
+                    ? DownloadFile(f.url, dest, f.size, progress, error)
+                    : DownloadChunkedFile(f, dest, progress, error);
+            }
             if (!downloaded) {
                 result.error = error;
                 return result;
