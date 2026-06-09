@@ -125,7 +125,10 @@ void Renderer::Resize(UINT w, UINT h) {
     float gridW = (float)w - m_sidebarW;
     m_cols = std::max(1, (int)((gridW + m_tileGap) / (m_tileW + m_tileGap)));
 
-    float actionsLeft = (float)w - 194.0f;
+    // Right-aligned topbar action buttons. The profile button occupies the
+    // far-right slot; everything else is shifted left one slot (46px each) to
+    // make room for it.
+    float actionsLeft = (float)w - 240.0f;
     float searchLeft = std::max(m_sidebarW + 168.0f, (float)w * 0.34f);
     float searchRight = std::min(actionsLeft - 12.0f, (float)w * 0.66f);
     if (searchRight - searchLeft < 180.0f) {
@@ -133,10 +136,11 @@ void Renderer::Resize(UINT w, UINT h) {
         searchRight = std::max(searchLeft + 160.0f, actionsLeft - 12.0f);
     }
     m_searchRect = D2D1::RectF(searchLeft, 14.0f, searchRight, 50.0f);
-    m_settingsBtnRect = D2D1::RectF((float)w - 50.0f, 16.0f, (float)w - 14.0f, 48.0f);
-    m_selectModeBtnRect = D2D1::RectF((float)w - 96.0f, 16.0f, (float)w - 58.0f, 48.0f);
-    m_downloadsBtnRect = D2D1::RectF((float)w - 142.0f, 16.0f, (float)w - 104.0f, 48.0f);
-    m_sortBtnRect = D2D1::RectF((float)w - 188.0f, 16.0f, (float)w - 150.0f, 48.0f);
+    m_profileBtnRect    = D2D1::RectF((float)w - 50.0f,  14.0f, (float)w - 14.0f, 50.0f);
+    m_settingsBtnRect   = D2D1::RectF((float)w - 96.0f,  16.0f, (float)w - 60.0f, 48.0f);
+    m_selectModeBtnRect = D2D1::RectF((float)w - 142.0f, 16.0f, (float)w - 104.0f, 48.0f);
+    m_downloadsBtnRect  = D2D1::RectF((float)w - 188.0f, 16.0f, (float)w - 150.0f, 48.0f);
+    m_sortBtnRect       = D2D1::RectF((float)w - 234.0f, 16.0f, (float)w - 196.0f, 48.0f);
     m_launchBtnRect = {}; // set during detail panel draw
 }
 
@@ -270,12 +274,14 @@ void Renderer::DrawTopBar(const RenderState& state) {
                        badge, m_brushBg.Get());
     }
 
-    // Sort button (Segoe MDL2 Assets U+E8CB "Sort"). Cycles the grid ordering.
+    // Sort button. Glyph changes with the active sort mode (see SortModeIcon);
+    // accent-highlighted whenever ordering differs from the default (Recent).
     auto& so = m_sortBtnRect;
     bool sortActive = state.sortMode != SortMode::Recent;
+    const wchar_t* sortGlyph = SortModeIcon(state.sortMode);
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(so, 6, 6),
                                sortActive ? m_brushCardHover.Get() : m_brushCard.Get());
-    m_rt->DrawText(L"\xE8CB", 1, m_fmtIcon.Get(),
+    m_rt->DrawText(sortGlyph, 1, m_fmtIcon.Get(),
                    D2D1::RectF(so.left, so.top, so.right, so.bottom),
                    sortActive ? m_brushAccent.Get() : m_brushSubtext.Get());
 
@@ -284,6 +290,36 @@ void Renderer::DrawTopBar(const RenderState& state) {
     m_rt->DrawText(L"", 1, m_fmtIcon.Get(),
                    D2D1::RectF(sb.left, sb.top, sb.right, sb.bottom),
                    m_brushSubtext.Get());
+
+    // Profile button — circular avatar (or a generic person glyph when no
+    // picture is set). Clicking it opens the account dropdown.
+    auto& pb = m_profileBtnRect;
+    float pcx = (pb.left + pb.right) * 0.5f;
+    float pcy = (pb.top + pb.bottom) * 0.5f;
+    float pr  = (pb.right - pb.left) * 0.5f;
+    D2D1_ELLIPSE ring = D2D1::Ellipse(D2D1::Point2F(pcx, pcy), pr, pr);
+    if (m_avatar && m_factory) {
+        ComPtr<ID2D1EllipseGeometry> geo;
+        if (SUCCEEDED(m_factory->CreateEllipseGeometry(ring, geo.GetAddressOf()))) {
+            ComPtr<ID2D1Layer> layer;
+            m_rt->CreateLayer(nullptr, layer.GetAddressOf());
+            m_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geo.Get()), layer.Get());
+            // Cover-fit the avatar into the circle's bounding box.
+            D2D1_SIZE_F bs = m_avatar->GetSize();
+            float side = pr * 2.0f;
+            float scale = std::max(side / bs.width, side / bs.height);
+            float dw = bs.width * scale, dh = bs.height * scale;
+            D2D1_RECT_F dst = D2D1::RectF(pcx - dw / 2, pcy - dh / 2, pcx + dw / 2, pcy + dh / 2);
+            m_rt->DrawBitmap(m_avatar.Get(), dst);
+            m_rt->PopLayer();
+        }
+    } else {
+        m_rt->FillEllipse(ring, m_brushCard.Get());
+        m_rt->DrawText(L"\xE77B", 1, m_fmtIcon.Get(),  // Contact (person) glyph
+                       D2D1::RectF(pb.left, pb.top, pb.right, pb.bottom),
+                       m_brushSubtext.Get());
+    }
+    m_rt->DrawEllipse(ring, m_brushAccent.Get(), 1.5f);
 }
 
 // static
@@ -1039,6 +1075,36 @@ bool Renderer::HitTestSelectModeBtn(float x, float y) const {
 bool Renderer::HitTestSortBtn(float x, float y) const {
     return x >= m_sortBtnRect.left && x <= m_sortBtnRect.right &&
            y >= m_sortBtnRect.top  && y <= m_sortBtnRect.bottom;
+}
+
+bool Renderer::HitTestProfileBtn(float x, float y) const {
+    return x >= m_profileBtnRect.left && x <= m_profileBtnRect.right &&
+           y >= m_profileBtnRect.top  && y <= m_profileBtnRect.bottom;
+}
+
+void Renderer::ClearAvatar() { m_avatar.Reset(); }
+
+void Renderer::SetAvatarFromMemory(const void* data, size_t size) {
+    if (!data || size == 0 || !m_rt || !m_wic) { m_avatar.Reset(); return; }
+
+    ComPtr<IWICStream>            stream;
+    ComPtr<IWICBitmapDecoder>     dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter>   conv;
+
+    if (FAILED(m_wic->CreateStream(stream.GetAddressOf()))) return;
+    if (FAILED(stream->InitializeFromMemory((BYTE*)data, (DWORD)size))) return;
+    if (FAILED(m_wic->CreateDecoderFromStream(stream.Get(), nullptr,
+               WICDecodeMetadataCacheOnLoad, dec.GetAddressOf()))) return;
+    if (FAILED(dec->GetFrame(0, frame.GetAddressOf()))) return;
+    if (FAILED(m_wic->CreateFormatConverter(conv.GetAddressOf()))) return;
+    if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+               WICBitmapDitherTypeNone, nullptr, 0.0,
+               WICBitmapPaletteTypeMedianCut))) return;
+
+    ComPtr<ID2D1Bitmap> bmp;
+    if (SUCCEEDED(m_rt->CreateBitmapFromWicBitmap(conv.Get(), nullptr, bmp.GetAddressOf())))
+        m_avatar = std::move(bmp);
 }
 
 bool Renderer::HitTestEmptyStateBtn(float x, float y) const {

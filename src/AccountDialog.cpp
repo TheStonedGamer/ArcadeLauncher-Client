@@ -4,6 +4,7 @@
 #include "QrCode.h"
 
 #include <windows.h>
+#include <commdlg.h>   // GetOpenFileNameW (avatar picker)
 #include <string>
 
 // ── shared helpers ──────────────────────────────────────────────────────────
@@ -104,6 +105,97 @@ void EnsureFonts() {
         g_titleFont = CreateFontW(-21, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+// ── Avatar helpers (profile picture) ────────────────────────────────────────
+
+constexpr int kAvatarDim = 76;   // preview diameter (px)
+
+// Decode arbitrary image bytes (PNG/JPEG/WEBP/GIF) into a square top-down 32bpp
+// HBITMAP of side `dim` using WIC (cover-fit centre crop). Caller DeleteObject's
+// the result. Returns null on failure.
+HBITMAP DecodeAvatarThumb(const std::string& bytes, int dim) {
+    if (bytes.empty() || dim <= 0) return nullptr;
+    bool didInit = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+    HBITMAP result = nullptr;
+    {
+        ComPtr<IWICImagingFactory> wic;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)))) {
+            ComPtr<IWICStream> stream;
+            ComPtr<IWICBitmapDecoder> decoder;
+            ComPtr<IWICBitmapFrameDecode> frame;
+            if (SUCCEEDED(wic->CreateStream(&stream)) &&
+                SUCCEEDED(stream->InitializeFromMemory(
+                    (BYTE*)bytes.data(), (DWORD)bytes.size())) &&
+                SUCCEEDED(wic->CreateDecoderFromStream(stream.Get(), nullptr,
+                    WICDecodeMetadataCacheOnDemand, &decoder)) &&
+                SUCCEEDED(decoder->GetFrame(0, &frame))) {
+                UINT iw = 0, ih = 0; frame->GetSize(&iw, &ih);
+                if (iw && ih) {
+                    IWICBitmapSource* src = frame.Get();
+                    ComPtr<IWICBitmapClipper> clipper;
+                    UINT side = (iw < ih) ? iw : ih;
+                    WICRect crop{ (INT)((iw - side) / 2), (INT)((ih - side) / 2),
+                                  (INT)side, (INT)side };
+                    if (SUCCEEDED(wic->CreateBitmapClipper(&clipper)) &&
+                        SUCCEEDED(clipper->Initialize(frame.Get(), &crop)))
+                        src = clipper.Get();
+
+                    ComPtr<IWICBitmapScaler> scaler;
+                    ComPtr<IWICFormatConverter> conv;
+                    if (SUCCEEDED(wic->CreateBitmapScaler(&scaler)) &&
+                        SUCCEEDED(scaler->Initialize(src, dim, dim,
+                            WICBitmapInterpolationModeFant)) &&
+                        SUCCEEDED(wic->CreateFormatConverter(&conv)) &&
+                        SUCCEEDED(conv->Initialize(scaler.Get(),
+                            GUID_WICPixelFormat32bppBGRA,
+                            WICBitmapDitherTypeNone, nullptr, 0.0,
+                            WICBitmapPaletteTypeCustom))) {
+                        BITMAPINFO bi{};
+                        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                        bi.bmiHeader.biWidth = dim;
+                        bi.bmiHeader.biHeight = -dim;   // top-down
+                        bi.bmiHeader.biPlanes = 1;
+                        bi.bmiHeader.biBitCount = 32;
+                        bi.bmiHeader.biCompression = BI_RGB;
+                        void* pixels = nullptr;
+                        HBITMAP dib = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS,
+                                                       &pixels, nullptr, 0);
+                        if (dib && pixels &&
+                            SUCCEEDED(conv->CopyPixels(nullptr, dim * 4,
+                                dim * dim * 4, (BYTE*)pixels))) {
+                            result = dib;
+                        } else if (dib) {
+                            DeleteObject(dib);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (didInit) CoUninitialize();
+    return result;
+}
+
+bool ReadFileBytes(const std::wstring& path, std::string& out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss; ss << f.rdbuf();
+    out = ss.str();
+    return !out.empty();
+}
+
+std::wstring ContentTypeForPath(const std::wstring& path) {
+    std::wstring ext;
+    auto dot = path.find_last_of(L'.');
+    if (dot != std::wstring::npos) ext = path.substr(dot + 1);
+    for (auto& c : ext) c = (wchar_t)towlower(c);
+    if (ext == L"png")  return L"image/png";
+    if (ext == L"jpg" || ext == L"jpeg") return L"image/jpeg";
+    if (ext == L"webp") return L"image/webp";
+    if (ext == L"gif")  return L"image/gif";
+    return L"application/octet-stream";
 }
 
 // ── TOTP enrollment dialog ──────────────────────────────────────────────────
@@ -411,7 +503,23 @@ struct AccountState {
     HWND totpBtn = nullptr;
 
     bool totpEnabled = false;
+
+    // Profile picture (server-synced). avatarBmp is a top-down 32bpp DIB used for
+    // the circular preview; null = show the username-initial placeholder.
+    HBITMAP avatarBmp = nullptr;
 };
+
+// (Re)fetch the account avatar from the server and rebuild the preview bitmap.
+// Synchronous — runs on the modal dialog's UI thread (the request is small).
+void ReloadAvatar(AccountState* st) {
+    if (st->avatarBmp) { DeleteObject(st->avatarBmp); st->avatarBmp = nullptr; }
+    ServerConfig cfg = *st->cfg;
+    ServerClient client(cfg);
+    std::string bytes; std::wstring err;
+    if (client.GetAvatar(bytes, err) && !bytes.empty())
+        st->avatarBmp = DecodeAvatarThumb(bytes, kAvatarDim);
+    if (st->hwnd) InvalidateRect(st->hwnd, nullptr, FALSE);
+}
 
 void RefreshAccount(AccountState* st) {
     ServerConfig cfg = *st->cfg;
@@ -442,17 +550,23 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         st->hwnd = hwnd;
 
         MakeLabel(hwnd, L"Account", 22, 18, 400, 24);
-        st->identity = MakeLabel(hwnd, L"", 22, 50, 460);
+        st->identity = MakeLabel(hwnd, L"", 22, 50, 380);
+
+        // Profile picture: preview circle drawn in WM_PAINT at (410,44,76); the
+        // Change/Remove buttons sit beneath it in the right margin.
+        MakeLabel(hwnd, L"Profile Picture", 410, 20, 110, 18);
+        MakeButton(hwnd, 506, L"Change…", 410, 128, 96, 24);
+        MakeButton(hwnd, 507, L"Remove",  410, 156, 96, 24);
 
         MakeLabel(hwnd, L"Change Password", 22, 86, 200, 20);
         MakeLabel(hwnd, L"Current", 22, 116, 120);
-        st->current = MakeEdit(hwnd, 501, 150, 114, 330, ES_PASSWORD);
+        st->current = MakeEdit(hwnd, 501, 150, 114, 250, ES_PASSWORD);
         MakeLabel(hwnd, L"New", 22, 150, 120);
-        st->newPw = MakeEdit(hwnd, 502, 150, 148, 330, ES_PASSWORD);
+        st->newPw = MakeEdit(hwnd, 502, 150, 148, 250, ES_PASSWORD);
         MakeLabel(hwnd, L"Confirm", 22, 184, 120);
-        st->confirm = MakeEdit(hwnd, 503, 150, 182, 330, ES_PASSWORD);
+        st->confirm = MakeEdit(hwnd, 503, 150, 182, 250, ES_PASSWORD);
         st->changeBtn = MakeButton(hwnd, 504, L"Change Password", 150, 216, 150, 28);
-        st->pwStatus = MakeLabel(hwnd, L"", 22, 250, 460, 18);
+        st->pwStatus = MakeLabel(hwnd, L"", 22, 250, 480, 18);
 
         MakeLabel(hwnd, L"Two-Factor Authentication", 22, 286, 300, 20);
         st->totpStatus = MakeLabel(hwnd, L"", 22, 314, 460, 18);
@@ -463,10 +577,51 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         EnsureFonts();
         ApplyFont(hwnd, g_uiFont, g_titleFont);
         RefreshAccount(st);
+        ReloadAvatar(st);
         SetFocus(st->current);
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps);
+        const int ax = 410, ay = 44, ad = kAvatarDim;
+        HRGN rgn = CreateEllipticRgn(ax, ay, ax + ad + 1, ay + ad + 1);
+        SelectClipRgn(hdc, rgn);
+        if (st->avatarBmp) {
+            HDC mem = CreateCompatibleDC(hdc);
+            HGDIOBJ old = SelectObject(mem, st->avatarBmp);
+            BitBlt(hdc, ax, ay, ad, ad, mem, 0, 0, SRCCOPY);
+            SelectObject(mem, old);
+            DeleteDC(mem);
+        } else {
+            HBRUSH b = CreateSolidBrush(RGB(74, 86, 104));
+            RECT r{ ax, ay, ax + ad, ay + ad };
+            FillRect(hdc, &r, b);
+            DeleteObject(b);
+            std::wstring u = st->cfg ? st->cfg->username : L"";
+            std::wstring init = u.empty() ? L"?" : u.substr(0, 1);
+            for (auto& c : init) c = (wchar_t)towupper(c);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(255, 255, 255));
+            HFONT bigf = CreateFontW(-38, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            HGDIOBJ oldf = SelectObject(hdc, bigf);
+            RECT tr{ ax, ay, ax + ad, ay + ad };
+            DrawTextW(hdc, init.c_str(), -1, &tr,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SelectObject(hdc, oldf);
+            DeleteObject(bigf);
+        }
+        SelectClipRgn(hdc, nullptr);
+        DeleteObject(rgn);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    if (msg == WM_DESTROY) {
+        if (st->avatarBmp) { DeleteObject(st->avatarBmp); st->avatarBmp = nullptr; }
+        return 0;
+    }
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
         if (id == 504) {  // change password
@@ -500,6 +655,51 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     SetWindowTextW(st->pwStatus, L"Two-factor authentication enabled.");
             }
             RefreshAccount(st);
+            return 0;
+        }
+        if (id == 506) {  // change profile picture
+            wchar_t buf[MAX_PATH]{};
+            OPENFILENAMEW ofn{};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner   = hwnd;
+            ofn.lpstrFilter = L"Images (*.png;*.jpg;*.jpeg;*.webp;*.gif)\0"
+                              L"*.png;*.jpg;*.jpeg;*.webp;*.gif\0All Files\0*.*\0";
+            ofn.lpstrFile   = buf;
+            ofn.nMaxFile    = MAX_PATH;
+            ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            ofn.lpstrTitle  = L"Choose a profile picture";
+            if (GetOpenFileNameW(&ofn)) {
+                std::string data;
+                if (!ReadFileBytes(buf, data)) {
+                    SetWindowTextW(st->pwStatus, L"Could not read the selected file.");
+                } else if (data.size() > 4u * 1024 * 1024) {
+                    SetWindowTextW(st->pwStatus, L"Image too large (max 4 MB).");
+                } else {
+                    ServerConfig cfg = *st->cfg;
+                    ServerClient client(cfg);
+                    std::wstring err;
+                    if (client.UploadAvatar(data, ContentTypeForPath(buf), err)) {
+                        SetWindowTextW(st->pwStatus, L"Profile picture updated.");
+                        ReloadAvatar(st);
+                    } else {
+                        SetWindowTextW(st->pwStatus,
+                            err.empty() ? L"Upload failed." : err.c_str());
+                    }
+                }
+            }
+            return 0;
+        }
+        if (id == 507) {  // remove profile picture
+            ServerConfig cfg = *st->cfg;
+            ServerClient client(cfg);
+            std::wstring err;
+            if (client.DeleteAvatar(err)) {
+                SetWindowTextW(st->pwStatus, L"Profile picture removed.");
+                ReloadAvatar(st);
+            } else {
+                SetWindowTextW(st->pwStatus,
+                    err.empty() ? L"Could not remove picture." : err.c_str());
+            }
             return 0;
         }
         if (id == IDCANCEL) { st->done = true; DestroyWindow(hwnd); return 0; }

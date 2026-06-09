@@ -23,6 +23,19 @@ inline const wchar_t* SortModeName(SortMode m) {
     }
 }
 
+// Segoe MDL2 Assets glyph for the current sort mode, so the topbar button
+// reflects the active ordering at a glance (replaces the old sort toast).
+inline const wchar_t* SortModeIcon(SortMode m) {
+    switch (m) {
+    case SortMode::Recent:   return L"\xE81C"; // History
+    case SortMode::Title:    return L"\xE8CB"; // Sort (A-Z)
+    case SortMode::Platform: return L"\xE71D"; // AllApps
+    case SortMode::Rating:   return L"\xE735"; // FavoriteStarFill
+    case SortMode::Playtime: return L"\xE916"; // Stopwatch
+    default:                 return L"\xE81C";
+    }
+}
+
 // A single changelog entry for display in the detail dashboard. Mirrors
 // ServerClient::ChangelogEntry but keeps Renderer free of ServerClient deps.
 struct ChangelogView {
@@ -117,7 +130,15 @@ public:
     bool HitTestSelectModeBtn(float x, float y) const;
     bool HitTestDownloadsBtn(float x, float y) const;
     bool HitTestSortBtn(float x, float y) const;
+    bool HitTestProfileBtn(float x, float y) const;
     bool HitTestEmptyStateBtn(float x, float y) const;
+
+    // Profile picture (server account avatar) shown in the topbar profile button.
+    // Decoded from in-memory image bytes on the render-target thread. Pass empty
+    // to clear (falls back to a generic person glyph).
+    void SetAvatarFromMemory(const void* data, size_t size);
+    void ClearAvatar();
+    bool HasAvatar() const { return m_avatar != nullptr; }
 
     // Returns the recommended targetScroll so that game at idx is fully visible.
     float ScrollForSelected(int idx, float currentScroll, float viewportH) const;
@@ -211,5 +232,9 @@ private:
     D2D1_RECT_F m_selectModeBtnRect{};
     D2D1_RECT_F m_downloadsBtnRect{};
     D2D1_RECT_F m_sortBtnRect{};
+    D2D1_RECT_F m_profileBtnRect{};
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
+
+    // Current user's profile picture (circular avatar). Null = show person glyph.
+    ComPtr<ID2D1Bitmap> m_avatar;
 };

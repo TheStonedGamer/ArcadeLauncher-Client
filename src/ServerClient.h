@@ -87,8 +87,17 @@ public:
         bool isAdmin = false;
         bool totpEnabled = false;
         bool mustChangePassword = false;
+        int64_t avatarVersion = 0;   // 0 = no avatar; bumps each time it changes
     };
     bool GetAccount(AccountInfo& info, std::wstring& error);
+
+    // Profile picture (server-synced avatar). GetAvatar returns raw image bytes
+    // (PNG/JPEG/…); UploadAvatar sends raw bytes with an image/* content type;
+    // DeleteAvatar removes it.
+    bool GetAvatar(std::string& bytes, std::wstring& error);
+    bool UploadAvatar(const std::string& bytes, const std::wstring& contentType,
+                      std::wstring& error);
+    bool DeleteAvatar(std::wstring& error);
     bool ChangePassword(const std::wstring& currentPassword,
                         const std::wstring& newPassword, std::wstring& error);
     // Begin TOTP enrollment: returns the base32 secret + otpauth:// URI for QR.
@@ -121,6 +130,14 @@ private:
                       std::string& body,
                       std::wstring& error,
                       bool withAuth = false);
+    // Generic authenticated request with a raw (possibly binary) body and an
+    // explicit verb/content-type. Used for avatar upload/delete.
+    bool HttpSendRaw(const std::wstring& verb,
+                     const std::wstring& url,
+                     const std::wstring& contentType,
+                     const std::string& data,
+                     std::string& body,
+                     std::wstring& error);
     bool EnsureAuthenticated(std::wstring& error);
     bool TryChallengeResponse(std::wstring& error);
     bool DownloadFile(const std::wstring& url,

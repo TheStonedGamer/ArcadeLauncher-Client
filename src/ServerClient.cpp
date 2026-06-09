@@ -650,6 +650,76 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
     return true;
 }
 
+bool ServerClient::HttpSendRaw(const std::wstring& verb,
+                               const std::wstring& url,
+                               const std::wstring& contentType,
+                               const std::string& data,
+                               std::string& body,
+                               std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    URL_COMPONENTSW uc{ sizeof(uc) };
+    wchar_t host[256]{}, path[2048]{};
+    uc.lpszHostName = host; uc.dwHostNameLength = _countof(host);
+    uc.lpszUrlPath = path; uc.dwUrlPathLength = _countof(path);
+    uc.dwSchemeLength = 1;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) { error = L"Invalid URL"; return false; }
+
+    bool https = uc.nScheme == INTERNET_SCHEME_HTTPS;
+    HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/ServerClient",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!sess) { error = L"WinHTTP open failed"; return false; }
+    WinHttpSetTimeouts(sess, 30000, 30000, 60000, 60000);
+    HINTERNET conn = WinHttpConnect(sess, std::wstring(host, uc.dwHostNameLength).c_str(), uc.nPort, 0);
+    if (!conn) { WinHttpCloseHandle(sess); error = L"Server connect failed"; return false; }
+    HINTERNET req = WinHttpOpenRequest(conn, verb.c_str(), std::wstring(path, uc.dwUrlPathLength).c_str(),
+        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
+    if (!req) { WinHttpCloseHandle(conn); WinHttpCloseHandle(sess); error = L"Request open failed"; return false; }
+
+    std::wstring headers;
+    if (!contentType.empty())
+        headers += L"Content-Type: " + contentType + L"\r\n";
+    if (!m_cfg.authToken.empty())
+        headers += L"Authorization: Bearer " + m_cfg.authToken + L"\r\n";
+
+    BOOL ok = WinHttpSendRequest(req,
+        headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
+        headers.empty() ? 0 : (DWORD)-1,
+        data.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)data.data(),
+        (DWORD)data.size(), (DWORD)data.size(), 0);
+    if (ok) ok = WinHttpReceiveResponse(req, nullptr);
+    if (!ok) {
+        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+        error = L"Request failed";
+        return false;
+    }
+
+    DWORD status = 0, statusSize = sizeof(status);
+    WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        nullptr, &status, &statusSize, nullptr);
+    body.clear();
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+        std::string chunk(avail, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(req, chunk.data(), avail, &read)) break;
+        chunk.resize(read);
+        body += chunk;
+    }
+    WinHttpCloseHandle(req);
+    WinHttpCloseHandle(conn);
+    WinHttpCloseHandle(sess);
+
+    if (status < 200 || status >= 300) {
+        std::string serverMsg = JsonString(body, "error");
+        error = serverMsg.empty()
+            ? L"Server returned HTTP " + std::to_wstring(status)
+            : ToWide(serverMsg);
+        return false;
+    }
+    return true;
+}
+
 bool ServerClient::TryChallengeResponse(std::wstring& error) {
     // 1. Request a single-use nonce for this user.
     std::string chBody;
@@ -710,6 +780,20 @@ static bool JsonBool(const std::string& json, const std::string& key) {
     return json.compare(p, 4, "true") == 0;
 }
 
+// Parse a JSON integer field ("key": 123). Returns 0 if absent/non-numeric.
+static int64_t JsonInt64(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\":";
+    size_t p = json.find(search);
+    if (p == std::string::npos) return 0;
+    p += search.size();
+    while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) ++p;
+    size_t start = p;
+    if (p < json.size() && (json[p] == '-' || json[p] == '+')) ++p;
+    while (p < json.size() && json[p] >= '0' && json[p] <= '9') ++p;
+    if (p == start) return 0;
+    try { return std::stoll(json.substr(start, p - start)); } catch (...) { return 0; }
+}
+
 bool ServerClient::GetAccount(AccountInfo& info, std::wstring& error) {
     if (!EnsureAuthenticated(error)) return false;
     std::string body;
@@ -719,7 +803,30 @@ bool ServerClient::GetAccount(AccountInfo& info, std::wstring& error) {
     info.isAdmin = JsonBool(body, "isAdmin");
     info.totpEnabled = JsonBool(body, "totpEnabled");
     info.mustChangePassword = JsonBool(body, "mustChangePassword");
+    info.avatarVersion = JsonInt64(body, "avatarVersion");
     return true;
+}
+
+bool ServerClient::GetAvatar(std::string& bytes, std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    // HttpGet stores the response body verbatim (binary-safe) and reports any
+    // non-2xx (incl. 404 "no avatar") as an error the caller can treat as empty.
+    return HttpGet(Url(L"/api/account/avatar"), bytes, error);
+}
+
+bool ServerClient::UploadAvatar(const std::string& bytes, const std::wstring& contentType,
+                                std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::string body;
+    return HttpSendRaw(L"POST", Url(L"/api/account/avatar"),
+                       contentType.empty() ? L"application/octet-stream" : contentType,
+                       bytes, body, error);
+}
+
+bool ServerClient::DeleteAvatar(std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::string body;
+    return HttpSendRaw(L"DELETE", Url(L"/api/account/avatar"), L"", {}, body, error);
 }
 
 bool ServerClient::ChangePassword(const std::wstring& currentPassword,

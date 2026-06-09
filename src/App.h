@@ -84,6 +84,13 @@ private:
     void ScrollToSelected();
     void UpdateSidebarFlags();
     void OpenSettings(int startPage = 0);
+    // Topbar profile button → dropdown (Account settings / Log out) and helpers.
+    void ShowProfileMenu();
+    void OpenAccountSettings();
+    void LogOut();
+    // Fetch the current account avatar from the server (off the UI thread) and
+    // hand the bytes to the renderer. Safe no-op when no server account.
+    void RefreshAvatar();
     void OpenMetadataPicker(const std::wstring& gameId, const std::wstring& gameTitle);
     void OpenEditTitle(int visibleIdx);
     // Consolidated per-game Properties modal (title, platform override, launch
@@ -194,6 +201,8 @@ private:
     static constexpr UINT WM_SERVER_INSTALL_DONE = WM_USER + 103;
     static constexpr UINT WM_SERVER_INSTALL_PROGRESS = WM_USER + 104;
     static constexpr UINT WM_CHANGELOGS_READY = WM_USER + 105;
+    // Avatar bytes fetched off-thread; lParam = new std::string* (or null = clear)
+    static constexpr UINT WM_AVATAR_READY = WM_USER + 106;
 
     // Context menu command IDs
     static constexpr UINT IDM_LAUNCH      = 5001;
@@ -230,4 +239,8 @@ private:
     static constexpr UINT IDM_TRAY_STARTUP = 7003;
     static constexpr UINT IDM_TRAY_EXIT    = 7004;
     static constexpr UINT IDM_TRAY_GAME0   = 7100;  // + 0..4 for 5 recent games
+
+    // Topbar profile dropdown command IDs
+    static constexpr UINT IDM_PROFILE_ACCOUNT = 7200;
+    static constexpr UINT IDM_PROFILE_LOGOUT  = 7201;
 };

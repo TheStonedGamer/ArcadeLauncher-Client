@@ -687,6 +687,9 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     // Kick off initial scan in background
     std::thread([this]() { ScanAllPlatforms(); }).detach();
 
+    // Fetch the account profile picture for the topbar profile button.
+    RefreshAvatar();
+
     // If a server library is configured, check whether the admin has flagged this
     // account for a forced password change. Done off the UI thread; the modal is
     // shown via WM_USER+5 once we know.
@@ -1073,6 +1076,21 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_AVATAR_READY: {
+        // Avatar bytes fetched on a worker thread (lParam = std::string* or null
+        // to clear). WIC decode + D2D bitmap creation happen here on the UI
+        // (render-target) thread.
+        auto* payload = reinterpret_cast<std::string*>(lp);
+        if (payload) {
+            m_renderer.SetAvatarFromMemory(payload->data(), payload->size());
+            delete payload;
+        } else {
+            m_renderer.ClearAvatar();
+        }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
+
     case WM_USER + 7: {
         // The server flagged this account for a forced password change.
         ShowWindow_(true);
@@ -1257,9 +1275,13 @@ void App::OnLButtonDown(float x, float y) {
         int next = (static_cast<int>(m_renderState.sortMode) + 1) % 5;
         m_renderState.sortMode = static_cast<SortMode>(next);
         ApplyFilter();
-        ShowToast(L"Sort order", std::wstring(L"Sorted by ") +
-                  SortModeName(m_renderState.sortMode));
+        // No toast — the sort button glyph itself now reflects the active mode.
         InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
+    if (m_renderer.HitTestProfileBtn(x, y)) {
+        ShowProfileMenu();
         return;
     }
 
@@ -3210,6 +3232,88 @@ void App::OpenSettings(int startPage) {
         },
         startPage,
         &m_igdbClient);
+}
+
+void App::ShowProfileMenu() {
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, IDM_PROFILE_ACCOUNT, L"Account settings");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_PROFILE_LOGOUT, L"Log out");
+
+    // Anchor the dropdown just under the circular profile button (top-right of
+    // the topbar). The button spans client x = [w-50, w-14], y = [14, 50].
+    RECT rc{};
+    GetClientRect(m_hwnd, &rc);
+    POINT pt{ rc.right - 50, 52 };
+    ClientToScreen(m_hwnd, &pt);
+
+    SetForegroundWindow(m_hwnd);
+    UINT cmd = (UINT)TrackPopupMenuEx(menu,
+        TPM_RETURNCMD | TPM_LEFTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN,
+        pt.x, pt.y, m_hwnd, nullptr);
+    DestroyMenu(menu);
+
+    switch (cmd) {
+    case IDM_PROFILE_ACCOUNT: OpenAccountSettings(); break;
+    case IDM_PROFILE_LOGOUT:  LogOut();              break;
+    default: break;
+    }
+}
+
+void App::OpenAccountSettings() {
+    ServerConfig sc = m_config.Get().server;
+    if (ShowAccountDialog(m_hwnd, sc)) {
+        // Password (and cleared token) may have changed — persist.
+        m_config.Get().server.password = sc.password;
+        m_config.Get().server.authToken = sc.authToken;
+        SaveAll();
+    }
+    // Avatar may have been changed/removed inside the dialog — refresh the
+    // topbar picture regardless of the password-change return value.
+    RefreshAvatar();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::LogOut() {
+    // Drop the cached session + stored credential and clear the topbar avatar,
+    // then bring the user back to the sign-in modal (same path as 401 re-auth).
+    {
+        std::lock_guard<std::mutex> lk(m_authMutex);
+        auto& s = m_config.Get().server;
+        s.authToken.clear();
+        s.tokenFingerprint.clear();
+        s.password.clear();
+    }
+    m_renderer.ClearAvatar();
+    SaveAll();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+
+    if (PromptReAuth())
+        RefreshAvatar();
+}
+
+void App::RefreshAvatar() {
+    const auto serverCfg = m_config.Get().server;
+    if (!serverCfg.enabled || serverCfg.baseUrl.empty()) {
+        m_renderer.ClearAvatar();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+    // Fetch off the UI thread; hand decoded bytes back to the renderer via a
+    // posted message so D2D/WIC work happens on the UI (render-target) thread.
+    HWND hwnd = m_hwnd;
+    ServerConfig cfg = serverCfg;
+    std::thread([this, hwnd, cfg]() {
+        ServerClient client(cfg);
+        std::string bytes;
+        std::wstring err;
+        if (client.GetAvatar(bytes, err) && !bytes.empty()) {
+            auto* payload = new std::string(std::move(bytes));
+            PostMessageW(hwnd, WM_AVATAR_READY, 0, (LPARAM)payload);
+        } else {
+            PostMessageW(hwnd, WM_AVATAR_READY, 0, 0);
+        }
+    }).detach();
 }
 
 void App::SaveAll() {
