@@ -241,7 +241,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.rpcs3Path))
         m_entries.push_back({
             L"RPCS3  \x2014  PS3 emulator",
-            { "RPCS3/rpcs3-binaries-win", L"win64_msvc.7z", L"rpcs3.exe", L"rpcs3" },
+            { "", L"server", L"rpcs3.exe", L"rpcs3",
+              EmulatorArchiveUrl(cfg, L"rpcs3-win64.7z") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.rpcs3Path = exe;
                 c.emulators.rpcs3Tag  = tag;
@@ -251,7 +252,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.n64Path))
         m_entries.push_back({
             L"Gopher64  \x2014  Nintendo 64 emulator",
-            { "gopher64/gopher64", L"windows-x86_64.exe", L"gopher64.exe", L"gopher64" },
+            { "", L"server", L"gopher64.exe", L"gopher64",
+              EmulatorArchiveUrl(cfg, L"gopher64-windows-x86_64.exe") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.n64Path = exe;
                 c.emulators.n64Tag  = tag;
@@ -274,8 +276,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.duckstationPath))
         m_entries.push_back({
             L"DuckStation  \x2014  PlayStation 1 emulator",
-            { "stenzek/duckstation", L"windows-x64-release.zip",
-              L"duckstation-qt-x64-ReleaseLTCG.exe", L"duckstation" },
+            { "", L"server", L"duckstation-qt-x64-ReleaseLTCG.exe", L"duckstation",
+              EmulatorArchiveUrl(cfg, L"duckstation-windows-x64.zip") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.duckstationPath = exe;
                 c.emulators.duckstationTag  = tag;
@@ -285,7 +287,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.pcsx2Path))
         m_entries.push_back({
             L"PCSX2  \x2014  PlayStation 2 emulator",
-            { "PCSX2/pcsx2", L"windows-x64-Qt.7z", L"pcsx2-qt.exe", L"pcsx2" },
+            { "", L"server", L"pcsx2-qt.exe", L"pcsx2",
+              EmulatorArchiveUrl(cfg, L"pcsx2-windows-x64.7z") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.pcsx2Path = exe;
                 c.emulators.pcsx2Tag  = tag;
@@ -295,8 +298,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.xeniaPath))
         m_entries.push_back({
             L"Xenia Canary  \x2014  Xbox 360 emulator",
-            { "xenia-canary/xenia-canary", L"xenia_canary_windows.zip",
-              L"xenia_canary.exe", L"xenia-canary" },
+            { "", L"server", L"xenia_canary.exe", L"xenia-canary",
+              EmulatorArchiveUrl(cfg, L"xenia-canary-windows.zip") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.xeniaPath = exe;
                 c.emulators.xeniaTag  = tag;
@@ -306,8 +309,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
     if (!hasExe(cfg.emulators.xemuPath))
         m_entries.push_back({
             L"XEMU  \x2014  Original Xbox emulator",
-            { "xemu-project/xemu", L"win-x86_64-release.zip",
-              L"xemu.exe", L"xemu" },
+            { "", L"server", L"xemu.exe", L"xemu",
+              EmulatorArchiveUrl(cfg, L"xemu-win-x86_64-release.zip") },
             [](AppConfig& c, const std::wstring& exe, const std::wstring& tag) {
                 c.emulators.xemuPath = exe;
                 c.emulators.xemuTag  = tag;
