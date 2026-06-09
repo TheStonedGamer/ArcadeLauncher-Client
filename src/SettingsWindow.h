@@ -52,6 +52,28 @@ private:
         ID_P_STAT1 = 135,   // version status label on emulator pages
         ID_P_STAT2 = 137,   // secondary status label (e.g. DB sync state)
         ID_P_PROG1 = 138,
+
+        // Dolphin emulator-config controls (Dolphin page only). Distinct range
+        // so they never collide with the shared per-page generic IDs above.
+        ID_D_BACKEND = 300,
+        ID_D_RES,
+        ID_D_ASPECT,
+        ID_D_MSAA,
+        ID_D_ANISO,
+        ID_D_FULLSCREEN,
+        ID_D_VSYNC,
+        ID_D_SSAA,
+        ID_D_DUALCORE,
+        ID_D_CHEATS,
+        ID_D_OCEN,
+        ID_D_OCPCT,
+        ID_D_LANG,
+        ID_D_AUDIO,
+        ID_D_VOLUME,
+        ID_D_DSPHLE,
+        ID_D_CTRL_PRESET,
+        ID_D_CTRL_WIIMOTE,
+        ID_D_CTRL_OPEN,
     };
 
     // Layout

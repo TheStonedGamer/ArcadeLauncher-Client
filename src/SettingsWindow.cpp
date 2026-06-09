@@ -4,8 +4,10 @@
 #include "EmulatorUpdateChecker.h"
 #include "PlatformIcons.h"
 #include "IgdbSync.h"
+#include "DolphinConfig.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
+#include <shellapi.h>
 
 // ─── Colors ───────────────────────────────────────────────────────────────────
 static constexpr COLORREF C_SB_BG      = RGB(30,  30,  30);
@@ -103,6 +105,21 @@ static HWND Rule(HWND p, int x, int y, int w) {
                            WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ,
                            x, y, w, 2, p, nullptr, nullptr, nullptr);
 }
+
+static HWND Combo(HWND p, int id, int x, int y, int w, int dropH = 220) {
+    HWND hw = CreateWindowExW(0, L"COMBOBOX", L"",
+                              WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST,
+                              x, y, w, dropH, p, (HMENU)(intptr_t)id, nullptr, nullptr);
+    ApplyFont(hw);
+    return hw;
+}
+// Fill a combobox from a null-terminated list of labels and select `sel`.
+static void ComboFill(HWND combo, std::initializer_list<const wchar_t*> items, int sel) {
+    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+    for (auto* it : items) SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)it);
+    SendMessageW(combo, CB_SETCURSEL, sel, 0);
+}
+static int ComboSel(HWND combo) { return (int)SendMessageW(combo, CB_GETCURSEL, 0, 0); }
 
 static void  Chk(HWND h, bool v) { SendMessageW(h, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0); }
 static bool  IsChk(HWND h)       { return SendMessageW(h, BM_GETCHECK, 0, 0) == BST_CHECKED; }
@@ -685,21 +702,74 @@ void SettingsWindow::BuildGogPage() {
                 K_CX + 12, y + 40, K_CW - 24));
 }
 
+// Column anchors for the Dolphin config groups.
+static constexpr int D_COL1 = K_CX + 12;
+static constexpr int D_COL2 = D_COL1 + 188;
+static constexpr int D_COL3 = D_COL2 + 188;
+static constexpr int D_CBW  = 170;   // combo / control width
+
 void SettingsWindow::BuildDolphinPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"Dolphin");
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 144));
+    // ── Executable ────────────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",          ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Auto-detect",       ID_P_BTN2, K_BX, y + 48));
-    AddPC(SmallLabel(m_hwnd, L"Searches common install locations for Dolphin.exe.",
-                     K_CX + 12, y + 52, K_BX - K_CX - 16));
     AddPC(Btn  (m_hwnd, L"Get Dolphin\x2026",  ID_P_BTN5, K_BX, y + 76));
-    AddEmulatorProgressBar(K_CX + 12, y + 104, K_CW - 24);
-    AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
-                    K_CX + 12, y + 120, K_CW - 24));
-    y += 152;
+    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
+    AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1, K_CX + 12, y + 100, K_BX - K_CX - 16));
+    y += 130;
+
+    // ── Graphics & Enhancements ────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics & Enhancements ", K_CX, y, K_CW, 132));
+    AddPC(SmallLabel(m_hwnd, L"Backend",      D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_D_BACKEND,    D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Internal resolution", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_D_RES,        D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio", D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_D_ASPECT,     D_COL3, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Anti-aliasing (MSAA)", D_COL1, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_D_MSAA,       D_COL1, y + 80, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Anisotropic filtering", D_COL2, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_D_ANISO,      D_COL2, y + 80, D_CBW));
+    AddPC(Check(m_hwnd, L"Fullscreen", ID_D_FULLSCREEN, D_COL1,       y + 108, 110));
+    AddPC(Check(m_hwnd, L"V-Sync",     ID_D_VSYNC,      D_COL1 + 116, y + 108, 90));
+    AddPC(Check(m_hwnd, L"SSAA (supersampling)", ID_D_SSAA, D_COL1 + 212, y + 108, 180));
+    y += 142;
+
+    // ── Core / General ─────────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Core / General ", K_CX, y, K_CW, 84));
+    AddPC(Check(m_hwnd, L"Dual core",     ID_D_DUALCORE, D_COL1,       y + 20, 100));
+    AddPC(Check(m_hwnd, L"Enable cheats", ID_D_CHEATS,   D_COL1 + 108, y + 20, 120));
+    AddPC(Check(m_hwnd, L"Overclock CPU", ID_D_OCEN,     D_COL1 + 236, y + 20, 110));
+    AddPC(Edit (m_hwnd, ID_D_OCPCT, D_COL1 + 348, y + 18, 44));
+    AddPC(Label(m_hwnd, L"%", D_COL1 + 396, y + 22, 16));
+    AddPC(Label(m_hwnd, L"GameCube language", D_COL1, y + 52, 130));
+    AddPC(Combo(m_hwnd, ID_D_LANG, D_COL1 + 140, y + 50, D_CBW));
+    y += 94;
+
+    // ── Audio ──────────────────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Audio ", K_CX, y, K_CW, 60));
+    AddPC(Label(m_hwnd, L"Backend", D_COL1, y + 24, 56));
+    AddPC(Combo(m_hwnd, ID_D_AUDIO, D_COL1 + 60, y + 22, 150));
+    AddPC(Label(m_hwnd, L"Volume", D_COL1 + 230, y + 24, 52));
+    AddPC(Edit (m_hwnd, ID_D_VOLUME, D_COL1 + 286, y + 22, 44));
+    AddPC(Label(m_hwnd, L"%", D_COL1 + 334, y + 24, 16));
+    AddPC(Check(m_hwnd, L"DSP HLE (fast)", ID_D_DSPHLE, D_COL1 + 360, y + 24, 160));
+    y += 70;
+
+    // ── Controllers ────────────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Controllers ", K_CX, y, K_CW, 76));
+    AddPC(Btn  (m_hwnd, L"Apply Gamepad Preset", ID_D_CTRL_PRESET, D_COL1, y + 18, 170, 26));
+    AddPC(Check(m_hwnd, L"Also map Wii Remote", ID_D_CTRL_WIIMOTE, D_COL1 + 184, y + 22, 200));
+    AddPC(Btn  (m_hwnd, L"Open Dolphin (Controllers menu)\x2026", ID_D_CTRL_OPEN,
+                D_COL1, y + 46, 250, 26));
+    AddPC(SmallLabel(m_hwnd,
+          L"Preset maps an Xbox-style pad; fine-tune in Dolphin's own dialog.",
+          D_COL1 + 260, y + 50, K_CW - 284));
+    y += 84;
 }
 
 void SettingsWindow::BuildRyujinxPage() {
@@ -948,14 +1018,89 @@ void SettingsWindow::LoadGogPage() {
 void SettingsWindow::SaveGogPage() {
 }
 
+// ── Dolphin config value tables (combo index <-> stored value) ────────────────
+static const wchar_t* kBackendVals[] = { L"D3D", L"D3D12", L"Vulkan", L"OGL", L"Software Renderer" };
+static const int      kResVals[]     = { 0, 1, 2, 3, 4, 5, 6, 8 };
+static const int      kMsaaVals[]    = { 1, 2, 4, 8 };
+static const wchar_t* kAudioVals[]   = { L"Cubeb", L"XAudio2", L"OpenAL", L"No audio output" };
+
+template <class T, size_t N>
+static int IndexOf(const T (&arr)[N], const T& v, int def = 0) {
+    for (size_t i = 0; i < N; ++i) if (arr[i] == v) return (int)i;
+    return def;
+}
+static int IndexOfStr(const wchar_t* const* arr, size_t n, const std::wstring& v, int def = 0) {
+    for (size_t i = 0; i < n; ++i) if (v == arr[i]) return (int)i;
+    return def;
+}
+
 void SettingsWindow::LoadDolphinPage() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.dolphinPath.c_str());
     SetWindowTextW(PC(ID_P_STAT1), L"Builds available at dolphin-emu.org/download");
+
+    DolphinSettings s;
+    DolphinLoadSettings(e.dolphinPath, s);
+
+    ComboFill(PC(ID_D_BACKEND), { L"Direct3D 11", L"Direct3D 12", L"Vulkan", L"OpenGL", L"Software" },
+              IndexOfStr(kBackendVals, 5, s.backend));
+    ComboFill(PC(ID_D_RES),
+              { L"Auto (window size)", L"1\xD7 Native (640\xD7""528)", L"2\xD7 (720p)",
+                L"3\xD7 (1080p)", L"4\xD7 (1440p)", L"5\xD7", L"6\xD7 (4K)", L"8\xD7" },
+              IndexOf(kResVals, s.internalRes));
+    ComboFill(PC(ID_D_ASPECT), { L"Auto", L"Force 16:9", L"Force 4:3", L"Stretch" },
+              (s.aspectRatio >= 0 && s.aspectRatio <= 3) ? s.aspectRatio : 0);
+    ComboFill(PC(ID_D_MSAA), { L"None", L"2\xD7", L"4\xD7", L"8\xD7" }, IndexOf(kMsaaVals, s.msaa));
+    ComboFill(PC(ID_D_ANISO), { L"1\xD7 (off)", L"2\xD7", L"4\xD7", L"8\xD7", L"16\xD7" },
+              (s.maxAnisotropy >= 0 && s.maxAnisotropy <= 4) ? s.maxAnisotropy : 0);
+    ComboFill(PC(ID_D_LANG),
+              { L"English", L"German", L"French", L"Spanish", L"Italian", L"Dutch" },
+              (s.gcLanguage >= 0 && s.gcLanguage <= 5) ? s.gcLanguage : 0);
+    ComboFill(PC(ID_D_AUDIO), { L"Cubeb", L"XAudio2", L"OpenAL", L"No audio output" },
+              IndexOfStr(kAudioVals, 4, s.audioBackend));
+
+    Chk(PC(ID_D_FULLSCREEN), s.fullscreen);
+    Chk(PC(ID_D_VSYNC),      s.vsync);
+    Chk(PC(ID_D_SSAA),       s.ssaa);
+    Chk(PC(ID_D_DUALCORE),   s.dualCore);
+    Chk(PC(ID_D_CHEATS),     s.enableCheats);
+    Chk(PC(ID_D_OCEN),       s.overclockEnable);
+    Chk(PC(ID_D_DSPHLE),     s.dspHLE);
+    Chk(PC(ID_D_CTRL_WIIMOTE), false);
+    SetWindowTextW(PC(ID_D_OCPCT),  std::to_wstring(s.overclockPercent).c_str());
+    SetWindowTextW(PC(ID_D_VOLUME), std::to_wstring(s.volume).c_str());
 }
 void SettingsWindow::SaveDolphinPage() {
     auto& e = m_work.emulators;
-    e.dolphinPath    = GetTxt(PC(ID_P_EDIT1));
+    e.dolphinPath = GetTxt(PC(ID_P_EDIT1));
+    if (e.dolphinPath.empty()) return;  // nothing to configure until Dolphin exists
+
+    auto clampInt = [](const std::wstring& t, int lo, int hi, int def) {
+        if (t.empty()) return def;
+        try { int v = std::stoi(t); return v < lo ? lo : (v > hi ? hi : v); }
+        catch (...) { return def; }
+    };
+
+    DolphinSettings s;
+    int bi = ComboSel(PC(ID_D_BACKEND)); s.backend = kBackendVals[(bi >= 0 && bi < 5) ? bi : 0];
+    int ri = ComboSel(PC(ID_D_RES));     s.internalRes = kResVals[(ri >= 0 && ri < 8) ? ri : 1];
+    int ai = ComboSel(PC(ID_D_ASPECT));  s.aspectRatio = (ai >= 0) ? ai : 0;
+    int mi = ComboSel(PC(ID_D_MSAA));    s.msaa = kMsaaVals[(mi >= 0 && mi < 4) ? mi : 0];
+    int ni = ComboSel(PC(ID_D_ANISO));   s.maxAnisotropy = (ni >= 0) ? ni : 0;
+    int li = ComboSel(PC(ID_D_LANG));    s.gcLanguage = (li >= 0) ? li : 0;
+    int di = ComboSel(PC(ID_D_AUDIO));   s.audioBackend = kAudioVals[(di >= 0 && di < 4) ? di : 0];
+
+    s.fullscreen      = IsChk(PC(ID_D_FULLSCREEN));
+    s.vsync           = IsChk(PC(ID_D_VSYNC));
+    s.ssaa            = IsChk(PC(ID_D_SSAA));
+    s.dualCore        = IsChk(PC(ID_D_DUALCORE));
+    s.enableCheats    = IsChk(PC(ID_D_CHEATS));
+    s.overclockEnable = IsChk(PC(ID_D_OCEN));
+    s.dspHLE          = IsChk(PC(ID_D_DSPHLE));
+    s.overclockPercent = clampInt(GetTxt(PC(ID_D_OCPCT)), 10, 400, 100);
+    s.volume           = clampInt(GetTxt(PC(ID_D_VOLUME)), 0, 100, 100);
+
+    DolphinApplySettings(e.dolphinPath, s);
 }
 
 void SettingsWindow::LoadRyujinxPage() {
@@ -1177,6 +1322,40 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"Dolphin.exe", L"dolphin",
                   EmulatorArchiveUrl(m_work, L"dolphin-x64.7z") },
                 GetAppDataPath());
+        }
+        else if (id == ID_D_CTRL_PRESET) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty()) {
+                MessageBoxW(m_hwnd, L"Set the Dolphin executable path first.",
+                            L"Controllers", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            std::wstring err;
+            bool wii = IsChk(PC(ID_D_CTRL_WIIMOTE));
+            if (DolphinWriteGamepadPreset(exe, wii, err)) {
+                MessageBoxW(m_hwnd,
+                    wii ? L"Gamepad preset applied to GameCube port 1 and Wii Remote 1.\n"
+                          L"Connect an Xbox-style controller and start a game."
+                        : L"Gamepad preset applied to GameCube controller port 1.\n"
+                          L"Connect an Xbox-style controller and start a game.",
+                    L"Controllers", MB_OK | MB_ICONINFORMATION);
+            } else {
+                MessageBoxW(m_hwnd, err.empty() ? L"Could not write controller config." : err.c_str(),
+                            L"Controllers", MB_OK | MB_ICONWARNING);
+            }
+        }
+        else if (id == ID_D_CTRL_OPEN) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty()) {
+                MessageBoxW(m_hwnd, L"Set the Dolphin executable path first.",
+                            L"Controllers", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            MessageBoxW(m_hwnd,
+                L"Dolphin is opening. Use its Controllers menu to fine-tune mappings, "
+                L"then close Dolphin.",
+                L"Controllers", MB_OK | MB_ICONINFORMATION);
         }
         break;
 
