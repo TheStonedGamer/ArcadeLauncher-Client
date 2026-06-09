@@ -7,6 +7,7 @@
 #include "DolphinConfig.h"
 #include "XeniaConfig.h"
 #include "Pcsx2Config.h"
+#include "Rpcs3Config.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -795,16 +796,44 @@ void SettingsWindow::BuildRyujinxPage() {
 void SettingsWindow::BuildRpcs3Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"RPCS3");
 
-
     AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
-    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
+    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 92, K_CW - 24, 20));
-    y += 128;
+                    K_CX + 12, y + 100, K_BX - K_CX - 16, 20));
+    y += 130;
+
+    // ── Graphics (RPCS3) ───────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 130));
+    AddPC(SmallLabel(m_hwnd, L"Renderer",     D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,        D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Resolution",   D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,        D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio", D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,        D_COL3, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Frame limit",  D_COL1, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C4,        D_COL1, y + 80, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Anisotropic filtering", D_COL2, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C5,        D_COL2, y + 80, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Resolution scale %", D_COL3, y + 64, 120));
+    AddPC(Edit      (m_hwnd, ID_EC_E1,        D_COL3, y + 80, 70));
+    AddPC(Check(m_hwnd, L"V-Sync",  ID_EC_K1, D_COL1,       y + 110, 80));
+    AddPC(Check(m_hwnd, L"MSAA",    ID_EC_K2, D_COL1 + 84,  y + 110, 80));
+    AddPC(Check(m_hwnd, L"Stretch to display", ID_EC_K3, D_COL2,     y + 110, 150));
+    AddPC(Check(m_hwnd, L"Write color buffers", ID_EC_K4, D_COL2 + 150, y + 110, 160));
+    y += 140;
+
+    // ── Audio / Controllers (RPCS3) ────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Audio & Controllers ", K_CX, y, K_CW, 80));
+    AddPC(SmallLabel(m_hwnd, L"Audio backend", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C6,         D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Master volume", D_COL2, y + 18, 120));
+    AddPC(Edit      (m_hwnd, ID_EC_E2,         D_COL2, y + 34, 70));
+    AddPC(Btn  (m_hwnd, L"Open RPCS3\x2026", ID_EC_B1, D_COL3, y + 32, 150, 26));
+    y += 90;
 }
 
 void SettingsWindow::BuildN64Page() {
@@ -1173,15 +1202,69 @@ void SettingsWindow::SaveRyujinxPage() {
     e.ryujinxPath    = GetTxt(PC(ID_P_EDIT1));
 }
 
+// ── RPCS3 config value tables (combo index <-> stored value) ──────────────────
+static const wchar_t* kRpcs3RendVals[]   = { L"Vulkan", L"OpenGL", L"Null" };
+static const wchar_t* kRpcs3ResVals[]    = { L"1280x720", L"1920x1080" };
+static const wchar_t* kRpcs3AspectVals[] = { L"16:9", L"4:3" };
+static const wchar_t* kRpcs3FpsVals[]    = { L"Auto", L"Off", L"30", L"60", L"120" };
+static const int      kRpcs3AnisoVals[]  = { 0, 2, 4, 8, 16 };
+static const wchar_t* kRpcs3AudioVals[]  = { L"Cubeb", L"XAudio2", L"FAudio" };
+
 void SettingsWindow::LoadRpcs3Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.rpcs3Path.c_str());
     SetVersionLabel(e.rpcs3Tag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_RPCS3, "RPCS3/rpcs3-binaries-win");
+
+    Rpcs3Settings s;
+    Rpcs3LoadSettings(e.rpcs3Path, s);
+
+    ComboFill(PC(ID_EC_C1), { L"Vulkan", L"OpenGL", L"Disabled (Null)" },
+              IndexOfStr(kRpcs3RendVals, 3, s.renderer));
+    ComboFill(PC(ID_EC_C2), { L"1280\xD7""720 (720p)", L"1920\xD7""1080 (1080p)" },
+              IndexOfStr(kRpcs3ResVals, 2, s.resolution));
+    ComboFill(PC(ID_EC_C3), { L"16:9", L"4:3" },
+              IndexOfStr(kRpcs3AspectVals, 2, s.aspect));
+    ComboFill(PC(ID_EC_C4), { L"Auto", L"Off", L"30 fps", L"60 fps", L"120 fps" },
+              IndexOfStr(kRpcs3FpsVals, 5, s.frameLimit));
+    ComboFill(PC(ID_EC_C5), { L"Auto", L"2\xD7", L"4\xD7", L"8\xD7", L"16\xD7" },
+              IndexOf(kRpcs3AnisoVals, s.aniso));
+    ComboFill(PC(ID_EC_C6), { L"Cubeb", L"XAudio2", L"FAudio" },
+              IndexOfStr(kRpcs3AudioVals, 3, s.audioRenderer));
+
+    Chk(PC(ID_EC_K1), s.vsync);
+    Chk(PC(ID_EC_K2), s.msaa != L"Disabled");
+    Chk(PC(ID_EC_K3), s.stretchScreen);
+    Chk(PC(ID_EC_K4), s.writeColorBuf);
+    SetWindowTextW(PC(ID_EC_E1), std::to_wstring(s.resScale).c_str());
+    SetWindowTextW(PC(ID_EC_E2), std::to_wstring(s.masterVolume).c_str());
 }
 void SettingsWindow::SaveRpcs3Page() {
     auto& e = m_work.emulators;
     e.rpcs3Path    = GetTxt(PC(ID_P_EDIT1));
+    if (e.rpcs3Path.empty()) return;
+
+    Rpcs3Settings s;
+    int ri = ComboSel(PC(ID_EC_C1)); s.renderer   = kRpcs3RendVals[(ri >= 0 && ri < 3) ? ri : 0];
+    int si = ComboSel(PC(ID_EC_C2)); s.resolution = kRpcs3ResVals[(si >= 0 && si < 2) ? si : 0];
+    int pi = ComboSel(PC(ID_EC_C3)); s.aspect     = kRpcs3AspectVals[(pi >= 0 && pi < 2) ? pi : 0];
+    int fi = ComboSel(PC(ID_EC_C4)); s.frameLimit = kRpcs3FpsVals[(fi >= 0 && fi < 5) ? fi : 0];
+    int ni = ComboSel(PC(ID_EC_C5)); s.aniso      = kRpcs3AnisoVals[(ni >= 0 && ni < 5) ? ni : 0];
+    int di = ComboSel(PC(ID_EC_C6)); s.audioRenderer = kRpcs3AudioVals[(di >= 0 && di < 3) ? di : 0];
+
+    s.vsync         = IsChk(PC(ID_EC_K1));
+    s.msaa          = IsChk(PC(ID_EC_K2)) ? L"Auto" : L"Disabled";
+    s.stretchScreen = IsChk(PC(ID_EC_K3));
+    s.writeColorBuf = IsChk(PC(ID_EC_K4));
+
+    auto clamp = [](const std::wstring& t, int lo, int hi, int def) {
+        if (t.empty()) return def;
+        try { int v = std::stoi(t); return v < lo ? lo : (v > hi ? hi : v); } catch (...) { return def; }
+    };
+    s.resScale     = clamp(GetTxt(PC(ID_EC_E1)), 25, 300, 100);
+    s.masterVolume = clamp(GetTxt(PC(ID_EC_E2)), 0, 200, 100);
+
+    Rpcs3ApplySettings(e.rpcs3Path, s);
 }
 
 void SettingsWindow::LoadN64Page() {
@@ -1534,6 +1617,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"rpcs3.exe", L"rpcs3",
                   EmulatorArchiveUrl(m_work, L"rpcs3-win64.7z") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the RPCS3 executable path first.",
+                            L"RPCS3", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 
