@@ -104,6 +104,7 @@
     <ClCompile Include="src\Pcsx2Config.cpp" />
     <ClCompile Include="src\Rpcs3Config.cpp" />
     <ClCompile Include="src\GopherConfig.cpp" />
+    <ClCompile Include="src\XemuConfig.cpp" />
     <ClCompile Include="src\MetadataFetcher.cpp" />
     <ClCompile Include="src\ProcessMonitor.cpp" />
     <ClCompile Include="src\Platform\SteamScanner.cpp" />
@@ -145,6 +146,7 @@
     <ClInclude Include="src\Pcsx2Config.h" />
     <ClInclude Include="src\Rpcs3Config.h" />
     <ClInclude Include="src\GopherConfig.h" />
+    <ClInclude Include="src\XemuConfig.h" />
     <ClInclude Include="src\Scanner.h" />
     <ClInclude Include="src\MetadataFetcher.h" />
     <ClInclude Include="src\ProcessMonitor.h" />

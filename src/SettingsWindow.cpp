@@ -9,6 +9,7 @@
 #include "Pcsx2Config.h"
 #include "Rpcs3Config.h"
 #include "GopherConfig.h"
+#include "XemuConfig.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -1016,10 +1017,32 @@ void SettingsWindow::BuildXboxPage() {
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
-    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
+    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 92, K_CW - 24, 20));
-    y += 128;
+                    K_CX + 12, y + 100, K_BX - K_CX - 16, 20));
+    y += 130;
+
+    // ── Graphics (xemu) ────────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 116));
+    AddPC(SmallLabel(m_hwnd, L"Renderer",     D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,        D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Render scale", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,        D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio", D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,        D_COL3, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Scaling / fit", D_COL1, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C4,        D_COL1, y + 80, D_CBW));
+    AddPC(Check(m_hwnd, L"V-Sync",           ID_EC_K1, D_COL2, y + 82, 90));
+    AddPC(Check(m_hwnd, L"Fullscreen on start", ID_EC_K2, D_COL3, y + 82, 160));
+    y += 126;
+
+    // ── Controllers (xemu) ─────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Controllers ", K_CX, y, K_CW, 64));
+    AddPC(SmallLabel(m_hwnd,
+          L"xemu maps XInput pads automatically \x2014 bind ports in its menu.",
+          D_COL1, y + 24, K_CW - 180));
+    AddPC(Btn  (m_hwnd, L"Open xemu\x2026", ID_EC_B1, D_COL3, y + 20, 150, 26));
+    y += 74;
 }
 
 void SettingsWindow::BuildCustomPage(int /*libIdx*/) {
@@ -1487,11 +1510,31 @@ void SettingsWindow::SaveXbox360Page() {
     XeniaApplySettings(e.xeniaPath, s);
 }
 
+static const int      kXemuScaleVals[]  = { 1, 2, 3, 4, 5 };
+static const wchar_t* kXemuRendVals[]   = { L"OPENGL", L"VULKAN", L"NULL" };
+static const wchar_t* kXemuAspectVals[] = { L"auto", L"native", L"4x3", L"16x9" };
+static const wchar_t* kXemuFitVals[]    = { L"scale", L"center", L"stretch" };
+
 void SettingsWindow::LoadXboxPage() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.xemuPath.c_str());
     SetVersionLabel(e.xemuTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_XBOX, "xemu-project/xemu");
+
+    XemuSettings s;
+    XemuLoadSettings(e.xemuPath, s);
+
+    ComboFill(PC(ID_EC_C1), { L"OpenGL", L"Vulkan", L"None (Null)" },
+              IndexOfStr(kXemuRendVals, 3, s.renderer));
+    ComboFill(PC(ID_EC_C2), { L"1\xD7 (480p)", L"2\xD7", L"3\xD7", L"4\xD7", L"5\xD7" },
+              IndexOf(kXemuScaleVals, s.renderScale, 0));
+    ComboFill(PC(ID_EC_C3), { L"Auto", L"Native (4:3)", L"4:3", L"16:9" },
+              IndexOfStr(kXemuAspectVals, 4, s.aspect));
+    ComboFill(PC(ID_EC_C4), { L"Scale", L"Center", L"Stretch" },
+              IndexOfStr(kXemuFitVals, 3, s.fit));
+
+    Chk(PC(ID_EC_K1), s.vsync);
+    Chk(PC(ID_EC_K2), s.fullscreen);
 }
 void SettingsWindow::SaveXboxPage() {
     auto& e = m_work.emulators;
@@ -1499,6 +1542,16 @@ void SettingsWindow::SaveXboxPage() {
     if (m_cfg) {
         m_cfg->emulators.xemuPath    = e.xemuPath;
     }
+
+    XemuSettings s;
+    int ri = ComboSel(PC(ID_EC_C1)); s.renderer    = kXemuRendVals[(ri >= 0 && ri < 3) ? ri : 0];
+    int ci = ComboSel(PC(ID_EC_C2)); s.renderScale = kXemuScaleVals[(ci >= 0 && ci < 5) ? ci : 0];
+    int ai = ComboSel(PC(ID_EC_C3)); s.aspect      = kXemuAspectVals[(ai >= 0 && ai < 4) ? ai : 0];
+    int fi = ComboSel(PC(ID_EC_C4)); s.fit         = kXemuFitVals[(fi >= 0 && fi < 3) ? fi : 0];
+    s.vsync      = IsChk(PC(ID_EC_K1));
+    s.fullscreen = IsChk(PC(ID_EC_K2));
+
+    XemuApplySettings(e.xemuPath, s);
 }
 
 void SettingsWindow::LoadCustomPage(int idx) {
@@ -1803,6 +1856,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"xemu.exe", L"xemu",
                   EmulatorArchiveUrl(m_work, L"xemu-win-x86_64-release.zip") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the xemu executable path first.",
+                            L"xemu", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 
