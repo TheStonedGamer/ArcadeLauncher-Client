@@ -106,6 +106,8 @@
     <ClCompile Include="src\GopherConfig.cpp" />
     <ClCompile Include="src\XemuConfig.cpp" />
     <ClCompile Include="src\DuckStationConfig.cpp" />
+    <ClCompile Include="src\RyujinxConfig.cpp" />
+    <ClCompile Include="src\MesenConfig.cpp" />
     <ClCompile Include="src\MetadataFetcher.cpp" />
     <ClCompile Include="src\ProcessMonitor.cpp" />
     <ClCompile Include="src\Platform\SteamScanner.cpp" />
@@ -149,6 +151,8 @@
     <ClInclude Include="src\GopherConfig.h" />
     <ClInclude Include="src\XemuConfig.h" />
     <ClInclude Include="src\DuckStationConfig.h" />
+    <ClInclude Include="src\RyujinxConfig.h" />
+    <ClInclude Include="src\MesenConfig.h" />
     <ClInclude Include="src\Scanner.h" />
     <ClInclude Include="src\MetadataFetcher.h" />
     <ClInclude Include="src\ProcessMonitor.h" />

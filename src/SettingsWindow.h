@@ -111,6 +111,8 @@ private:
     void BuildN64Page();
     void BuildNesPage();
     void BuildSnesPage();
+    // Shared Mesen2 config groups for both NES and SNES pages.
+    void BuildMesenConfigGroups(int y, const wchar_t* consoleLabel);
     void BuildPS1Page();
     void BuildPS2Page();
     void BuildXbox360Page();
@@ -127,6 +129,9 @@ private:
     void LoadN64Page();       void SaveN64Page();
     void LoadNesPage();       void SaveNesPage();
     void LoadSnesPage();      void SaveSnesPage();
+    // Shared Mesen2 config load/save (NES + SNES share one settings.json).
+    void LoadMesenPage(const std::wstring& exePath, const std::wstring& console);
+    void SaveMesenPage(const std::wstring& exePath, const std::wstring& console);
     void LoadPS1Page();       void SavePS1Page();
     void LoadPS2Page();       void SavePS2Page();
     void LoadXbox360Page();   void SaveXbox360Page();

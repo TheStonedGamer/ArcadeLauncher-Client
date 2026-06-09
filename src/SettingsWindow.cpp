@@ -11,6 +11,8 @@
 #include "GopherConfig.h"
 #include "XemuConfig.h"
 #include "DuckStationConfig.h"
+#include "RyujinxConfig.h"
+#include "MesenConfig.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -794,6 +796,35 @@ void SettingsWindow::BuildRyujinxPage() {
     AddPC(StatLabel(m_hwnd, L"", ID_P_STAT1,
                     K_CX + 12, y + 120, K_CW - 24));
     y += 152;
+
+    // ── Graphics (Ryujinx) ─────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 130));
+    AddPC(SmallLabel(m_hwnd, L"Graphics backend", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,           D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Resolution scale", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,            D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio",    D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,           D_COL3, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Anisotropic filtering", D_COL1, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C4,                 D_COL1, y + 80, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Anti-aliasing",   D_COL2, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C5,           D_COL2, y + 80, D_CBW));
+    AddPC(Check(m_hwnd, L"V-Sync",        ID_EC_K1, D_COL3,       y + 82, 90));
+    AddPC(Check(m_hwnd, L"Shader cache",  ID_EC_K2, D_COL3 + 90,  y + 82, 110));
+    AddPC(Check(m_hwnd, L"Texture recompression", ID_EC_K3, D_COL1,      y + 110, 180));
+    AddPC(Check(m_hwnd, L"Macro HLE",     ID_EC_K4, D_COL2,       y + 110, 110));
+    y += 140;
+
+    // ── Audio & System (Ryujinx) ───────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Audio & System ", K_CX, y, K_CW, 84));
+    AddPC(SmallLabel(m_hwnd, L"Audio backend", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C6,         D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Master volume %", D_COL2, y + 18, 120));
+    AddPC(Edit      (m_hwnd, ID_EC_E1,           D_COL2, y + 34, 70));
+    AddPC(Check(m_hwnd, L"Start fullscreen", ID_EC_K5, D_COL3,       y + 20, 140));
+    AddPC(Check(m_hwnd, L"Docked mode",      ID_EC_K6, D_COL3,       y + 46, 140));
+    AddPC(Btn  (m_hwnd, L"Open Ryujinx\x2026", ID_EC_B1, D_COL2, y + 56, 150, 26));
+    y += 94;
 }
 
 void SettingsWindow::BuildRpcs3Page() {
@@ -892,6 +923,8 @@ void SettingsWindow::BuildNesPage() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 128, K_CW - 24, 20));
     y += 164;
+
+    BuildMesenConfigGroups(y, L"NES");
 }
 
 void SettingsWindow::BuildSnesPage() {
@@ -910,6 +943,45 @@ void SettingsWindow::BuildSnesPage() {
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
                     K_CX + 12, y + 128, K_CW - 24, 20));
     y += 164;
+
+    BuildMesenConfigGroups(y, L"SNES");
+}
+
+// Shared Mesen2 config UI for the NES and SNES pages (same exe + settings.json).
+// `consoleLabel` is just for the Region label; the control IDs are identical on
+// both pages because only one is built at a time.
+void SettingsWindow::BuildMesenConfigGroups(int y, const wchar_t* consoleLabel) {
+    // ── Video (Mesen2) ─────────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Video ", K_CX, y, K_CW, 128));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,        D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Video filter", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,        D_COL2, y + 34, D_CBW));
+    std::wstring regionLabel = std::wstring(consoleLabel) + L" region";
+    AddPC(SmallLabel(m_hwnd, regionLabel.c_str(), D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,            D_COL3, y + 34, D_CBW));
+    AddPC(Check(m_hwnd, L"V-Sync",             ID_EC_K1, D_COL1,       y + 70, 90));
+    AddPC(Check(m_hwnd, L"Bilinear filtering", ID_EC_K2, D_COL1 + 96,  y + 70, 150));
+    AddPC(Check(m_hwnd, L"Integer FPS mode",   ID_EC_K3, D_COL3,       y + 70, 160));
+    AddPC(Check(m_hwnd, L"Fullscreen integer scale", ID_EC_K4, D_COL1,     y + 96, 190));
+    AddPC(Check(m_hwnd, L"Exclusive fullscreen",     ID_EC_K5, D_COL2 + 16, y + 96, 180));
+    y += 138;
+
+    // ── Audio & Emulation (Mesen2) ─────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Audio & Emulation ", K_CX, y, K_CW, 96));
+    AddPC(SmallLabel(m_hwnd, L"Master volume %",  D_COL1, y + 18, 130));
+    AddPC(Edit      (m_hwnd, ID_EC_E1,            D_COL1, y + 34, 70));
+    AddPC(SmallLabel(m_hwnd, L"Audio latency ms", D_COL2, y + 18, 130));
+    AddPC(Edit      (m_hwnd, ID_EC_E2,            D_COL2, y + 34, 70));
+    AddPC(SmallLabel(m_hwnd, L"Run-ahead frames", D_COL3, y + 18, 130));
+    AddPC(Edit      (m_hwnd, ID_EC_E3,            D_COL3, y + 34, 70));
+    AddPC(Check(m_hwnd, L"Enable audio",       ID_EC_K6, D_COL1,       y + 66, 120));
+    AddPC(Check(m_hwnd, L"Mute in background", ID_EC_K7, D_COL1 + 126, y + 66, 160));
+    AddPC(Check(m_hwnd, L"Enable rewind",      ID_EC_K8, D_COL3,       y + 66, 130));
+    y += 106;
+
+    AddPC(Btn(m_hwnd, L"Open Mesen\x2026", ID_EC_B1, D_COL1, y, 150, 26));
+    y += 34;
 }
 
 // ── PS1 / PS2 / Xbox 360 ──────────────────────────────────────────────────────
@@ -1257,14 +1329,74 @@ void SettingsWindow::SaveDolphinPage() {
     DolphinApplySettings(e.dolphinPath, s);
 }
 
+// ── Ryujinx config value tables (combo index <-> stored value) ────────────────
+static const wchar_t* kRyuBackendVals[] = { L"Vulkan", L"OpenGl" };
+static const int      kRyuResVals[]     = { 1, 2, 3, 4 };
+static const wchar_t* kRyuAspectVals[]  = { L"Fixed4x3", L"Fixed16x9", L"Fixed16x10",
+                                            L"Fixed21x9", L"Fixed32x9", L"Stretched" };
+static const int      kRyuAnisoVals[]   = { -1, 2, 4, 8, 16 };
+static const wchar_t* kRyuAaVals[]      = { L"None", L"Fxaa", L"SmaaLow",
+                                            L"SmaaMedium", L"SmaaHigh", L"SmaaUltra" };
+static const wchar_t* kRyuAudioVals[]   = { L"SDL2", L"OpenAl", L"SoundIo", L"Dummy" };
+
 void SettingsWindow::LoadRyujinxPage() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.ryujinxPath.c_str());
     SetWindowTextW(PC(ID_P_STAT1), L"Project discontinued Oct 2024 \x2014 no new versions available.");
+
+    RyujinxSettings s;
+    RyujinxLoadSettings(s);
+
+    ComboFill(PC(ID_EC_C1), { L"Vulkan", L"OpenGL" },
+              IndexOfStr(kRyuBackendVals, 2, s.graphicsBackend));
+    ComboFill(PC(ID_EC_C2), { L"Native (1\xD7)", L"2\xD7", L"3\xD7", L"4\xD7" },
+              IndexOf(kRyuResVals, s.resScale, 0));
+    ComboFill(PC(ID_EC_C3),
+              { L"4:3", L"16:9", L"16:10", L"21:9", L"32:9", L"Stretch to window" },
+              IndexOfStr(kRyuAspectVals, 6, s.aspectRatio, 1));
+    ComboFill(PC(ID_EC_C4), { L"Auto", L"2\xD7", L"4\xD7", L"8\xD7", L"16\xD7" },
+              IndexOf(kRyuAnisoVals, s.maxAnisotropy, 0));
+    ComboFill(PC(ID_EC_C5),
+              { L"None", L"FXAA", L"SMAA Low", L"SMAA Medium", L"SMAA High", L"SMAA Ultra" },
+              IndexOfStr(kRyuAaVals, 6, s.antiAliasing));
+    ComboFill(PC(ID_EC_C6), { L"SDL2", L"OpenAL", L"SoundIO", L"Dummy (off)" },
+              IndexOfStr(kRyuAudioVals, 4, s.audioBackend));
+
+    Chk(PC(ID_EC_K1), s.enableVsync);
+    Chk(PC(ID_EC_K2), s.shaderCache);
+    Chk(PC(ID_EC_K3), s.textureRecompression);
+    Chk(PC(ID_EC_K4), s.macroHle);
+    Chk(PC(ID_EC_K5), s.startFullscreen);
+    Chk(PC(ID_EC_K6), s.dockedMode);
+    SetWindowTextW(PC(ID_EC_E1), std::to_wstring(s.audioVolume).c_str());
 }
 void SettingsWindow::SaveRyujinxPage() {
     auto& e = m_work.emulators;
     e.ryujinxPath    = GetTxt(PC(ID_P_EDIT1));
+
+    // Load first so any un-exposed keys are preserved on write.
+    RyujinxSettings s;
+    RyujinxLoadSettings(s);
+    int bi = ComboSel(PC(ID_EC_C1)); s.graphicsBackend = kRyuBackendVals[(bi >= 0 && bi < 2) ? bi : 0];
+    int ri = ComboSel(PC(ID_EC_C2)); s.resScale        = kRyuResVals[(ri >= 0 && ri < 4) ? ri : 0];
+    int pi = ComboSel(PC(ID_EC_C3)); s.aspectRatio     = kRyuAspectVals[(pi >= 0 && pi < 6) ? pi : 1];
+    int ni = ComboSel(PC(ID_EC_C4)); s.maxAnisotropy   = kRyuAnisoVals[(ni >= 0 && ni < 5) ? ni : 0];
+    int ai = ComboSel(PC(ID_EC_C5)); s.antiAliasing    = kRyuAaVals[(ai >= 0 && ai < 6) ? ai : 0];
+    int di = ComboSel(PC(ID_EC_C6)); s.audioBackend    = kRyuAudioVals[(di >= 0 && di < 4) ? di : 0];
+
+    s.enableVsync          = IsChk(PC(ID_EC_K1));
+    s.shaderCache          = IsChk(PC(ID_EC_K2));
+    s.textureRecompression = IsChk(PC(ID_EC_K3));
+    s.macroHle             = IsChk(PC(ID_EC_K4));
+    s.startFullscreen      = IsChk(PC(ID_EC_K5));
+    s.dockedMode           = IsChk(PC(ID_EC_K6));
+
+    std::wstring vt = GetTxt(PC(ID_EC_E1));
+    if (!vt.empty()) {
+        try { int v = std::stoi(vt); s.audioVolume = v < 0 ? 0 : (v > 100 ? 100 : v); }
+        catch (...) {}
+    }
+    RyujinxApplySettings(s);
 }
 
 // ── RPCS3 config value tables (combo index <-> stored value) ──────────────────
@@ -1374,6 +1506,70 @@ void SettingsWindow::SaveN64Page() {
     GopherApplySettings(s);
 }
 
+// ── Mesen2 config value tables (combo index <-> stored value) ─────────────────
+static const wchar_t* kMesenAspectVals[] = { L"NoStretching", L"Auto", L"Standard",
+                                             L"Widescreen" };
+static const wchar_t* kMesenFilterVals[] = { L"None", L"NtscBlargg", L"NtscBisqwit",
+                                             L"LcdGrid" };
+static const wchar_t* kMesenRegionVals[] = { L"Auto", L"Ntsc", L"Pal", L"Dendy" };
+
+void SettingsWindow::LoadMesenPage(const std::wstring& exePath,
+                                   const std::wstring& console) {
+    MesenSettings s;
+    MesenLoadSettings(exePath, console, s);
+
+    ComboFill(PC(ID_EC_C1),
+              { L"No stretching", L"Auto", L"4:3 (Standard)", L"16:9 (Widescreen)" },
+              IndexOfStr(kMesenAspectVals, 4, s.aspectRatio));
+    ComboFill(PC(ID_EC_C2),
+              { L"None", L"NTSC (Blargg)", L"NTSC (Bisqwit)", L"LCD grid" },
+              IndexOfStr(kMesenFilterVals, 4, s.videoFilter));
+    ComboFill(PC(ID_EC_C3), { L"Auto", L"NTSC", L"PAL", L"Dendy" },
+              IndexOfStr(kMesenRegionVals, 4, s.region));
+
+    Chk(PC(ID_EC_K1), s.verticalSync);
+    Chk(PC(ID_EC_K2), s.bilinear);
+    Chk(PC(ID_EC_K3), s.integerFpsMode);
+    Chk(PC(ID_EC_K4), s.fullscreenIntegerScale);
+    Chk(PC(ID_EC_K5), s.exclusiveFullscreen);
+    Chk(PC(ID_EC_K6), s.enableAudio);
+    Chk(PC(ID_EC_K7), s.muteInBackground);
+    Chk(PC(ID_EC_K8), s.enableRewind);
+    SetWindowTextW(PC(ID_EC_E1), std::to_wstring(s.masterVolume).c_str());
+    SetWindowTextW(PC(ID_EC_E2), std::to_wstring(s.audioLatency).c_str());
+    SetWindowTextW(PC(ID_EC_E3), std::to_wstring(s.runAheadFrames).c_str());
+}
+void SettingsWindow::SaveMesenPage(const std::wstring& exePath,
+                                   const std::wstring& console) {
+    if (exePath.empty()) return;
+    // Load first so unexposed keys (and the other console's Region) survive.
+    MesenSettings s;
+    MesenLoadSettings(exePath, console, s);
+
+    int pi = ComboSel(PC(ID_EC_C1)); s.aspectRatio = kMesenAspectVals[(pi >= 0 && pi < 4) ? pi : 0];
+    int fi = ComboSel(PC(ID_EC_C2)); s.videoFilter = kMesenFilterVals[(fi >= 0 && fi < 4) ? fi : 0];
+    int ri = ComboSel(PC(ID_EC_C3)); s.region      = kMesenRegionVals[(ri >= 0 && ri < 4) ? ri : 0];
+
+    s.verticalSync           = IsChk(PC(ID_EC_K1));
+    s.bilinear               = IsChk(PC(ID_EC_K2));
+    s.integerFpsMode         = IsChk(PC(ID_EC_K3));
+    s.fullscreenIntegerScale = IsChk(PC(ID_EC_K4));
+    s.exclusiveFullscreen    = IsChk(PC(ID_EC_K5));
+    s.enableAudio            = IsChk(PC(ID_EC_K6));
+    s.muteInBackground       = IsChk(PC(ID_EC_K7));
+    s.enableRewind           = IsChk(PC(ID_EC_K8));
+
+    auto getInt = [](const std::wstring& t, int def) {
+        if (t.empty()) return def;
+        try { return std::stoi(t); } catch (...) { return def; }
+    };
+    s.masterVolume   = getInt(GetTxt(PC(ID_EC_E1)), s.masterVolume);
+    s.audioLatency   = getInt(GetTxt(PC(ID_EC_E2)), s.audioLatency);
+    s.runAheadFrames = getInt(GetTxt(PC(ID_EC_E3)), s.runAheadFrames);
+
+    MesenApplySettings(exePath, console, s);
+}
+
 void SettingsWindow::LoadNesPage() {
     auto& e = m_work.emulators;
     // Mesen2 handles both NES and SNES — if NES path is unset but SNES has the exe, inherit it
@@ -1384,10 +1580,12 @@ void SettingsWindow::LoadNesPage() {
     SetWindowTextW(PC(ID_P_EDIT1), e.nesPath.c_str());
     SetVersionLabel(e.nesTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_NES, "SourMesen/Mesen2");
+    LoadMesenPage(e.nesPath, L"Nes");
 }
 void SettingsWindow::SaveNesPage() {
     auto& e = m_work.emulators;
     e.nesPath    = GetTxt(PC(ID_P_EDIT1));
+    SaveMesenPage(e.nesPath, L"Nes");
 }
 
 void SettingsWindow::LoadSnesPage() {
@@ -1400,6 +1598,7 @@ void SettingsWindow::LoadSnesPage() {
     SetWindowTextW(PC(ID_P_EDIT1), e.snesPath.c_str());
     SetVersionLabel(e.snesTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_SNES, "SourMesen/Mesen2");
+    LoadMesenPage(e.snesPath, L"Snes");
 }
 void SettingsWindow::SaveSnesPage() {
     auto& e = m_work.emulators;
@@ -1409,6 +1608,7 @@ void SettingsWindow::SaveSnesPage() {
     if (m_cfg) {
         m_cfg->emulators.snesPath    = e.snesPath;
     }
+    SaveMesenPage(e.snesPath, L"Snes");
 }
 
 static const wchar_t* kDuckRendVals[]   = { L"Automatic", L"D3D11", L"D3D12", L"Vulkan", L"OpenGL", L"Software" };
@@ -1773,6 +1973,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                   EmulatorArchiveUrl(m_work, L"ryujinx-win-x64.zip") },
                 GetAppDataPath());
         }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the Ryujinx executable path first.",
+                            L"Ryujinx", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
         break;
 
     case PAGE_RPCS3:
@@ -1834,6 +2042,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                   EmulatorArchiveUrl(m_work, L"mesen-windows.zip") },
                 GetAppDataPath());
         }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the Mesen executable path first.",
+                            L"Mesen", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
         break;
 
     case PAGE_SNES:
@@ -1848,6 +2064,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"Mesen.exe", L"mesen2",
                   EmulatorArchiveUrl(m_work, L"mesen-windows.zip") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the Mesen executable path first.",
+                            L"Mesen", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 
