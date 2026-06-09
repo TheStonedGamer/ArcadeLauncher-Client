@@ -6,6 +6,7 @@
 #include "IgdbSync.h"
 #include "DolphinConfig.h"
 #include "XeniaConfig.h"
+#include "Pcsx2Config.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -885,10 +886,45 @@ void SettingsWindow::BuildPS2Page() {
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
-    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
+    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 92, K_CW - 24, 20));
-    y += 128;
+                    K_CX + 12, y + 100, K_BX - K_CX - 16, 20));
+    y += 130;
+
+    // ── Graphics (PCSX2 / GS) ──────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 130));
+    AddPC(SmallLabel(m_hwnd, L"Renderer",          D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,             D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Internal resolution", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,             D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio",      D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,             D_COL3, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Anisotropic filtering", D_COL1, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C4,             D_COL1, y + 80, D_CBW));
+    AddPC(Check(m_hwnd, L"V-Sync",       ID_EC_K1, D_COL2,       y + 70, 90));
+    AddPC(Check(m_hwnd, L"Mipmapping",   ID_EC_K2, D_COL2 + 96,  y + 70, 110));
+    AddPC(Check(m_hwnd, L"FXAA",         ID_EC_K3, D_COL2,       y + 96, 90));
+    AddPC(Check(m_hwnd, L"Start fullscreen", ID_EC_K4, D_COL2 + 96, y + 96, 130));
+    y += 140;
+
+    // ── Core / Audio (PCSX2) ───────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Core & Audio ", K_CX, y, K_CW, 96));
+    AddPC(Check(m_hwnd, L"Enable cheats (pnach)", ID_EC_K5, D_COL1, y + 22, 170));
+    AddPC(Check(m_hwnd, L"Widescreen patches",    ID_EC_K6, D_COL1, y + 48, 170));
+    AddPC(Check(m_hwnd, L"Fast boot (skip BIOS)",  ID_EC_K7, D_COL1, y + 74, 170));
+    AddPC(SmallLabel(m_hwnd, L"Audio backend", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C5,         D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Volume (0\x2013""100)", D_COL3, y + 18, 120));
+    AddPC(Edit      (m_hwnd, ID_EC_E1,         D_COL3, y + 34, 70));
+    y += 106;
+
+    // ── Controllers (PCSX2) ────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Controllers ", K_CX, y, K_CW, 64));
+    AddPC(SmallLabel(m_hwnd,
+          L"PCSX2 has a full controller mapper \x2014 keyboard defaults are preset.",
+          D_COL1, y + 24, K_CW - 180));
+    AddPC(Btn  (m_hwnd, L"Open PCSX2\x2026", ID_EC_B1, D_COL3, y + 20, 150, 26));
+    y += 74;
 }
 
 void SettingsWindow::BuildXbox360Page() {
@@ -1210,11 +1246,43 @@ void SettingsWindow::SavePS1Page() {
     }
 }
 
+// ── PCSX2 config value tables (combo index <-> stored value) ──────────────────
+static const int      kPcsx2RendVals[]   = { -1, 3, 15, 14, 12, 13 };  // GSRendererType
+static const int      kPcsx2UpscaleVals[]= { 1, 2, 3, 4, 5, 6, 8 };
+static const wchar_t* kPcsx2AspectVals[] = { L"Auto 4:3/3:2", L"4:3", L"16:9", L"Stretch" };
+static const int      kPcsx2AnisoVals[]  = { 0, 2, 4, 8, 16 };
+static const wchar_t* kPcsx2AudioVals[]  = { L"Cubeb", L"XAudio2" };
+
 void SettingsWindow::LoadPS2Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.pcsx2Path.c_str());
     SetVersionLabel(e.pcsx2Tag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_PS2, "PCSX2/pcsx2");
+
+    Pcsx2Settings s;
+    Pcsx2LoadSettings(e.pcsx2Path, s);
+
+    ComboFill(PC(ID_EC_C1),
+              { L"Automatic", L"Direct3D 11", L"Direct3D 12", L"Vulkan", L"OpenGL", L"Software" },
+              IndexOf(kPcsx2RendVals, s.renderer));
+    ComboFill(PC(ID_EC_C2),
+              { L"Native (1\xD7)", L"2\xD7", L"3\xD7", L"4\xD7", L"5\xD7", L"6\xD7", L"8\xD7" },
+              IndexOf(kPcsx2UpscaleVals, s.upscale, 0));
+    ComboFill(PC(ID_EC_C3), { L"Auto (4:3 / 3:2)", L"4:3", L"16:9", L"Stretch" },
+              IndexOfStr(kPcsx2AspectVals, 4, s.aspect));
+    ComboFill(PC(ID_EC_C4), { L"Off", L"2\xD7", L"4\xD7", L"8\xD7", L"16\xD7" },
+              IndexOf(kPcsx2AnisoVals, s.maxAniso));
+    ComboFill(PC(ID_EC_C5), { L"Cubeb", L"XAudio2" },
+              IndexOfStr(kPcsx2AudioVals, 2, s.audioBackend));
+
+    Chk(PC(ID_EC_K1), s.vsync);
+    Chk(PC(ID_EC_K2), s.mipmap);
+    Chk(PC(ID_EC_K3), s.fxaa);
+    Chk(PC(ID_EC_K4), s.fullscreen);
+    Chk(PC(ID_EC_K5), s.cheats);
+    Chk(PC(ID_EC_K6), s.widescreen);
+    Chk(PC(ID_EC_K7), s.fastBoot);
+    SetWindowTextW(PC(ID_EC_E1), std::to_wstring(s.volume).c_str());
 }
 void SettingsWindow::SavePS2Page() {
     auto& e = m_work.emulators;
@@ -1222,6 +1290,27 @@ void SettingsWindow::SavePS2Page() {
     if (m_cfg) {
         m_cfg->emulators.pcsx2Path    = e.pcsx2Path;
     }
+    if (e.pcsx2Path.empty()) return;
+
+    Pcsx2Settings s;
+    int ri = ComboSel(PC(ID_EC_C1)); s.renderer = kPcsx2RendVals[(ri >= 0 && ri < 6) ? ri : 0];
+    int ui = ComboSel(PC(ID_EC_C2)); s.upscale  = kPcsx2UpscaleVals[(ui >= 0 && ui < 7) ? ui : 0];
+    int ai = ComboSel(PC(ID_EC_C3)); s.aspect   = kPcsx2AspectVals[(ai >= 0 && ai < 4) ? ai : 0];
+    int ni = ComboSel(PC(ID_EC_C4)); s.maxAniso = kPcsx2AnisoVals[(ni >= 0 && ni < 5) ? ni : 0];
+    int di = ComboSel(PC(ID_EC_C5)); s.audioBackend = kPcsx2AudioVals[(di >= 0 && di < 2) ? di : 0];
+
+    s.vsync      = IsChk(PC(ID_EC_K1));
+    s.mipmap     = IsChk(PC(ID_EC_K2));
+    s.fxaa       = IsChk(PC(ID_EC_K3));
+    s.fullscreen = IsChk(PC(ID_EC_K4));
+    s.cheats     = IsChk(PC(ID_EC_K5));
+    s.widescreen = IsChk(PC(ID_EC_K6));
+    s.fastBoot   = IsChk(PC(ID_EC_K7));
+
+    std::wstring vt = GetTxt(PC(ID_EC_E1));
+    if (!vt.empty()) { try { int v = std::stoi(vt); s.volume = v < 0 ? 0 : (v > 100 ? 100 : v); } catch (...) {} }
+
+    Pcsx2ApplySettings(e.pcsx2Path, s);
 }
 
 static const wchar_t* kXeniaGpuVals[] = { L"any", L"d3d12", L"vulkan" };
@@ -1521,6 +1610,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"pcsx2-qt.exe", L"pcsx2",
                   EmulatorArchiveUrl(m_work, L"pcsx2-windows-x64.7z") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the PCSX2 executable path first.",
+                            L"PCSX2", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 

@@ -101,6 +101,7 @@
     <ClCompile Include="src\Config.cpp" />
     <ClCompile Include="src\DolphinConfig.cpp" />
     <ClCompile Include="src\XeniaConfig.cpp" />
+    <ClCompile Include="src\Pcsx2Config.cpp" />
     <ClCompile Include="src\MetadataFetcher.cpp" />
     <ClCompile Include="src\ProcessMonitor.cpp" />
     <ClCompile Include="src\Platform\SteamScanner.cpp" />
@@ -139,6 +140,7 @@
     <ClInclude Include="src\DolphinConfig.h" />
     <ClInclude Include="src\IniFile.h" />
     <ClInclude Include="src\XeniaConfig.h" />
+    <ClInclude Include="src\Pcsx2Config.h" />
     <ClInclude Include="src\Scanner.h" />
     <ClInclude Include="src\MetadataFetcher.h" />
     <ClInclude Include="src\ProcessMonitor.h" />

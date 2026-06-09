@@ -78,8 +78,9 @@ private:
         // Generic emulator-config controls reused across the other emulator
         // pages (only one page is built at a time, so the meaning is per-page).
         ID_EC_C1 = 340, ID_EC_C2, ID_EC_C3, ID_EC_C4, ID_EC_C5, ID_EC_C6,  // combos
-        ID_EC_K1 = 360, ID_EC_K2, ID_EC_K3, ID_EC_K4,                      // checks
-        ID_EC_E1 = 370, ID_EC_E2,                                          // edits
+        ID_EC_K1 = 360, ID_EC_K2, ID_EC_K3, ID_EC_K4,
+        ID_EC_K5, ID_EC_K6, ID_EC_K7, ID_EC_K8,                            // checks
+        ID_EC_E1 = 370, ID_EC_E2, ID_EC_E3, ID_EC_E4,                      // edits
         ID_EC_B1 = 380, ID_EC_B2,                                          // buttons
     };
 
