@@ -2012,6 +2012,15 @@ void App::LaunchInstalledGame(Game launchGame) {
         std::wstring godCacheRoot;
         if (EnsureXbox360GodLocalCache(launchGame, cachedRomPath, godCacheRoot, m_hwnd))
             args = RebuildArgsForCachedRom(launchGame, cachedRomPath);
+        // xemu (original Xbox) boots a disc image only via -dvd_path; a bare
+        // positional path just opens the emulator UI. The server's {rom}
+        // template (and catalog rows installed before this fix) yield only the
+        // quoted ISO path, so normalise it here for existing installs too.
+        if (launchGame.platform == Platform::Xbox &&
+            !args.empty() &&
+            args.find(L"-dvd_path") == std::wstring::npos) {
+            args = L"-dvd_path " + args;
+        }
         args = ApplyLaunchOptions(args, launchGame.launchOptions);
 
         ok = m_monitor.Launch(launchGame.emulatorPath, args, {},
