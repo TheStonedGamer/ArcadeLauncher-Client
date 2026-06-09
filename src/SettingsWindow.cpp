@@ -8,6 +8,7 @@
 #include "XeniaConfig.h"
 #include "Pcsx2Config.h"
 #include "Rpcs3Config.h"
+#include "GopherConfig.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -839,22 +840,38 @@ void SettingsWindow::BuildRpcs3Page() {
 void SettingsWindow::BuildN64Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"N64 Emulator");
 
-
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 188));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 130));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
     AddPC(SmallLabel(m_hwnd,
-          L"Recommended: Gopher64 \x2014 modern Rust-based emulator, 4-player, high accuracy.",
-          K_CX + 12, y + 76, K_CW - 24));
-    AddPC(SmallLabel(m_hwnd,
-          L"Also works with: Project64, simple64.  Download: github.com/gopher64/gopher64",
-          K_CX + 12, y + 108, K_CW - 24));
-    AddEmulatorProgressBar(K_CX + 12, y + 144, K_CW - 24);
+          L"Recommended: Gopher64 \x2014 modern Rust-based, 4-player, high accuracy.",
+          K_CX + 12, y + 78, K_CW - 24));
+    AddEmulatorProgressBar(K_CX + 12, y + 96, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 160, K_CW - 24, 20));
-    y += 196;
+                    K_CX + 12, y + 110, K_BX - K_CX - 16, 20));
+    y += 140;
+
+    // ── Graphics (gopher64) ────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 116));
+    AddPC(SmallLabel(m_hwnd, L"Internal resolution", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,               D_COL1, y + 34, D_CBW));
+    AddPC(Check(m_hwnd, L"Supersampling (SSAA)", ID_EC_K1, D_COL2,     y + 36, 170));
+    AddPC(Check(m_hwnd, L"Integer scaling",      ID_EC_K2, D_COL3,     y + 36, 150));
+    AddPC(Check(m_hwnd, L"V-Sync",       ID_EC_K4, D_COL1,       y + 70, 90));
+    AddPC(Check(m_hwnd, L"Widescreen",   ID_EC_K3, D_COL1 + 96,  y + 70, 110));
+    AddPC(Check(m_hwnd, L"CRT filter",   ID_EC_K6, D_COL2,       y + 70, 110));
+    AddPC(Check(m_hwnd, L"Start fullscreen", ID_EC_K5, D_COL2 + 116, y + 70, 140));
+    y += 126;
+
+    // ── Emulation / Controllers (gopher64) ─────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Emulation & Controllers ", K_CX, y, K_CW, 72));
+    AddPC(Check(m_hwnd, L"Overclock CPU",        ID_EC_K7, D_COL1, y + 22, 160));
+    AddPC(Check(m_hwnd, L"Disable Expansion Pak", ID_EC_K8, D_COL1, y + 46, 180));
+    AddPC(SmallLabel(m_hwnd, L"Controllers auto-map to XInput pads.", D_COL2, y + 28, 200));
+    AddPC(Btn  (m_hwnd, L"Open Gopher64\x2026", ID_EC_B1, D_COL3, y + 24, 150, 26));
+    y += 82;
 }
 
 void SettingsWindow::BuildNesPage() {
@@ -1267,15 +1284,46 @@ void SettingsWindow::SaveRpcs3Page() {
     Rpcs3ApplySettings(e.rpcs3Path, s);
 }
 
+static const int kGopherUpscaleVals[] = { 1, 2, 3, 4, 6, 8 };
+
 void SettingsWindow::LoadN64Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.n64Path.c_str());
     SetVersionLabel(e.n64Tag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_N64, "gopher64/gopher64");
+
+    GopherSettings s;
+    GopherLoadSettings(s);
+
+    ComboFill(PC(ID_EC_C1),
+              { L"Native (1\xD7)", L"2\xD7", L"3\xD7", L"4\xD7", L"6\xD7", L"8\xD7" },
+              IndexOf(kGopherUpscaleVals, s.upscale, 0));
+    Chk(PC(ID_EC_K1), s.ssaa);
+    Chk(PC(ID_EC_K2), s.integerScaling);
+    Chk(PC(ID_EC_K3), s.widescreen);
+    Chk(PC(ID_EC_K4), s.vsync);
+    Chk(PC(ID_EC_K5), s.fullscreen);
+    Chk(PC(ID_EC_K6), s.crt);
+    Chk(PC(ID_EC_K7), s.overclock);
+    Chk(PC(ID_EC_K8), s.disableExpansionPak);
 }
 void SettingsWindow::SaveN64Page() {
     auto& e = m_work.emulators;
     e.n64Path    = GetTxt(PC(ID_P_EDIT1));
+
+    // Load first so the un-exposed "usb" key (and anything else) is preserved.
+    GopherSettings s;
+    GopherLoadSettings(s);
+    int ui = ComboSel(PC(ID_EC_C1)); s.upscale = kGopherUpscaleVals[(ui >= 0 && ui < 6) ? ui : 0];
+    s.ssaa               = IsChk(PC(ID_EC_K1));
+    s.integerScaling     = IsChk(PC(ID_EC_K2));
+    s.widescreen         = IsChk(PC(ID_EC_K3));
+    s.vsync              = IsChk(PC(ID_EC_K4));
+    s.fullscreen         = IsChk(PC(ID_EC_K5));
+    s.crt                = IsChk(PC(ID_EC_K6));
+    s.overclock          = IsChk(PC(ID_EC_K7));
+    s.disableExpansionPak= IsChk(PC(ID_EC_K8));
+    GopherApplySettings(s);
 }
 
 void SettingsWindow::LoadNesPage() {
@@ -1640,6 +1688,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"gopher64.exe", L"gopher64",
                   EmulatorArchiveUrl(m_work, L"gopher64-windows-x86_64.exe") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the gopher64 executable path first.",
+                            L"gopher64", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 
