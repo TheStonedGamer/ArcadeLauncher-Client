@@ -50,7 +50,7 @@ void DuckLoadSettings(const std::wstring& duckExe, DuckSettings& out) {
 
     out.renderer     = ToWide(t.Get("GPU", "Renderer", ToUtf8(out.renderer)));
     out.resScale     = t.GetInt ("GPU", "ResolutionScale", out.resScale);
-    out.trueColor    = t.GetBool("GPU", "TrueColor", out.trueColor);
+    out.dithering    = ToWide(t.Get("GPU", "DitheringMode", ToUtf8(out.dithering)));
     out.pgxp         = t.GetBool("GPU", "PGXPEnable", out.pgxp);
     out.aspect       = ToWide(t.Get("Display", "AspectRatio", ToUtf8(out.aspect)));
     out.vsync        = t.GetBool("Display", "VSync", out.vsync);
@@ -68,7 +68,7 @@ bool DuckApplySettings(const std::wstring& duckExe, const DuckSettings& s) {
 
     t.SetRaw      ("GPU", "Renderer", ToUtf8(s.renderer));
     t.SetInt      ("GPU", "ResolutionScale", s.resScale);
-    t.SetBoolLower("GPU", "TrueColor", s.trueColor);
+    t.SetRaw      ("GPU", "DitheringMode", ToUtf8(s.dithering));
     t.SetBoolLower("GPU", "PGXPEnable", s.pgxp);
     t.SetRaw      ("Display", "AspectRatio", ToUtf8(s.aspect));
     t.SetBoolLower("Display", "VSync", s.vsync);

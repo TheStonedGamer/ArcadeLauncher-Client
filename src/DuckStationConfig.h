@@ -8,7 +8,7 @@
 struct DuckSettings {
     std::wstring renderer   = L"Automatic";          // [GPU] Renderer
     int          resScale   = 1;                     // [GPU] ResolutionScale
-    bool         trueColor  = false;                 // [GPU] TrueColor
+    std::wstring dithering  = L"TrueColor";          // [GPU] DitheringMode
     bool         pgxp       = false;                 // [GPU] PGXPEnable
     std::wstring aspect     = L"Auto (Game Native)"; // [Display] AspectRatio
     bool         vsync      = false;                 // [Display] VSync

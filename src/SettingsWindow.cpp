@@ -927,18 +927,19 @@ void SettingsWindow::BuildPS1Page() {
     y += 130;
 
     // ── Graphics (DuckStation) ─────────────────────────────────────────────────
-    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 116));
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 130));
     AddPC(SmallLabel(m_hwnd, L"Renderer",           D_COL1, y + 18, D_CBW));
     AddPC(Combo     (m_hwnd, ID_EC_C1,              D_COL1, y + 34, D_CBW));
     AddPC(SmallLabel(m_hwnd, L"Internal resolution", D_COL2, y + 18, D_CBW));
     AddPC(Combo     (m_hwnd, ID_EC_C2,              D_COL2, y + 34, D_CBW));
     AddPC(SmallLabel(m_hwnd, L"Aspect ratio",       D_COL3, y + 18, D_CBW));
     AddPC(Combo     (m_hwnd, ID_EC_C3,              D_COL3, y + 34, D_CBW));
-    AddPC(Check(m_hwnd, L"True color (24-bit)", ID_EC_K1, D_COL1,       y + 72, 150));
-    AddPC(Check(m_hwnd, L"PGXP geometry",       ID_EC_K2, D_COL1 + 156, y + 72, 140));
-    AddPC(Check(m_hwnd, L"V-Sync",              ID_EC_K3, D_COL3,       y + 72, 90));
-    AddPC(Check(m_hwnd, L"Start fullscreen",    ID_EC_K4, D_COL1,       y + 94, 150));
-    y += 126;
+    AddPC(SmallLabel(m_hwnd, L"Dithering",          D_COL1, y + 64, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C5,              D_COL1, y + 80, D_CBW));
+    AddPC(Check(m_hwnd, L"PGXP geometry",    ID_EC_K2, D_COL2,       y + 82, 140));
+    AddPC(Check(m_hwnd, L"V-Sync",           ID_EC_K3, D_COL3,       y + 82, 90));
+    AddPC(Check(m_hwnd, L"Start fullscreen", ID_EC_K4, D_COL2,       y + 104, 150));
+    y += 140;
 
     // ── Audio / Controllers (DuckStation) ──────────────────────────────────────
     AddPC(Group(m_hwnd, L" Audio & Controllers ", K_CX, y, K_CW, 80));
@@ -1414,6 +1415,7 @@ static const wchar_t* kDuckRendVals[]   = { L"Automatic", L"D3D11", L"D3D12", L"
 static const int      kDuckScaleVals[]  = { 1, 2, 3, 4, 5, 6, 8 };
 static const wchar_t* kDuckAspectVals[] = { L"Auto (Game Native)", L"4:3", L"16:9", L"Stretch To Fill" };
 static const wchar_t* kDuckAudioVals[]  = { L"Cubeb", L"XAudio2", L"SDL" };
+static const wchar_t* kDuckDitherVals[] = { L"Scaled", L"Unscaled", L"TrueColor", L"TrueColorFull" };
 
 void SettingsWindow::LoadPS1Page() {
     auto& e = m_work.emulators;
@@ -1434,8 +1436,10 @@ void SettingsWindow::LoadPS1Page() {
               IndexOfStr(kDuckAspectVals, 4, s.aspect));
     ComboFill(PC(ID_EC_C4), { L"Cubeb", L"XAudio2", L"SDL" },
               IndexOfStr(kDuckAudioVals, 3, s.audioBackend));
+    ComboFill(PC(ID_EC_C5),
+              { L"Scaled (PS1-accurate)", L"Unscaled", L"True color", L"True color (full)" },
+              IndexOfStr(kDuckDitherVals, 4, s.dithering));
 
-    Chk(PC(ID_EC_K1), s.trueColor);
     Chk(PC(ID_EC_K2), s.pgxp);
     Chk(PC(ID_EC_K3), s.vsync);
     Chk(PC(ID_EC_K4), s.fullscreen);
@@ -1454,7 +1458,7 @@ void SettingsWindow::SavePS1Page() {
     int ci = ComboSel(PC(ID_EC_C2)); s.resScale = kDuckScaleVals[(ci >= 0 && ci < 7) ? ci : 0];
     int ai = ComboSel(PC(ID_EC_C3)); s.aspect   = kDuckAspectVals[(ai >= 0 && ai < 4) ? ai : 0];
     int di = ComboSel(PC(ID_EC_C4)); s.audioBackend = kDuckAudioVals[(di >= 0 && di < 3) ? di : 0];
-    s.trueColor  = IsChk(PC(ID_EC_K1));
+    int dh = ComboSel(PC(ID_EC_C5)); s.dithering = kDuckDitherVals[(dh >= 0 && dh < 4) ? dh : 2];
     s.pgxp       = IsChk(PC(ID_EC_K2));
     s.vsync      = IsChk(PC(ID_EC_K3));
     s.fullscreen = IsChk(PC(ID_EC_K4));
