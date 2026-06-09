@@ -198,6 +198,160 @@ static std::wstring ParseTagName(const std::string& json) {
     return ToWide(json.substr(p, end - p));
 }
 
+// ── xemu firmware provisioning ────────────────────────────────────────────────
+// Original Xbox emulation needs the console firmware (MCPX boot ROM, flash BIOS,
+// a formatted HDD image) and a config pointing at them before xemu can boot any
+// disc. We host those files on the server next to the emulator archives
+// (`/emulators/xemu-firmware/`) and pull them in once, right after xemu itself
+// is downloaded, then write xemu's `xemu.toml` so games launch out of the box.
+
+// (UTF-8 <-> wide conversions use the global ToWide/ToUtf8 from pch.h.)
+
+// True if `key` appears as a `key = ...` assignment anywhere in the document.
+static bool TomlHas(const std::wstring& doc, const std::wstring& key) {
+    size_t pos = 0;
+    while (pos <= doc.size()) {
+        size_t nl = doc.find(L'\n', pos);
+        std::wstring line = doc.substr(pos, nl == std::wstring::npos ? std::wstring::npos : nl - pos);
+        size_t a = line.find_first_not_of(L" \t\r");
+        if (a != std::wstring::npos && line.compare(a, key.size(), key) == 0) {
+            size_t j = a + key.size();
+            while (j < line.size() && (line[j] == L' ' || line[j] == L'\t')) j++;
+            if (j < line.size() && line[j] == L'=') return true;
+        }
+        if (nl == std::wstring::npos) break;
+        pos = nl + 1;
+    }
+    return false;
+}
+
+// Set `key = 'value'` under [section], replacing an existing assignment in place
+// or creating the section/key as needed. Minimal TOML editing tuned to xemu's
+// flat layout; uses single-quoted literal strings so Windows backslash paths
+// need no escaping.
+static void TomlSet(std::wstring& doc, const std::wstring& section,
+                    const std::wstring& key, const std::wstring& value) {
+    const std::wstring newLine = key + L" = '" + value + L"'";
+
+    std::vector<std::wstring> lines;
+    size_t start = 0;
+    while (start <= doc.size()) {
+        size_t nl = doc.find(L'\n', start);
+        if (nl == std::wstring::npos) { lines.push_back(doc.substr(start)); break; }
+        lines.push_back(doc.substr(start, nl - start));
+        start = nl + 1;
+    }
+
+    auto trimmed = [](const std::wstring& s) -> std::wstring {
+        size_t a = s.find_first_not_of(L" \t\r");
+        return (a == std::wstring::npos) ? std::wstring() : s.substr(a);
+    };
+    const std::wstring header = L"[" + section + L"]";
+
+    int secStart = -1, secEnd = (int)lines.size();
+    for (int i = 0; i < (int)lines.size(); ++i) {
+        std::wstring t = trimmed(lines[i]);
+        if (secStart < 0) {
+            if (t == header) secStart = i;
+        } else if (!t.empty() && t[0] == L'[') {
+            secEnd = i;
+            break;
+        }
+    }
+
+    auto rejoin = [&]() {
+        std::wstring out;
+        for (size_t k = 0; k < lines.size(); ++k) {
+            out += lines[k];
+            if (k + 1 < lines.size()) out += L"\n";
+        }
+        doc = out;
+    };
+
+    if (secStart < 0) {
+        if (!doc.empty() && doc.back() != L'\n') doc += L"\n";
+        doc += header + L"\n" + newLine + L"\n";
+        return;
+    }
+    for (int i = secStart + 1; i < secEnd; ++i) {
+        std::wstring t = trimmed(lines[i]);
+        if (t.compare(0, key.size(), key) == 0) {
+            size_t j = key.size();
+            while (j < t.size() && (t[j] == L' ' || t[j] == L'\t')) j++;
+            if (j < t.size() && t[j] == L'=') { lines[i] = newLine; rejoin(); return; }
+        }
+    }
+    lines.insert(lines.begin() + secStart + 1, newLine);
+    rejoin();
+}
+
+static void SetupXemuFirmware(const std::wstring& archiveUrl,
+                              const std::wstring& xemuDestDir,
+                              const std::function<void(uint64_t, uint64_t)>& onProgress) {
+    // Derive the server base from the emulator archive URL:
+    //   http://host:port/emulators/xemu-...zip  ->  http://host:port
+    size_t ep = archiveUrl.find(L"/emulators/");
+    if (ep == std::wstring::npos) return;
+    std::wstring fwBase = archiveUrl.substr(0, ep) + L"/emulators/xemu-firmware/";
+
+    std::wstring fwDir = xemuDestDir + L"\\firmware";
+    CreateDirectoryW(fwDir.c_str(), nullptr);
+
+    struct FwFile { const wchar_t* name; bool big; };
+    const FwFile files[] = {
+        { L"bios.bin",  false },
+        { L"mcpx.bin",  false },
+        { L"hdd.qcow2", true  },
+    };
+    for (const auto& f : files) {
+        std::wstring dest = fwDir + L"\\" + f.name;
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        if (GetFileAttributesExW(dest.c_str(), GetFileExInfoStandard, &fa)) {
+            ULARGE_INTEGER sz; sz.LowPart = fa.nFileSizeLow; sz.HighPart = fa.nFileSizeHigh;
+            if (sz.QuadPart > 0) continue;  // already present — don't re-download
+        }
+        DownloadFile(fwBase + f.name, dest,
+                     f.big ? onProgress : std::function<void(uint64_t, uint64_t)>{});
+    }
+
+    // Write/patch xemu's config (Roaming AppData) to point at the firmware.
+    wchar_t appdata[MAX_PATH]{};
+    if (!GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH)) return;
+    std::wstring cfgDir = std::wstring(appdata) + L"\\xemu\\xemu";
+    CreateDirectoryW((std::wstring(appdata) + L"\\xemu").c_str(), nullptr);
+    CreateDirectoryW(cfgDir.c_str(), nullptr);
+    std::wstring tomlPath = cfgDir + L"\\xemu.toml";
+
+    std::wstring doc;
+    HANDLE hr = CreateFileW(tomlPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hr != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER sz{}; GetFileSizeEx(hr, &sz);
+        std::string buf((size_t)sz.QuadPart, '\0');
+        DWORD rd = 0;
+        if (!buf.empty()) ReadFile(hr, buf.data(), (DWORD)buf.size(), &rd, nullptr);
+        CloseHandle(hr);
+        doc = ToWide(buf);
+    }
+
+    TomlSet(doc, L"sys.files", L"bootrom_path",  fwDir + L"\\mcpx.bin");
+    TomlSet(doc, L"sys.files", L"flashrom_path", fwDir + L"\\bios.bin");
+    TomlSet(doc, L"sys.files", L"hdd_path",      fwDir + L"\\hdd.qcow2");
+    // Leave an existing EEPROM untouched (xemu auto-creates one on first boot);
+    // only point at a default path when none is configured yet.
+    if (!TomlHas(doc, L"eeprom_path"))
+        TomlSet(doc, L"sys.files", L"eeprom_path", cfgDir + L"\\eeprom.bin");
+
+    HANDLE hw = CreateFileW(tomlPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hw != INVALID_HANDLE_VALUE) {
+        std::string out = ToUtf8(doc);
+        DWORD wrote = 0;
+        WriteFile(hw, out.data(), (DWORD)out.size(), &wrote, nullptr);
+        CloseHandle(hw);
+    }
+}
+
 // ── Worker thread ─────────────────────────────────────────────────────────────
 
 static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
@@ -270,6 +424,12 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
 
     // 6. Locate the executable
     std::wstring exePath = FindExeInDir(destDir, spec.exeName);
+
+    // 7. For xemu, provision the Xbox firmware (BIOS/MCPX/HDD) from the server
+    //    and write xemu.toml so original Xbox games boot without manual setup.
+    if (spec.destName == L"xemu" && !exePath.empty())
+        SetupXemuFirmware(assetUrl, destDir, postProgress);
+
     post(new EmuDownloadResult{ exePath, tag });
 }
 
