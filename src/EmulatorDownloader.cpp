@@ -430,6 +430,24 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
     if (spec.destName == L"xemu" && !exePath.empty())
         SetupXemuFirmware(assetUrl, destDir, postProgress);
 
+    // 8. Make Dolphin self-contained: a portable.txt next to Dolphin.exe makes
+    //    Dolphin keep its config/saves in a "User" folder beside the exe, so the
+    //    launcher-managed copy is fully owned by the launcher and isolated from
+    //    any manually installed Dolphin. The in-launcher config tab and texture
+    //    delivery both resolve this same User dir.
+    if (spec.destName == L"dolphin" && !exePath.empty()) {
+        std::wstring exeDir = exePath;
+        auto sl = exeDir.rfind(L'\\');
+        if (sl != std::wstring::npos) exeDir.resize(sl);
+        std::wstring marker = exeDir + L"\\portable.txt";
+        if (GetFileAttributesW(marker.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            HANDLE hf = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hf != INVALID_HANDLE_VALUE) CloseHandle(hf);
+        }
+        CreateDirectoryW((exeDir + L"\\User").c_str(), nullptr);
+    }
+
     post(new EmuDownloadResult{ exePath, tag });
 }
 
