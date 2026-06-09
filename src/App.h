@@ -86,6 +86,9 @@ private:
     void OpenSettings(int startPage = 0);
     void OpenMetadataPicker(const std::wstring& gameId, const std::wstring& gameTitle);
     void OpenEditTitle(int visibleIdx);
+    // Consolidated per-game Properties modal (title, platform override, launch
+    // options + read-only install/version info).
+    void OpenProperties(int visibleIdx);
     void ShowMenuBar();
 
     void SaveAll();
@@ -202,6 +205,7 @@ private:
     static constexpr UINT IDM_DOWNLOAD_STATUS = 5008;
     static constexpr UINT IDM_MOVE_GAME    = 5009;
     static constexpr UINT IDM_LAUNCH_OPTIONS = 5010;
+    static constexpr UINT IDM_PROPERTIES   = 5011;
     // Collections submenu: "New collection…" then one id per existing collection.
     static constexpr UINT IDM_COLLECTION_NEW  = 5200;
     static constexpr UINT IDM_COLLECTION_BASE = 5201;  // + collection index

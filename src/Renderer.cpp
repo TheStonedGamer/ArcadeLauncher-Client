@@ -912,8 +912,8 @@ void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
 
     // Keyboard hints row (bottom-right of panel)
     D2D1_RECT_F hintR = D2D1::RectF(btnX + btnW + 12, btnY + 4, px + panelW - 10, btnY + btnH - 4);
-    m_rt->DrawText(L"← → prev/next  •  scroll for changelog  •  Esc close", 51,
-                   m_fmtSmall.Get(), hintR, m_brushSubtext.Get());
+    static const wchar_t kHint[] = L"\x2190 \x2192 navigate  \x2022  P properties  \x2022  scroll changelog  \x2022  Esc close";
+    m_rt->DrawText(kHint, (UINT32)wcslen(kHint), m_fmtSmall.Get(), hintR, m_brushSubtext.Get());
 
     // Close X in top-right corner
     D2D1_RECT_F closeR = D2D1::RectF(px + panelW - 40, py + 8, px + panelW - 8, py + 36);

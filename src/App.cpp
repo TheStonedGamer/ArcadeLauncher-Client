@@ -1384,6 +1384,10 @@ void App::OnKeyDown(WPARAM vk) {
             if (m_renderState.detailIndex >= 0 && m_renderState.detailIndex < n)
                 OpenEditTitle(m_renderState.detailIndex);
             break;
+        case 'P':
+            if (m_renderState.detailIndex >= 0 && m_renderState.detailIndex < n)
+                OpenProperties(m_renderState.detailIndex);
+            break;
         case VK_LEFT:
             if (m_renderState.detailIndex > 0) {
                 --m_renderState.detailIndex;
@@ -2656,6 +2660,8 @@ void App::OnRButtonDown(float x, float y) {
     AppendMenuW(menu, MF_STRING, IDM_EDIT_TITLE, L"Edit Title…");
     UINT matchFlags = MF_STRING | (m_metaManager ? 0 : MF_GRAYED);
     AppendMenuW(menu, matchFlags, IDM_MATCH_META, L"Match Metadata…");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_PROPERTIES, L"Properties…");
 
     if (m_monitor.IsRunning())
         EnableMenuItem(menu, IDM_LAUNCH, MF_BYCOMMAND | MF_GRAYED);
@@ -2686,6 +2692,8 @@ void App::OnRButtonDown(float x, float y) {
         MoveGame(idx);
     } else if (cmd == IDM_LAUNCH_OPTIONS) {
         SetLaunchOptions(idx);
+    } else if (cmd == IDM_PROPERTIES) {
+        OpenProperties(idx);
     } else if (cmd == IDM_COLLECTION_NEW) {
         NewCollectionForGame(idx);
     } else if (cmd >= (int)IDM_COLLECTION_BASE &&
@@ -3046,6 +3054,92 @@ void App::OpenEditTitle(int visibleIdx) {
             });
     }
 
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::OpenProperties(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+
+    const Game* cv = m_visibleGames[visibleIdx];
+    Game* g = m_library.FindById(cv->id);
+    if (!g) return;
+
+    bool isEmulated = (g->platform == Platform::Dolphin ||
+                       g->platform == Platform::GameCube ||
+                       g->platform == Platform::Wii     ||
+                       g->platform == Platform::Ryujinx ||
+                       g->platform == Platform::RPCS3   ||
+                       g->platform == Platform::N64     ||
+                       g->platform == Platform::NES     ||
+                       g->platform == Platform::SNES    ||
+                       g->platform == Platform::PS1     ||
+                       g->platform == Platform::PS2     ||
+                       g->platform == Platform::Xbox360 ||
+                       g->platform == Platform::Xbox);
+
+    // Read-only info block shown at the top of the modal.
+    std::wstring info = L"Platform:  " + PlatformName(g->platform) + L"\r\n";
+    if (g->serverBacked) {
+        info += L"Source:  Server library\r\n";
+        if (!g->serverVersion.empty())
+            info += L"Version:  " + g->serverVersion + L"\r\n";
+        const wchar_t* stStr =
+            g->installState == InstallState::Installed       ? L"Installed" :
+            g->installState == InstallState::UpdateAvailable ? L"Update available" :
+            g->installState == InstallState::Downloading     ? L"Downloading" :
+                                                               L"Not installed";
+        info += std::wstring(L"Status:  ") + stStr + L"\r\n";
+        info += L"Install:  " +
+                (g->installRoot.empty() ? std::wstring(L"(not installed)") : g->installRoot);
+    } else {
+        info += L"Source:  Local\r\n";
+        if (!g->romPath.empty())      info += L"ROM:  " + g->romPath;
+        else if (!g->exePath.empty()) info += L"Exe:  " + g->exePath;
+        else if (!g->launchUri.empty()) info += L"Launch:  " + g->launchUri;
+    }
+
+    GameEditDialog dlg;
+    dlg.ShowProperties(m_hwnd, g->title, isEmulated, g->igdbPlatformId,
+                       g->launchOptions, info);
+    if (!dlg.confirmed) return;
+
+    bool titleChanged = (g->title != dlg.newTitle);
+    g->title          = dlg.newTitle;
+    g->igdbPlatformId = dlg.selectedIgdbPlatformId;
+    g->launchOptions  = dlg.newLaunchOptions;
+
+    // Rename ROM file on disk if requested (emulated games only).
+    if (dlg.renameFile && !g->romPath.empty()) {
+        size_t sep = g->romPath.rfind(L'\\');
+        size_t dot = g->romPath.rfind(L'.');
+        std::wstring dir = (sep != std::wstring::npos) ? g->romPath.substr(0, sep + 1) : L"";
+        std::wstring ext = (dot != std::wstring::npos && dot > sep) ? g->romPath.substr(dot) : L"";
+        std::wstring newPath = dir + dlg.newTitle + ext;
+        if (MoveFileW(g->romPath.c_str(), newPath.c_str())) {
+            std::wstring oldQ = L"\"" + g->romPath + L"\"";
+            std::wstring newQ = L"\"" + newPath + L"\"";
+            size_t pos = g->arguments.find(oldQ);
+            if (pos != std::wstring::npos) g->arguments.replace(pos, oldQ.size(), newQ);
+            g->romPath = newPath;
+        } else {
+            MessageBoxW(m_hwnd, (L"Could not rename file:\n" + g->romPath).c_str(),
+                        L"Rename Failed", MB_OK | MB_ICONWARNING);
+        }
+    }
+
+    // A changed title invalidates the IGDB match — re-scan for fresh metadata.
+    if (titleChanged) {
+        g->igdbMatched = false;
+        if (m_metaManager) {
+            m_metaManager->ScanGameAsync(g->id,
+                [this](const std::wstring& id, bool /*matched*/) {
+                    PostMessageW(m_hwnd, WM_USER + 4, 0, (LPARAM)new std::wstring(id));
+                });
+        }
+    }
+
+    SaveAll();
     ApplyFilter();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }

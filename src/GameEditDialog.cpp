@@ -6,6 +6,29 @@ void GameEditDialog::Show(HWND parent,
                            const std::wstring& currentTitle,
                            bool isEmulated,
                            int currentIgdbPlatformId) {
+    m_props    = false;
+    m_inLaunch.clear();
+    m_infoText.clear();
+    Run(parent, currentTitle, isEmulated, currentIgdbPlatformId);
+}
+
+void GameEditDialog::ShowProperties(HWND parent,
+                                    const std::wstring& currentTitle,
+                                    bool isEmulated,
+                                    int currentIgdbPlatformId,
+                                    const std::wstring& launchOptions,
+                                    const std::wstring& infoText) {
+    m_props    = true;
+    m_inLaunch = launchOptions;
+    m_infoText = infoText;
+    newLaunchOptions = launchOptions;
+    Run(parent, currentTitle, isEmulated, currentIgdbPlatformId);
+}
+
+void GameEditDialog::Run(HWND parent,
+                         const std::wstring& currentTitle,
+                         bool isEmulated,
+                         int currentIgdbPlatformId) {
     confirmed             = false;
     renameFile            = false;
     newTitle              = currentTitle;
@@ -26,8 +49,17 @@ void GameEditDialog::Show(HWND parent,
     }
 
     // Height: base 168 (title + platform rows + buttons)
-    // + 30 if emulated (rename checkbox row)
-    int H = isEmulated ? 200 : 170;
+    // + 30 if emulated (rename checkbox row). Properties mode is taller to fit
+    // the read-only info block and the launch-options editor.
+    int H;
+    const wchar_t* caption;
+    if (m_props) {
+        H = 380 + (isEmulated ? 30 : 0);
+        caption = L"Game Properties";
+    } else {
+        H = isEmulated ? 200 : 170;
+        caption = L"Edit Game";
+    }
 
     RECT pr;
     GetWindowRect(parent, &pr);
@@ -36,7 +68,7 @@ void GameEditDialog::Show(HWND parent,
 
     m_hwnd = CreateWindowExW(
         WS_EX_DLGMODALFRAME,
-        WNDCLS, L"Edit Game",
+        WNDCLS, caption,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
         px, py, W, H,
         parent, nullptr, GetModuleHandleW(nullptr), this);
@@ -48,6 +80,9 @@ void GameEditDialog::Show(HWND parent,
     // Pre-fill edit box and select all text
     SetWindowTextW(m_edit, currentTitle.c_str());
     SendMessageW(m_edit, EM_SETSEL, 0, -1);
+
+    // Pre-fill launch options (properties mode)
+    if (m_launch) SetWindowTextW(m_launch, m_inLaunch.c_str());
 
     // Pre-select the current platform in the combobox
     if (m_combo) {
@@ -132,11 +167,22 @@ void GameEditDialog::BuildControls(HWND hwnd, bool isEmulated) {
         return c;
     };
 
+    int y = 13;
+
+    // Properties mode — read-only info block (platform / version / install info)
+    if (m_props && !m_infoText.empty()) {
+        HWND info = CreateWindowExW(0, WC_STATICW, m_infoText.c_str(),
+                                    WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                    12, y, W - 28, 86, hwnd, nullptr, hi, nullptr);
+        SendMessageW(info, WM_SETFONT, (WPARAM)f, TRUE);
+        y += 96;
+    }
+
     // Row 1 — "Game title:" label + edit box
-    lbl(L"Game title:", 12, 16, 80, 18);
+    lbl(L"Game title:", 12, y + 3, 80, 18);
     m_edit = CreateWindowExW(WS_EX_CLIENTEDGE, WC_EDITW, L"",
                               WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                              98, 13, W - 110, 22, hwnd,
+                              98, y, W - 110, 22, hwnd,
                               (HMENU)(INT_PTR)ID_EDIT, hi, nullptr);
     SendMessageW(m_edit, WM_SETFONT, (WPARAM)f, TRUE);
     SetWindowSubclass(m_edit,
@@ -145,30 +191,43 @@ void GameEditDialog::BuildControls(HWND hwnd, bool isEmulated) {
                 SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(ID_OK, BN_CLICKED), 0);
             return DefSubclassProc(h, m, w, l);
         }, 0, 0);
+    y += 32;
 
     // Row 2 — "IGDB platform:" label + combobox
-    lbl(L"IGDB platform:", 12, 48, 90, 18);
+    lbl(L"IGDB platform:", 12, y + 3, 90, 18);
     m_combo = CreateWindowExW(0, WC_COMBOBOXW, L"",
                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST,
-                               108, 45, W - 120, 200, hwnd,
+                               108, y, W - 120, 200, hwnd,
                                (HMENU)(INT_PTR)ID_COMBO, hi, nullptr);
     SendMessageW(m_combo, WM_SETFONT, (WPARAM)f, TRUE);
     for (int i = 0; i < kIgdbPlatformCount; ++i)
         SendMessageW(m_combo, CB_ADDSTRING, 0, (LPARAM)kIgdbPlatforms[i].name);
+    y += 34;
 
     // Row 3 — "rename file" checkbox (emulated games only)
-    int nextY = 80;
     if (isEmulated) {
-        m_chk = mk(WC_BUTTONW, BS_AUTOCHECKBOX,
-                   12, nextY, W - 24, 20, ID_CHK);
+        m_chk = mk(WC_BUTTONW, BS_AUTOCHECKBOX, 12, y, W - 24, 20, ID_CHK);
         SetWindowTextW(m_chk,
             L"Also rename the ROM file on disk to match the new title");
-        nextY += 36;
+        y += 30;
+    }
+
+    // Row 4 — launch options (properties mode only)
+    if (m_props) {
+        lbl(L"Launch options (use %command% for the default):", 12, y, W - 28, 18);
+        y += 20;
+        m_launch = CreateWindowExW(WS_EX_CLIENTEDGE, WC_EDITW, L"",
+                                   WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE |
+                                   ES_AUTOVSCROLL | ES_WANTRETURN,
+                                   12, y, W - 28, 54, hwnd,
+                                   (HMENU)(INT_PTR)ID_LAUNCH, hi, nullptr);
+        SendMessageW(m_launch, WM_SETFONT, (WPARAM)f, TRUE);
+        y += 62;
     }
 
     // Buttons
-    m_btnOk     = mk(WC_BUTTONW, BS_DEFPUSHBUTTON, W - 196, nextY + 20, 88, 28, ID_OK);
-    m_btnCancel = mk(WC_BUTTONW, 0,                W - 100, nextY + 20, 88, 28, ID_CANCEL);
+    m_btnOk     = mk(WC_BUTTONW, BS_DEFPUSHBUTTON, W - 196, y + 6, 88, 28, ID_OK);
+    m_btnCancel = mk(WC_BUTTONW, 0,                W - 100, y + 6, 88, 28, ID_CANCEL);
     SetWindowTextW(m_btnOk,     L"OK");
     SetWindowTextW(m_btnCancel, L"Cancel");
 
@@ -199,6 +258,19 @@ void GameEditDialog::Commit() {
         LRESULT sel = SendMessageW(m_combo, CB_GETCURSEL, 0, 0);
         if (sel >= 0 && sel < kIgdbPlatformCount)
             selectedIgdbPlatformId = kIgdbPlatforms[sel].id;
+    }
+
+    if (m_launch) {
+        int len = GetWindowTextLengthW(m_launch);
+        std::wstring s(len, L'\0');
+        if (len) {
+            GetWindowTextW(m_launch, &s[0], len + 1);
+            s.resize(len);
+        }
+        // Trim surrounding whitespace/newlines.
+        while (!s.empty() && iswspace(s.front())) s.erase(s.begin());
+        while (!s.empty() && iswspace(s.back()))  s.pop_back();
+        newLaunchOptions = s;
     }
 
     confirmed = true;
