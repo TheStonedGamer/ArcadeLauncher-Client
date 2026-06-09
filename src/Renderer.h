@@ -8,6 +8,21 @@
 enum class FocusArea { Grid, Sidebar, Search };
 enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection };
 
+// Grid ordering applied by App::ApplyFilter. Recent is the historical default
+// (last played, then title). Cycled via the topbar sort button.
+enum class SortMode { Recent, Title, Platform, Rating, Playtime };
+
+inline const wchar_t* SortModeName(SortMode m) {
+    switch (m) {
+    case SortMode::Recent:   return L"Recent";
+    case SortMode::Title:    return L"Title (A-Z)";
+    case SortMode::Platform: return L"Platform";
+    case SortMode::Rating:   return L"Rating";
+    case SortMode::Playtime: return L"Playtime";
+    default:                 return L"Recent";
+    }
+}
+
 struct RenderState {
     int   hoveredIndex  = -1;
     int   selectedIndex = -1;
@@ -19,6 +34,7 @@ struct RenderState {
     Platform filterPlatform = Platform::Repacks;
     bool filterAll = true;
     LibraryPage libraryPage = LibraryPage::All;
+    SortMode sortMode = SortMode::Recent;
     std::wstring filterCollection;             // active when libraryPage==Collection
     std::vector<std::wstring> collections;     // user collections shown in sidebar
     FocusArea focusArea     = FocusArea::Grid;
@@ -82,6 +98,7 @@ public:
     bool HitTestSettingsBtn(float x, float y) const;
     bool HitTestSelectModeBtn(float x, float y) const;
     bool HitTestDownloadsBtn(float x, float y) const;
+    bool HitTestSortBtn(float x, float y) const;
     bool HitTestEmptyStateBtn(float x, float y) const;
 
     // Returns the recommended targetScroll so that game at idx is fully visible.
@@ -171,5 +188,6 @@ private:
     D2D1_RECT_F m_settingsBtnRect{};
     D2D1_RECT_F m_selectModeBtnRect{};
     D2D1_RECT_F m_downloadsBtnRect{};
+    D2D1_RECT_F m_sortBtnRect{};
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
 };

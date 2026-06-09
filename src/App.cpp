@@ -1221,6 +1221,17 @@ void App::OnLButtonDown(float x, float y) {
         return;
     }
 
+    if (m_renderer.HitTestSortBtn(x, y)) {
+        // Cycle Recent -> Title -> Platform -> Rating -> Playtime -> Recent
+        int next = (static_cast<int>(m_renderState.sortMode) + 1) % 5;
+        m_renderState.sortMode = static_cast<SortMode>(next);
+        ApplyFilter();
+        ShowToast(L"Sort order", std::wstring(L"Sorted by ") +
+                  SortModeName(m_renderState.sortMode));
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
     if (m_renderer.HitTestSettingsBtn(x, y)) {
         OpenSettings();
         return;
@@ -2403,13 +2414,49 @@ void App::ApplyFilter() {
         m_visibleGames = m_library.Filter(m_renderState.filterPlatform);
     }
 
-    // Sort: most recently played first, then alpha. The download page keeps queue order.
+    // Apply the active sort mode. The (now hidden) download page keeps queue order.
     if (m_renderState.libraryPage != LibraryPage::BackgroundDownloads) {
-        std::sort(m_visibleGames.begin(), m_visibleGames.end(),
-            [](const Game* a, const Game* b) {
-                if (a->lastPlayed != b->lastPlayed) return a->lastPlayed > b->lastPlayed;
-                return a->title < b->title;
-            });
+        auto byTitle = [](const Game* a, const Game* b) {
+            if (a->title != b->title) return a->title < b->title;
+            return a->id < b->id;
+        };
+        switch (m_renderState.sortMode) {
+        case SortMode::Title:
+            std::sort(m_visibleGames.begin(), m_visibleGames.end(), byTitle);
+            break;
+        case SortMode::Platform:
+            std::sort(m_visibleGames.begin(), m_visibleGames.end(),
+                [&](const Game* a, const Game* b) {
+                    if (a->platform != b->platform)
+                        return PlatformName(a->platform) < PlatformName(b->platform);
+                    return byTitle(a, b);
+                });
+            break;
+        case SortMode::Rating:
+            std::sort(m_visibleGames.begin(), m_visibleGames.end(),
+                [&](const Game* a, const Game* b) {
+                    if (a->igdbRating != b->igdbRating)
+                        return a->igdbRating > b->igdbRating;
+                    return byTitle(a, b);
+                });
+            break;
+        case SortMode::Playtime:
+            std::sort(m_visibleGames.begin(), m_visibleGames.end(),
+                [&](const Game* a, const Game* b) {
+                    if (a->playtimeSeconds != b->playtimeSeconds)
+                        return a->playtimeSeconds > b->playtimeSeconds;
+                    return byTitle(a, b);
+                });
+            break;
+        case SortMode::Recent:
+        default:
+            std::sort(m_visibleGames.begin(), m_visibleGames.end(),
+                [&](const Game* a, const Game* b) {
+                    if (a->lastPlayed != b->lastPlayed) return a->lastPlayed > b->lastPlayed;
+                    return byTitle(a, b);
+                });
+            break;
+        }
     }
 
     m_renderState.selectedIndex = -1;

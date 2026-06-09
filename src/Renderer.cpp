@@ -125,7 +125,7 @@ void Renderer::Resize(UINT w, UINT h) {
     float gridW = (float)w - m_sidebarW;
     m_cols = std::max(1, (int)((gridW + m_tileGap) / (m_tileW + m_tileGap)));
 
-    float actionsLeft = (float)w - 148.0f;
+    float actionsLeft = (float)w - 194.0f;
     float searchLeft = std::max(m_sidebarW + 168.0f, (float)w * 0.34f);
     float searchRight = std::min(actionsLeft - 12.0f, (float)w * 0.66f);
     if (searchRight - searchLeft < 180.0f) {
@@ -136,6 +136,7 @@ void Renderer::Resize(UINT w, UINT h) {
     m_settingsBtnRect = D2D1::RectF((float)w - 50.0f, 16.0f, (float)w - 14.0f, 48.0f);
     m_selectModeBtnRect = D2D1::RectF((float)w - 96.0f, 16.0f, (float)w - 58.0f, 48.0f);
     m_downloadsBtnRect = D2D1::RectF((float)w - 142.0f, 16.0f, (float)w - 104.0f, 48.0f);
+    m_sortBtnRect = D2D1::RectF((float)w - 188.0f, 16.0f, (float)w - 150.0f, 48.0f);
     m_launchBtnRect = {}; // set during detail panel draw
 }
 
@@ -269,6 +270,15 @@ void Renderer::DrawTopBar(const RenderState& state) {
                        badge, m_brushBg.Get());
     }
 
+    // Sort button (Segoe MDL2 Assets U+E8CB "Sort"). Cycles the grid ordering.
+    auto& so = m_sortBtnRect;
+    bool sortActive = state.sortMode != SortMode::Recent;
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(so, 6, 6),
+                               sortActive ? m_brushCardHover.Get() : m_brushCard.Get());
+    m_rt->DrawText(L"\xE8CB", 1, m_fmtIcon.Get(),
+                   D2D1::RectF(so.left, so.top, so.right, so.bottom),
+                   sortActive ? m_brushAccent.Get() : m_brushSubtext.Get());
+
     auto& sb = m_settingsBtnRect;
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(sb, 6, 6), m_brushCard.Get());
     m_rt->DrawText(L"", 1, m_fmtIcon.Get(),
@@ -282,7 +292,8 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     v.push_back({ L"All Games", true,  Platform::Repacks, LibraryPage::All });
     v.push_back({ L"Installed", false, Platform::Repacks, LibraryPage::Installed });
     v.push_back({ L"Ready to Download", false, Platform::Repacks, LibraryPage::ReadyToDownload });
-    v.push_back({ L"Background Downloads", false, Platform::Repacks, LibraryPage::BackgroundDownloads });
+    // "Background Downloads" tab removed — the topbar Downloads button opens the
+    // live download-status window, which fully supersedes a static grid page.
     v.push_back({ L"Updates", false, Platform::Repacks, LibraryPage::Updates });
     if (s.showSteam)   v.push_back({ L"Steam",   false, Platform::Steam,   LibraryPage::Platform });
     if (s.showEpic)    v.push_back({ L"Epic",    false, Platform::Epic,    LibraryPage::Platform });
@@ -955,6 +966,11 @@ bool Renderer::HitTestDownloadsBtn(float x, float y) const {
 bool Renderer::HitTestSelectModeBtn(float x, float y) const {
     return x >= m_selectModeBtnRect.left && x <= m_selectModeBtnRect.right &&
            y >= m_selectModeBtnRect.top  && y <= m_selectModeBtnRect.bottom;
+}
+
+bool Renderer::HitTestSortBtn(float x, float y) const {
+    return x >= m_sortBtnRect.left && x <= m_sortBtnRect.right &&
+           y >= m_sortBtnRect.top  && y <= m_sortBtnRect.bottom;
 }
 
 bool Renderer::HitTestEmptyStateBtn(float x, float y) const {
