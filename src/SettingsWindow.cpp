@@ -10,6 +10,7 @@
 #include "Rpcs3Config.h"
 #include "GopherConfig.h"
 #include "XemuConfig.h"
+#include "DuckStationConfig.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -920,10 +921,33 @@ void SettingsWindow::BuildPS1Page() {
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
-    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
+    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 92, K_CW - 24, 20));
-    y += 128;
+                    K_CX + 12, y + 100, K_BX - K_CX - 16, 20));
+    y += 130;
+
+    // ── Graphics (DuckStation) ─────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 116));
+    AddPC(SmallLabel(m_hwnd, L"Renderer",           D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,              D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Internal resolution", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,              D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Aspect ratio",       D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,              D_COL3, y + 34, D_CBW));
+    AddPC(Check(m_hwnd, L"True color (24-bit)", ID_EC_K1, D_COL1,       y + 72, 150));
+    AddPC(Check(m_hwnd, L"PGXP geometry",       ID_EC_K2, D_COL1 + 156, y + 72, 140));
+    AddPC(Check(m_hwnd, L"V-Sync",              ID_EC_K3, D_COL3,       y + 72, 90));
+    AddPC(Check(m_hwnd, L"Start fullscreen",    ID_EC_K4, D_COL1,       y + 94, 150));
+    y += 126;
+
+    // ── Audio / Controllers (DuckStation) ──────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Audio & Controllers ", K_CX, y, K_CW, 80));
+    AddPC(SmallLabel(m_hwnd, L"Audio backend", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C4,         D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Volume (0\x2013""100)", D_COL2, y + 18, 120));
+    AddPC(Edit      (m_hwnd, ID_EC_E1,         D_COL2, y + 34, 70));
+    AddPC(Btn  (m_hwnd, L"Open DuckStation\x2026", ID_EC_B1, D_COL3, y + 32, 160, 26));
+    y += 90;
 }
 
 void SettingsWindow::BuildPS2Page() {
@@ -1386,11 +1410,36 @@ void SettingsWindow::SaveSnesPage() {
     }
 }
 
+static const wchar_t* kDuckRendVals[]   = { L"Automatic", L"D3D11", L"D3D12", L"Vulkan", L"OpenGL", L"Software" };
+static const int      kDuckScaleVals[]  = { 1, 2, 3, 4, 5, 6, 8 };
+static const wchar_t* kDuckAspectVals[] = { L"Auto (Game Native)", L"4:3", L"16:9", L"Stretch To Fill" };
+static const wchar_t* kDuckAudioVals[]  = { L"Cubeb", L"XAudio2", L"SDL" };
+
 void SettingsWindow::LoadPS1Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.duckstationPath.c_str());
     SetVersionLabel(e.duckstationTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_PS1, "stenzek/duckstation");
+
+    DuckSettings s;
+    DuckLoadSettings(e.duckstationPath, s);
+
+    ComboFill(PC(ID_EC_C1),
+              { L"Automatic", L"Direct3D 11", L"Direct3D 12", L"Vulkan", L"OpenGL", L"Software" },
+              IndexOfStr(kDuckRendVals, 6, s.renderer));
+    ComboFill(PC(ID_EC_C2),
+              { L"Native (1\xD7)", L"2\xD7", L"3\xD7", L"4\xD7", L"5\xD7", L"6\xD7", L"8\xD7" },
+              IndexOf(kDuckScaleVals, s.resScale, 0));
+    ComboFill(PC(ID_EC_C3), { L"Auto (Game Native)", L"4:3", L"16:9", L"Stretch" },
+              IndexOfStr(kDuckAspectVals, 4, s.aspect));
+    ComboFill(PC(ID_EC_C4), { L"Cubeb", L"XAudio2", L"SDL" },
+              IndexOfStr(kDuckAudioVals, 3, s.audioBackend));
+
+    Chk(PC(ID_EC_K1), s.trueColor);
+    Chk(PC(ID_EC_K2), s.pgxp);
+    Chk(PC(ID_EC_K3), s.vsync);
+    Chk(PC(ID_EC_K4), s.fullscreen);
+    SetWindowTextW(PC(ID_EC_E1), std::to_wstring(s.volume).c_str());
 }
 void SettingsWindow::SavePS1Page() {
     auto& e = m_work.emulators;
@@ -1398,6 +1447,22 @@ void SettingsWindow::SavePS1Page() {
     if (m_cfg) {
         m_cfg->emulators.duckstationPath    = e.duckstationPath;
     }
+    if (e.duckstationPath.empty()) return;
+
+    DuckSettings s;
+    int ri = ComboSel(PC(ID_EC_C1)); s.renderer = kDuckRendVals[(ri >= 0 && ri < 6) ? ri : 0];
+    int ci = ComboSel(PC(ID_EC_C2)); s.resScale = kDuckScaleVals[(ci >= 0 && ci < 7) ? ci : 0];
+    int ai = ComboSel(PC(ID_EC_C3)); s.aspect   = kDuckAspectVals[(ai >= 0 && ai < 4) ? ai : 0];
+    int di = ComboSel(PC(ID_EC_C4)); s.audioBackend = kDuckAudioVals[(di >= 0 && di < 3) ? di : 0];
+    s.trueColor  = IsChk(PC(ID_EC_K1));
+    s.pgxp       = IsChk(PC(ID_EC_K2));
+    s.vsync      = IsChk(PC(ID_EC_K3));
+    s.fullscreen = IsChk(PC(ID_EC_K4));
+
+    std::wstring vt = GetTxt(PC(ID_EC_E1));
+    if (!vt.empty()) { try { int v = std::stoi(vt); s.volume = v < 0 ? 0 : (v > 100 ? 100 : v); } catch (...) {} }
+
+    DuckApplySettings(e.duckstationPath, s);
 }
 
 // ── PCSX2 config value tables (combo index <-> stored value) ──────────────────
@@ -1795,6 +1860,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                   L"duckstation-qt-x64-ReleaseLTCG.exe", L"duckstation",
                   EmulatorArchiveUrl(m_work, L"duckstation-windows-x64.zip") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the DuckStation executable path first.",
+                            L"DuckStation", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 
