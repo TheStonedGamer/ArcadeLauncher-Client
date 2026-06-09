@@ -5,6 +5,7 @@
 #include "PlatformIcons.h"
 #include "IgdbSync.h"
 #include "DolphinConfig.h"
+#include "XeniaConfig.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -897,10 +898,33 @@ void SettingsWindow::BuildXbox360Page() {
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",         ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
-    AddEmulatorProgressBar(K_CX + 12, y + 76, K_CW - 24);
+    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 92, K_CW - 24, 20));
-    y += 128;
+                    K_CX + 12, y + 100, K_BX - K_CX - 16, 20));
+    y += 130;
+
+    // ── Graphics (Xenia) ───────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 96));
+    AddPC(SmallLabel(m_hwnd, L"Graphics backend", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C1,            D_COL1, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Resolution scale", D_COL2, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C2,            D_COL2, y + 34, D_CBW));
+    AddPC(SmallLabel(m_hwnd, L"Frame-rate limit", D_COL3, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C3,            D_COL3, y + 34, D_CBW));
+    AddPC(Check(m_hwnd, L"V-Sync",     ID_EC_K1, D_COL1,       y + 66, 90));
+    AddPC(Check(m_hwnd, L"Fullscreen", ID_EC_K2, D_COL1 + 96,  y + 66, 110));
+    AddPC(Check(m_hwnd, L"Letterbox (keep aspect)", ID_EC_K3, D_COL1 + 212, y + 66, 200));
+    y += 106;
+
+    // ── Controllers (Xenia) ────────────────────────────────────────────────────
+    AddPC(Group(m_hwnd, L" Controllers ", K_CX, y, K_CW, 70));
+    AddPC(SmallLabel(m_hwnd, L"Input backend", D_COL1, y + 18, D_CBW));
+    AddPC(Combo     (m_hwnd, ID_EC_C4,         D_COL1, y + 34, D_CBW));
+    AddPC(Check(m_hwnd, L"Controller vibration", ID_EC_K4, D_COL2, y + 36, 180));
+    AddPC(Btn  (m_hwnd, L"Open Xenia\x2026", ID_EC_B1, D_COL3, y + 32, 150, 26));
+    AddPC(SmallLabel(m_hwnd, L"Xenia auto-detects XInput controllers \x2014 no mapping needed.",
+                     D_COL1, y + 56, K_CW - 28));
+    y += 80;
 }
 
 void SettingsWindow::BuildXboxPage() {
@@ -1200,18 +1224,47 @@ void SettingsWindow::SavePS2Page() {
     }
 }
 
+static const wchar_t* kXeniaGpuVals[] = { L"any", L"d3d12", L"vulkan" };
+static const wchar_t* kXeniaHidVals[] = { L"any", L"xinput", L"sdl" };
+static const int      kXeniaFpsVals[] = { 0, 30, 60, 120 };
+
 void SettingsWindow::LoadXbox360Page() {
     auto& e = m_work.emulators;
     SetWindowTextW(PC(ID_P_EDIT1), e.xeniaPath.c_str());
     SetVersionLabel(e.xeniaTag, {});
     CheckEmulatorUpdateAsync(m_hwnd, PAGE_XBOX360, "xenia-canary/xenia-canary");
+
+    XeniaSettings s;
+    XeniaLoadSettings(e.xeniaPath, s);
+    ComboFill(PC(ID_EC_C1), { L"Auto", L"Direct3D 12", L"Vulkan" },
+              IndexOfStr(kXeniaGpuVals, 3, s.gpu));
+    ComboFill(PC(ID_EC_C2), { L"1\xD7 (720p)", L"2\xD7 (1440p)", L"3\xD7 (4K)" },
+              (s.resScale >= 1 && s.resScale <= 3) ? s.resScale - 1 : 0);
+    ComboFill(PC(ID_EC_C3), { L"Unlimited", L"30 fps", L"60 fps", L"120 fps" },
+              IndexOf(kXeniaFpsVals, s.frameLimit));
+    ComboFill(PC(ID_EC_C4), { L"Auto", L"XInput", L"SDL" },
+              IndexOfStr(kXeniaHidVals, 3, s.hid));
+    Chk(PC(ID_EC_K1), s.vsync);
+    Chk(PC(ID_EC_K2), s.fullscreen);
+    Chk(PC(ID_EC_K3), s.letterbox);
+    Chk(PC(ID_EC_K4), s.vibration);
 }
 void SettingsWindow::SaveXbox360Page() {
     auto& e = m_work.emulators;
-    e.xeniaPath    = GetTxt(PC(ID_P_EDIT1));
-    if (m_cfg) {
-        m_cfg->emulators.xeniaPath    = e.xeniaPath;
-    }
+    e.xeniaPath = GetTxt(PC(ID_P_EDIT1));
+    if (m_cfg) m_cfg->emulators.xeniaPath = e.xeniaPath;
+    if (e.xeniaPath.empty()) return;
+
+    XeniaSettings s;
+    int gi = ComboSel(PC(ID_EC_C1)); s.gpu = kXeniaGpuVals[(gi >= 0 && gi < 3) ? gi : 0];
+    int ri = ComboSel(PC(ID_EC_C2)); s.resScale = (ri >= 0 && ri < 3) ? ri + 1 : 1;
+    int fi = ComboSel(PC(ID_EC_C3)); s.frameLimit = kXeniaFpsVals[(fi >= 0 && fi < 4) ? fi : 0];
+    int hi = ComboSel(PC(ID_EC_C4)); s.hid = kXeniaHidVals[(hi >= 0 && hi < 3) ? hi : 0];
+    s.vsync      = IsChk(PC(ID_EC_K1));
+    s.fullscreen = IsChk(PC(ID_EC_K2));
+    s.letterbox  = IsChk(PC(ID_EC_K3));
+    s.vibration  = IsChk(PC(ID_EC_K4));
+    XeniaApplySettings(e.xeniaPath, s);
 }
 
 void SettingsWindow::LoadXboxPage() {
@@ -1483,6 +1536,14 @@ void SettingsWindow::HandlePageCommand(int id) {
                 { "", L"server", L"xenia_canary.exe", L"xenia-canary",
                   EmulatorArchiveUrl(m_work, L"xenia-canary-windows.zip") },
                 GetAppDataPath());
+        }
+        else if (id == ID_EC_B1) {
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty())
+                MessageBoxW(m_hwnd, L"Set the Xenia executable path first.",
+                            L"Xenia", MB_OK | MB_ICONINFORMATION);
+            else
+                ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
         break;
 
