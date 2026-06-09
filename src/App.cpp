@@ -735,6 +735,13 @@ LRESULT CALLBACK App::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+// Heap payload posted from the changelog worker thread to the render thread.
+// Owned and deleted by the WM_CHANGELOGS_READY handler (main thread).
+struct ChangelogPayload {
+    std::wstring gameId;   // local Game::id the changelogs belong to
+    std::vector<ServerClient::ChangelogEntry> entries;
+};
+
 LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CLOSE:
@@ -1042,6 +1049,30 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_CHANGELOGS_READY: {
+        // Changelog fetch finished on a worker thread. Take ownership of the
+        // heap payload and apply it only if the detail panel is still showing
+        // the same game (the user may have navigated away or closed it).
+        auto* payload = reinterpret_cast<ChangelogPayload*>(lp);
+        if (payload) {
+            if (m_renderState.detailChangelogGameId == payload->gameId) {
+                m_renderState.detailChangelogs.clear();
+                for (auto& e : payload->entries) {
+                    ChangelogView v;
+                    v.version   = std::move(e.version);
+                    v.title     = std::move(e.title);
+                    v.body      = std::move(e.body);
+                    v.createdAt = e.createdAt;
+                    m_renderState.detailChangelogs.push_back(std::move(v));
+                }
+                m_renderState.detailChangelogsLoading = false;
+                InvalidateRect(m_hwnd, nullptr, FALSE);
+            }
+            delete payload;
+        }
+        return 0;
+    }
+
     case WM_USER + 7: {
         // The server flagged this account for a forced password change.
         ShowWindow_(true);
@@ -1286,8 +1317,7 @@ void App::OnLButtonDown(float x, float y) {
             m_renderState.selectedIndex = idx;
         } else {
             m_renderState.selectedIndex = idx;
-            m_renderState.detailOpen = true;
-            m_renderState.detailIndex = idx;
+            OpenDetail(idx);
         }
         InvalidateRect(m_hwnd, nullptr, FALSE);
     } else {
@@ -1358,12 +1388,16 @@ void App::OnKeyDown(WPARAM vk) {
             if (m_renderState.detailIndex > 0) {
                 --m_renderState.detailIndex;
                 m_renderState.selectedIndex = m_renderState.detailIndex;
+                m_renderState.detailScroll = 0.0f;
+                RequestChangelogs(*m_visibleGames[m_renderState.detailIndex]);
             }
             break;
         case VK_RIGHT:
             if (m_renderState.detailIndex < n - 1) {
                 ++m_renderState.detailIndex;
                 m_renderState.selectedIndex = m_renderState.detailIndex;
+                m_renderState.detailScroll = 0.0f;
+                RequestChangelogs(*m_visibleGames[m_renderState.detailIndex]);
             }
             break;
         }
@@ -1518,8 +1552,7 @@ void App::OnKeyDown(WPARAM vk) {
                 else
                     m_renderState.selectedGameIds.insert(id);
             } else if (sel >= 0 && sel < n) {
-                m_renderState.detailOpen  = true;
-                m_renderState.detailIndex = sel;
+                OpenDetail(sel);
             } else if (n > 0) {
                 sel = 0;
             }
@@ -1587,7 +1620,14 @@ void App::OnKeyDown(WPARAM vk) {
 }
 
 void App::OnScroll(float delta) {
-    if (m_renderState.detailOpen) return;
+    if (m_renderState.detailOpen) {
+        // Scroll the dashboard's right content pane (summary + changelogs). The
+        // renderer clamps detailScroll to the real content height each draw.
+        m_renderState.detailScroll =
+            std::max(0.0f, m_renderState.detailScroll - delta * 0.5f);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
 
     if (m_lastMouseX < m_renderer.SidebarWidth()) {
         float maxSidebar = m_renderer.MaxSidebarScroll(m_renderState);
@@ -2357,6 +2397,41 @@ void App::RefreshDownloadStatusWindow() {
             : L"Idle";
         SetWindowTextW(m_downloadSpeed, speed.c_str());
     }
+}
+
+void App::OpenDetail(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    m_renderState.detailOpen  = true;
+    m_renderState.detailIndex = visibleIdx;
+    m_renderState.detailScroll = 0.0f;
+    RequestChangelogs(*m_visibleGames[visibleIdx]);
+}
+
+void App::RequestChangelogs(const Game& game) {
+    // Reset to a clean slate for this game; a stale fetch for a different game
+    // is dropped in the WM_CHANGELOGS_READY handler via the id guard.
+    m_renderState.detailChangelogs.clear();
+    m_renderState.detailChangelogGameId = game.id;
+    m_renderState.detailChangelogsLoading = false;
+
+    if (!game.serverBacked || game.serverGameId.empty() ||
+        !m_config.Get().server.enabled)
+        return;
+
+    m_renderState.detailChangelogsLoading = true;
+    ServerConfig sc = m_config.Get().server;
+    std::wstring serverId = game.serverGameId;
+    std::wstring localId  = game.id;
+    HWND hwnd = m_hwnd;
+    std::thread([sc, serverId, localId, hwnd]() {
+        ServerClient client(sc);
+        auto* payload = new ChangelogPayload();
+        payload->gameId = localId;
+        std::wstring err;
+        client.FetchChangelogs(serverId, payload->entries, err);  // best-effort
+        if (!PostMessageW(hwnd, App::WM_CHANGELOGS_READY, 0, (LPARAM)payload))
+            delete payload;
+    }).detach();
 }
 
 void App::ApplyFilter() {

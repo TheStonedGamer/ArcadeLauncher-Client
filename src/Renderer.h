@@ -23,6 +23,15 @@ inline const wchar_t* SortModeName(SortMode m) {
     }
 }
 
+// A single changelog entry for display in the detail dashboard. Mirrors
+// ServerClient::ChangelogEntry but keeps Renderer free of ServerClient deps.
+struct ChangelogView {
+    std::wstring version;
+    std::wstring title;
+    std::wstring body;
+    int64_t      createdAt = 0;
+};
+
 struct RenderState {
     int   hoveredIndex  = -1;
     int   selectedIndex = -1;
@@ -30,6 +39,15 @@ struct RenderState {
     float targetScroll  = 0.0f;
     bool  detailOpen    = false;
     int   detailIndex   = -1;
+
+    // Changelogs for the detail dashboard, fetched async from the server when a
+    // server-backed game's detail panel opens. Keyed to detailChangelogGameId
+    // (the local Game::id) so a late-arriving fetch for a closed/other game is
+    // ignored.
+    std::vector<ChangelogView> detailChangelogs;
+    std::wstring detailChangelogGameId;
+    bool detailChangelogsLoading = false;
+    float detailScroll = 0.0f;   // dashboard right-pane scroll (summary+changelogs)
     std::wstring searchQuery;
     Platform filterPlatform = Platform::Repacks;
     bool filterAll = true;
@@ -125,7 +143,11 @@ private:
     void DrawGrid(const std::vector<const Game*>& games, RenderState& state);
     void DrawCard(const Game& game, D2D1_RECT_F rect, bool hovered, bool selected,
                   bool selectionMode, bool multiSelected);
-    void DrawDetailPanel(const Game* game);
+    void DrawDetailPanel(const Game* game, RenderState& state);
+    // Draws a word-wrapped block at (x,y) constrained to width w and returns its
+    // rendered height. Pass draw=false to measure without drawing.
+    float DrawWrapped(const std::wstring& text, IDWriteTextFormat* fmt,
+                      float x, float y, float w, ID2D1Brush* brush, bool draw = true);
     void DrawPlatformBadge(Platform p, D2D1_POINT_2F center);
     void DrawPlaceholderArt(D2D1_RECT_F rect, Platform p);
 

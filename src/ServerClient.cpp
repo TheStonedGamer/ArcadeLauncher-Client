@@ -883,6 +883,26 @@ bool ServerClient::FetchManifest(const std::wstring& gameId,
     return !manifest.id.empty();
 }
 
+bool ServerClient::FetchChangelogs(const std::wstring& gameId,
+                                   std::vector<ChangelogEntry>& out,
+                                   std::wstring& error) {
+    out.clear();
+    std::string body;
+    if (!HttpGet(Url(L"/api/games/" + PercentEncode(gameId) + L"/changelogs"),
+                 body, error))
+        return false;
+
+    for (const auto& obj : ObjectsInArray(body, "changelogs")) {
+        ChangelogEntry e;
+        e.version   = ToWide(JsonString(obj, "version"));
+        e.title     = ToWide(JsonString(obj, "title"));
+        e.body      = ToWide(JsonString(obj, "body"));
+        e.createdAt = (int64_t)JsonNumber(obj, "createdAt");
+        out.push_back(std::move(e));
+    }
+    return true;
+}
+
 bool ServerClient::DownloadFile(const std::wstring& url,
                                 const std::wstring& dest,
                                 uint64_t expectedSize,

@@ -154,7 +154,7 @@ void Renderer::Render(const std::vector<const Game*>& games, RenderState& state)
 
     if (state.detailOpen && state.detailIndex >= 0 &&
         state.detailIndex < (int)games.size())
-        DrawDetailPanel(games[state.detailIndex]);
+        DrawDetailPanel(games[state.detailIndex], state);
     else
         DrawGrid(games, state);
 
@@ -705,18 +705,34 @@ void Renderer::DrawPlaceholderArt(D2D1_RECT_F rect, Platform p) {
     m_brushSubtext->SetColor(C_SUBTEXT);
 }
 
-void Renderer::DrawDetailPanel(const Game* game) {
+float Renderer::DrawWrapped(const std::wstring& text, IDWriteTextFormat* fmt,
+                            float x, float y, float w, ID2D1Brush* brush, bool draw) {
+    if (text.empty() || w <= 1.0f) return 0.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(m_dwFactory->CreateTextLayout(text.c_str(), (UINT32)text.size(),
+            fmt, w, 100000.0f, layout.GetAddressOf())))
+        return 0.0f;
+    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    DWRITE_TEXT_METRICS tm{};
+    layout->GetMetrics(&tm);
+    if (draw)
+        m_rt->DrawTextLayout(D2D1::Point2F(x, y), layout.Get(), brush,
+                             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    return tm.height;
+}
+
+void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
     if (!game) return;
     float w = (float)m_width, h = (float)m_height;
 
     // Dark overlay
-    m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.88f));
+    m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.90f));
     m_rt->FillRectangle(D2D1::RectF(0, 0, w, h), m_brushOverlay.Get());
     m_brushOverlay->SetColor(C_OVERLAY);
 
-    // Panel
-    float panelW = std::min(900.0f, w - 80);
-    float panelH = std::min(520.0f, h - 80);
+    // Panel (Steam-style dashboard: art on the left, rich info + changelog right)
+    float panelW = std::min(1000.0f, w - 80);
+    float panelH = std::min(620.0f, h - 90);
     float px = (w - panelW) / 2;
     float py = (h - panelH) / 2;
     D2D1_RECT_F panel = D2D1::RectF(px, py, px + panelW, py + panelH);
@@ -724,7 +740,7 @@ void Renderer::DrawDetailPanel(const Game* game) {
     m_rt->DrawRoundedRectangle(D2D1::RoundedRect(panel, 12, 12), m_brushCard.Get(), 1.5f);
 
     // Art on left
-    float artW = 200, artH = 290;
+    float artW = 240, artH = std::min(artW * 1.4f, panelH - 120.0f);
     D2D1_RECT_F artRect = D2D1::RectF(px + 24, py + 24, px + 24 + artW, py + 24 + artH);
     ID2D1Bitmap* bmp = GetArt(game->id);
     if (bmp) {
@@ -735,122 +751,174 @@ void Renderer::DrawDetailPanel(const Game* game) {
         DrawPlaceholderArt(artRect, game->platform);
     }
 
+    // Hero/platform badge under the art
+    DrawPlatformBadge(game->platform,
+                      D2D1::Point2F(artRect.right - 14, artRect.top + 14));
+
     // Info on right
-    float ix = px + 24 + artW + 24;
+    float ix = px + 24 + artW + 28;
     float iy = py + 28;
-    float iw = panelW - artW - 72;
+    float iw = panelW - artW - 80;
 
     // Title
-    D2D1_RECT_F titleR = D2D1::RectF(ix, iy, ix + iw, iy + 50);
+    D2D1_RECT_F titleR = D2D1::RectF(ix, iy, ix + iw - 44, iy + 60);
     m_fmtHeading->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     m_rt->DrawText(game->title.c_str(), (UINT32)game->title.size(),
                    m_fmtHeading.Get(), titleR, m_brushText.Get());
     m_fmtHeading->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    iy += 60;
+    iy += 62;
 
-    // Platform
-    std::wstring platStr = L"Platform: " + PlatformName(game->platform);
-    m_rt->DrawText(platStr.c_str(), (UINT32)platStr.size(), m_fmtDetail.Get(),
-                   D2D1::RectF(ix, iy, ix + iw, iy + 26), m_brushSubtext.Get());
-    iy += 30;
+    auto fact = [&](const std::wstring& s, ID2D1Brush* brush) {
+        m_rt->DrawText(s.c_str(), (UINT32)s.size(), m_fmtDetail.Get(),
+                       D2D1::RectF(ix, iy, ix + iw, iy + 24), brush);
+        iy += 26;
+    };
 
-    // Playtime
-    std::wstring ptStr = L"Playtime: " + game->PlaytimeStr();
-    m_rt->DrawText(ptStr.c_str(), (UINT32)ptStr.size(), m_fmtDetail.Get(),
-                   D2D1::RectF(ix, iy, ix + iw, iy + 26), m_brushSubtext.Get());
-    iy += 30;
+    fact(L"Platform: " + PlatformName(game->platform), m_brushSubtext.Get());
+
+    // Version (server-backed games carry an authoritative content version)
+    if (!game->serverVersion.empty())
+        fact(L"Version: " + game->serverVersion, m_brushSubtext.Get());
 
     if (game->serverBacked) {
-        std::wstring st = L"Server: ";
+        std::wstring st = L"Status: ";
         st += game->installState == InstallState::Installed ? L"Installed" :
               game->installState == InstallState::UpdateAvailable ? L"Update available" :
               game->installState == InstallState::Downloading ? L"Downloading" :
               L"Not installed";
-        m_rt->DrawText(st.c_str(), (UINT32)st.size(), m_fmtDetail.Get(),
-                       D2D1::RectF(ix, iy, ix + iw, iy + 26), m_brushSubtext.Get());
-        iy += 30;
+        fact(st, m_brushSubtext.Get());
     }
 
-    // Last played
+    fact(L"Playtime: " + game->PlaytimeStr(), m_brushSubtext.Get());
+
     if (game->lastPlayed > 0) {
-        SYSTEMTIME st;
-        FILETIME ft;
+        SYSTEMTIME st; FILETIME ft;
         LONGLONG ll = (LONGLONG)(game->lastPlayed) * 10000000LL + 116444736000000000LL;
-        ft.dwLowDateTime  = (DWORD)(ll & 0xFFFFFFFF);
-        ft.dwHighDateTime = (DWORD)(ll >> 32);
+        ft.dwLowDateTime = (DWORD)(ll & 0xFFFFFFFF); ft.dwHighDateTime = (DWORD)(ll >> 32);
         FileTimeToSystemTime(&ft, &st);
         wchar_t dateBuf[64];
-        swprintf_s(dateBuf, L"Last played: %04d-%02d-%02d",
-                   st.wYear, st.wMonth, st.wDay);
-        m_rt->DrawText(dateBuf, (UINT32)wcslen(dateBuf), m_fmtDetail.Get(),
-                       D2D1::RectF(ix, iy, ix + iw, iy + 26), m_brushSubtext.Get());
-        iy += 30;
+        swprintf_s(dateBuf, L"Last played: %04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+        fact(dateBuf, m_brushSubtext.Get());
     }
 
-    // IGDB rating
-    if (!game->RatingStr().empty()) {
-        std::wstring rStr = L"Rating: " + game->RatingStr();
-        D2D1_COLOR_F rCol = game->RatingColor();
-        m_brushAccent->SetColor(rCol);
-        m_rt->DrawText(rStr.c_str(), (UINT32)rStr.size(), m_fmtDetail.Get(),
-                       D2D1::RectF(ix, iy, ix + iw, iy + 26), m_brushAccent.Get());
-        m_brushAccent->SetColor(C_ACCENT);
-        iy += 30;
-    }
-
-    // Genres
-    if (!game->genres.empty()) {
-        std::wstring gStr = L"Genres: " + game->genres;
-        m_rt->DrawText(gStr.c_str(), (UINT32)gStr.size(), m_fmtSmall.Get(),
-                       D2D1::RectF(ix, iy, ix + iw, iy + 22), m_brushSubtext.Get());
-        iy += 26;
-    }
-
-    // Release year
     if (game->releaseDate > 0) {
-        SYSTEMTIME rst;
-        FILETIME rft;
+        SYSTEMTIME rst; FILETIME rft;
         LONGLONG rll = (LONGLONG)(game->releaseDate) * 10000000LL + 116444736000000000LL;
-        rft.dwLowDateTime  = (DWORD)(rll & 0xFFFFFFFF);
-        rft.dwHighDateTime = (DWORD)(rll >> 32);
+        rft.dwLowDateTime = (DWORD)(rll & 0xFFFFFFFF); rft.dwHighDateTime = (DWORD)(rll >> 32);
         FileTimeToSystemTime(&rft, &rst);
-        std::wstring yrStr = L"Released: " + std::to_wstring(rst.wYear);
-        m_rt->DrawText(yrStr.c_str(), (UINT32)yrStr.size(), m_fmtSmall.Get(),
-                       D2D1::RectF(ix, iy, ix + iw, iy + 22), m_brushSubtext.Get());
-        iy += 26;
+        fact(L"Released: " + std::to_wstring(rst.wYear), m_brushSubtext.Get());
     }
 
-    // Summary
-    if (!game->summary.empty()) {
-        float summaryH = py + panelH - 80 - iy;
-        if (summaryH > 30) {
-            D2D1_RECT_F sumRect = D2D1::RectF(ix, iy, ix + iw, iy + summaryH);
-            // Clip so it doesn't bleed into the button area
-            m_rt->PushAxisAlignedClip(sumRect, D2D1_ANTIALIAS_MODE_ALIASED);
-            m_rt->DrawText(game->summary.c_str(), (UINT32)game->summary.size(),
-                           m_fmtSummary.Get(), sumRect, m_brushSubtext.Get());
-            m_rt->PopAxisAlignedClip();
+    if (!game->RatingStr().empty()) {
+        m_brushAccent->SetColor(game->RatingColor());
+        fact(L"Rating: " + game->RatingStr(), m_brushAccent.Get());
+        m_brushAccent->SetColor(C_ACCENT);
+    }
+
+    if (!game->genres.empty())
+        fact(L"Genres: " + game->genres, m_brushSubtext.Get());
+
+    // ── Scrollable content pane: Summary + What's New (changelog) ──────────────
+    float btnY = py + panelH - 70.0f;
+    float paneTop = iy + 8.0f;
+    float paneBottom = btnY - 14.0f;
+    float paneH = std::max(0.0f, paneBottom - paneTop);
+
+    if (paneH > 24.0f) {
+        m_rt->PushAxisAlignedClip(D2D1::RectF(ix, paneTop, ix + iw, paneBottom),
+                                  D2D1_ANTIALIAS_MODE_ALIASED);
+        float cy = paneTop - state.detailScroll;
+
+        auto heading = [&](const std::wstring& s) {
+            m_rt->DrawText(s.c_str(), (UINT32)s.size(), m_fmtDetail.Get(),
+                           D2D1::RectF(ix, cy, ix + iw, cy + 24), m_brushText.Get());
+            cy += 28.0f;
+        };
+
+        if (!game->summary.empty()) {
+            heading(L"Summary");
+            cy += DrawWrapped(game->summary, m_fmtSummary.Get(), ix, cy, iw,
+                              m_brushSubtext.Get()) + 16.0f;
+        }
+
+        heading(L"What's New");
+        if (state.detailChangelogsLoading && state.detailChangelogs.empty()) {
+            m_rt->DrawText(L"Loading changelogs…", 19, m_fmtSummary.Get(),
+                           D2D1::RectF(ix, cy, ix + iw, cy + 22), m_brushSubtext.Get());
+            cy += 26.0f;
+        } else if (state.detailChangelogs.empty()) {
+            const wchar_t* none = game->serverBacked
+                ? L"No changelog entries yet."
+                : L"Changelogs are available for server-backed games.";
+            m_rt->DrawText(none, (UINT32)wcslen(none), m_fmtSummary.Get(),
+                           D2D1::RectF(ix, cy, ix + iw, cy + 22), m_brushSubtext.Get());
+            cy += 26.0f;
+        } else {
+            for (const auto& e : state.detailChangelogs) {
+                std::wstring hdr;
+                if (!e.version.empty()) hdr += L"v" + e.version;
+                if (!e.title.empty())
+                    hdr += (hdr.empty() ? L"" : L"  —  ") + e.title;
+                if (e.createdAt > 0) {
+                    SYSTEMTIME cst; FILETIME cft;
+                    LONGLONG cll = (LONGLONG)(e.createdAt) * 10000000LL + 116444736000000000LL;
+                    cft.dwLowDateTime = (DWORD)(cll & 0xFFFFFFFF);
+                    cft.dwHighDateTime = (DWORD)(cll >> 32);
+                    FileTimeToSystemTime(&cft, &cst);
+                    wchar_t db[32];
+                    swprintf_s(db, L"   (%04d-%02d-%02d)", cst.wYear, cst.wMonth, cst.wDay);
+                    hdr += db;
+                }
+                if (hdr.empty()) hdr = L"Update";
+                m_brushAccent->SetColor(C_ACCENT);
+                cy += DrawWrapped(hdr, m_fmtDetail.Get(), ix, cy, iw,
+                                  m_brushAccent.Get()) + 2.0f;
+                if (!e.body.empty())
+                    cy += DrawWrapped(e.body, m_fmtSummary.Get(), ix, cy, iw,
+                                      m_brushSubtext.Get());
+                cy += 16.0f;
+            }
+        }
+
+        m_rt->PopAxisAlignedClip();
+
+        // Clamp the scroll offset to the actual content height (for next frame).
+        float contentH = (cy + state.detailScroll) - paneTop;
+        float maxScroll = std::max(0.0f, contentH - paneH);
+        state.detailScroll = std::clamp(state.detailScroll, 0.0f, maxScroll);
+
+        // Scrollbar thumb when the content overflows.
+        if (maxScroll > 0.0f) {
+            float trackTop = paneTop, trackBottom = paneBottom;
+            float trackH = trackBottom - trackTop;
+            float thumbH = std::max(28.0f, trackH * (paneH / contentH));
+            float thumbY = trackTop + (trackH - thumbH) * (state.detailScroll / maxScroll);
+            D2D1_RECT_F thumb = D2D1::RectF(ix + iw - 5.0f, thumbY, ix + iw - 1.0f, thumbY + thumbH);
+            m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(thumb, 2.0f, 2.0f), m_brushAccent.Get());
+            m_brushAccent->SetColor(C_ACCENT);
         }
     }
 
-    // Launch button
-    float btnW = 160, btnH = 44;
-    float btnX = ix, btnY = py + panelH - 70;
+    // Launch / Install button
+    float btnW = 170, btnH = 44;
+    float btnX = ix;
     m_launchBtnRect = D2D1::RectF(btnX, btnY, btnX + btnW, btnY + btnH);
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_launchBtnRect, 8, 8), m_brushAccent.Get());
     const wchar_t* btnText = (game->serverBacked && game->installState != InstallState::Installed)
         ? L"Install  [Enter]"
-        : L"Launch  [Enter]";
+        : L"Play  [Enter]";
     m_rt->DrawText(btnText, (UINT32)wcslen(btnText), m_fmtSmall.Get(), m_launchBtnRect, m_brushBg.Get());
 
     // Keyboard hints row (bottom-right of panel)
     D2D1_RECT_F hintR = D2D1::RectF(btnX + btnW + 12, btnY + 4, px + panelW - 10, btnY + btnH - 4);
-    m_rt->DrawText(L"← → prev/next  Esc close", 25, m_fmtSmall.Get(), hintR, m_brushSubtext.Get());
+    m_rt->DrawText(L"← → prev/next  •  scroll for changelog  •  Esc close", 51,
+                   m_fmtSmall.Get(), hintR, m_brushSubtext.Get());
 
     // Close X in top-right corner
     D2D1_RECT_F closeR = D2D1::RectF(px + panelW - 40, py + 8, px + panelW - 8, py + 36);
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(closeR, 4, 4), m_brushCard.Get());
-    m_rt->DrawText(L"✕", 1, m_fmtSmall.Get(), closeR, m_brushSubtext.Get());
+    m_rt->DrawText(L"\x2715", 1, m_fmtSmall.Get(), closeR, m_brushSubtext.Get());
 }
 
 // ── Art cache ─────────────────────────────────────────────────────────────────

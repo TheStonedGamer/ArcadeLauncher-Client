@@ -76,6 +76,10 @@ private:
     void ToggleGameCollection(int visibleIdx, int collectionIdx);
     void RefreshArt(const Game& game);
     void ApplyFilter();
+    // Open the rich detail dashboard for a visible-grid index and kick off the
+    // async changelog fetch for server-backed games.
+    void OpenDetail(int visibleIdx);
+    void RequestChangelogs(const Game& game);
     void ApplySidebarFilter(int idx);
     void ScrollToSelected();
     void UpdateSidebarFlags();
@@ -186,6 +190,7 @@ private:
     static constexpr UINT WM_ROMDB_READY = WM_USER + 102;
     static constexpr UINT WM_SERVER_INSTALL_DONE = WM_USER + 103;
     static constexpr UINT WM_SERVER_INSTALL_PROGRESS = WM_USER + 104;
+    static constexpr UINT WM_CHANGELOGS_READY = WM_USER + 105;
 
     // Context menu command IDs
     static constexpr UINT IDM_LAUNCH      = 5001;

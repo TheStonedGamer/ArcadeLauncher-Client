@@ -70,6 +70,16 @@ public:
     bool FetchCatalog(std::vector<Game>& games, std::wstring& error);
     bool FetchManifest(const std::wstring& gameId, ServerGameManifest& manifest, std::wstring& error);
 
+    // Per-game changelog entries (newest first) from GET /api/games/:id/changelogs.
+    struct ChangelogEntry {
+        std::wstring version;
+        std::wstring title;
+        std::wstring body;
+        int64_t      createdAt = 0;   // epoch seconds
+    };
+    bool FetchChangelogs(const std::wstring& gameId,
+                         std::vector<ChangelogEntry>& out, std::wstring& error);
+
     // ── Account self-service (#21 / #22) ────────────────────────────────────
     struct AccountInfo {
         std::wstring username;
