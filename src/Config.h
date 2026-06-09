@@ -66,7 +66,7 @@ struct ServerConfig {
     std::wstring baseUrl;
     std::wstring username;
     std::wstring password;
-    std::wstring totpCode;
+    std::wstring totpCode;   // transient only — used during login, never persisted to disk
     std::wstring authToken;
     // Machine fingerprint the cached authToken was bound to. The token is
     // reused across launches and concurrent clients until this changes (a

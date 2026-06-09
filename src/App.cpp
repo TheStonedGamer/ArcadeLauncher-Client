@@ -812,13 +812,24 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 stored->installState = InstallState::Missing;
                 stored->installProgressPermille = 0;
                 // A 401 means the cached token was rejected (e.g. revoked or the
-                // machine fingerprint drifted) — drop it so the next attempt
-                // re-authenticates instead of failing again with a stale token.
-                if (done->result.error.find(L"401") != std::wstring::npos)
+                // machine fingerprint drifted) — drop it and offer interactive
+                // re-authentication so a stale session can be recovered without
+                // restarting the launcher.
+                if (done->result.error.find(L"401") != std::wstring::npos) {
                     InvalidateServerToken();
-                MessageBoxW(m_hwnd,
-                    (L"Background download failed:\n" + done->result.error).c_str(),
-                    L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
+                    if (PromptReAuth()) {
+                        ShowToast(L"Signed back in",
+                                  L"Your session was renewed — retry the download.");
+                    } else {
+                        MessageBoxW(m_hwnd,
+                            (L"Background download failed:\n" + done->result.error).c_str(),
+                            L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
+                    }
+                } else {
+                    MessageBoxW(m_hwnd,
+                        (L"Background download failed:\n" + done->result.error).c_str(),
+                        L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
+                }
             }
             ApplyFilter();
             InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1736,6 +1747,34 @@ void App::InvalidateServerToken() {
     s.authToken.clear();
     s.tokenFingerprint.clear();
     m_config.Save(GetAppDataPath() + L"\\config.json");
+}
+
+bool App::PromptReAuth() {
+    auto& s = m_config.Get().server;
+    if (!s.enabled) return false;
+
+    // Drop the stale token up front so the dialog + EnsureServerToken below are
+    // forced to re-authenticate rather than reuse the rejected credential.
+    {
+        std::lock_guard<std::mutex> lk(m_authMutex);
+        s.authToken.clear();
+        s.tokenFingerprint.clear();
+    }
+
+    // Reuse the startup sign-in modal; it edits the server config in place and
+    // returns false if the user picked "Offline" / closed the dialog.
+    if (!ShowServerLoginDialog(m_hwnd, s))
+        return false;
+    m_config.Save(GetAppDataPath() + L"\\config.json");
+
+    std::wstring err;
+    if (!EnsureServerToken(err)) {
+        MessageBoxW(m_hwnd,
+            (L"Sign-in failed:\n" + (err.empty() ? L"Unknown error" : err)).c_str(),
+            L"ArcadeLauncher Server", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    return true;
 }
 
 void App::ScanAllPlatforms() {

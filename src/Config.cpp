@@ -116,7 +116,8 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"serverBaseUrl\":\"" + Escape(m_cfg.server.baseUrl) + "\",\n";
     out += "  \"serverUsername\":\"" + Escape(m_cfg.server.username) + "\",\n";
     out += "  \"serverPassword\":\"" + Escape(m_cfg.server.password) + "\",\n";
-    out += "  \"serverTotpCode\":\"\",\n";
+    // totpCode is intentionally NOT persisted: it is a 30-second OTP and is
+    // useless (and a security liability) once written to disk.
     out += "  \"serverAuthToken\":\"" + Escape(m_cfg.server.authToken) + "\",\n";
     out += "  \"serverTokenFingerprint\":\"" + Escape(m_cfg.server.tokenFingerprint) + "\",\n";
     out += "  \"serverInstallRoot\":\"" + Escape(m_cfg.server.installRoot) + "\",\n";

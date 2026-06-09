@@ -50,6 +50,12 @@ private:
     // Drop the cached token so the next EnsureServerToken re-authenticates
     // (called when a server request is rejected with 401).
     void InvalidateServerToken();
+    // Interactive re-authentication: shows the sign-in modal (reusing the
+    // startup login dialog) and refreshes the token in place. Returns true if a
+    // valid token was obtained. Must be called on the UI thread. Used by the
+    // 401 interceptor so a revoked/expired session can be recovered without
+    // restarting the application.
+    bool PromptReAuth();
     void LaunchGame(const Game& game);
     void LaunchInstalledGame(Game launchGame);
     void QueueServerInstall(const Game& game, bool autoLaunch);

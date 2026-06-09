@@ -35,6 +35,11 @@ struct ServerGameManifest {
         std::wstring url;
         std::wstring sha256;
         uint64_t size = 0;
+        // Optional 6-character Dolphin Game ID (e.g. "GZLE01"). When supplied by
+        // the server the client uses it to place textures under the canonical
+        // Load/Textures/<GameID>/ folder Dolphin expects; otherwise it is read
+        // from the ROM header at install time.
+        std::wstring gameId;
     };
     bool hasTexturePack = false;
     TexturePack texturePack;

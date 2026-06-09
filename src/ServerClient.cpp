@@ -243,6 +243,75 @@ static bool EnableDolphinHiresTextures(const std::wstring& userDir) {
     return WriteTextFile(gfxIni, ToWide(out));
 }
 
+// Read the 6-character Dolphin Game ID from a GameCube/Wii disc image. Raw
+// .iso/.gcm images store the ID as ASCII at offset 0; .wbfs images at 0x200.
+// Compressed formats (.rvz/.gcz/.wia/.nkit) are not parsed here — those rely on
+// a server-supplied gameId instead. Returns "" when the ID can't be determined.
+static std::wstring DolphinGameIdFromRom(const std::wstring& romPath) {
+    std::wstring ext;
+    size_t dot = romPath.find_last_of(L'.');
+    if (dot != std::wstring::npos) {
+        ext = romPath.substr(dot);
+        for (auto& c : ext) c = (wchar_t)towlower(c);
+    }
+    LONGLONG offset;
+    if (ext == L".iso" || ext == L".gcm") offset = 0;
+    else if (ext == L".wbfs")             offset = 0x200;
+    else return {};
+
+    HANDLE h = CreateFileW(romPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    LARGE_INTEGER li; li.QuadPart = offset;
+    char id[6]{};
+    DWORD read = 0;
+    bool ok = SetFilePointerEx(h, li, nullptr, FILE_BEGIN) &&
+              ReadFile(h, id, sizeof(id), &read, nullptr) && read == sizeof(id);
+    CloseHandle(h);
+    if (!ok) return {};
+
+    for (char c : id)
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return {};
+    return std::wstring(id, id + 6);
+}
+
+// If dir contains exactly one entry and it is a directory, return its path;
+// otherwise return "". Used to unwrap a zip that already nests everything under
+// a single top-level folder.
+static std::wstring SingleChildDir(const std::wstring& dir) {
+    std::error_code ec;
+    std::wstring only;
+    int count = 0;
+    for (auto& e : fs::directory_iterator(dir, ec)) {
+        if (++count > 1) return {};
+        if (!e.is_directory(ec)) return {};
+        only = e.path().wstring();
+    }
+    return count == 1 ? only : std::wstring{};
+}
+
+// Move every child of srcDir into dstDir (which must exist). Uses rename and
+// falls back to a recursive copy when src/dst straddle volumes (Dolphin's user
+// directory often lives on a different drive than the install library).
+static bool MoveDirChildrenInto(const std::wstring& srcDir, const std::wstring& dstDir) {
+    std::error_code ec;
+    bool ok = true;
+    for (auto& e : fs::directory_iterator(srcDir, ec)) {
+        std::wstring target = dstDir + L"\\" + e.path().filename().wstring();
+        std::error_code rec;
+        fs::remove_all(target, rec);
+        fs::rename(e.path(), target, rec);
+        if (rec) {
+            std::error_code cec;
+            fs::copy(e.path(), target,
+                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, cec);
+            if (cec) { ok = false; continue; }
+            std::error_code dec; fs::remove_all(e.path(), dec);
+        }
+    }
+    return ok;
+}
+
 static bool IsLikelyInstallerExe(std::wstring name) {
     for (auto& c : name) c = (wchar_t)towlower(c);
     return name.find(L"setup") != std::wstring::npos ||
@@ -807,6 +876,7 @@ bool ServerClient::FetchManifest(const std::wstring& gameId,
             manifest.texturePack.url = ToWide(JsonString(tp, "url"));
             manifest.texturePack.sha256 = ToWide(JsonString(tp, "sha256"));
             manifest.texturePack.size = JsonNumber(tp, "size");
+            manifest.texturePack.gameId = ToWide(JsonString(tp, "gameId"));
             manifest.hasTexturePack = !manifest.texturePack.url.empty();
         }
     }
@@ -1165,11 +1235,47 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
                 std::wstring userDir = DolphinUserDir(m_cfg.dolphinPath);
                 std::wstring loadTextures = userDir.empty() ? L"" : userDir + L"\\Load\\Textures";
                 if (!loadTextures.empty()) {
+                    std::error_code ec;
                     fs::create_directories(loadTextures);
-                    if (ExtractArchive(zipDest, loadTextures)) {
-                        EnableDolphinHiresTextures(userDir);
-                        WriteTextFile(texMarker, stamp);
+
+                    // Extract to a scratch dir first so we can normalise the
+                    // layout into Load/Textures/<GameID>/ (the structure Dolphin
+                    // requires) regardless of how the zip is packaged.
+                    std::wstring tmpDir = installRoot + L"\\.tex-extract";
+                    fs::remove_all(tmpDir, ec);
+                    fs::create_directories(tmpDir);
+
+                    if (ExtractArchive(zipDest, tmpDir)) {
+                        // Resolve the 6-char Game ID: prefer the server-supplied
+                        // value, else read it from the installed ROM header.
+                        std::wstring gameId = tp.gameId;
+                        if (gameId.empty()) {
+                            std::wstring rom = installRoot + L"\\" + manifest.launchTarget;
+                            std::replace(rom.begin(), rom.end(), L'/', L'\\');
+                            gameId = DolphinGameIdFromRom(rom);
+                        }
+
+                        bool placed = false;
+                        if (!gameId.empty()) {
+                            std::wstring dest = loadTextures + L"\\" + gameId;
+                            fs::remove_all(dest, ec);
+                            fs::create_directories(dest);
+                            // Unwrap a single wrapping folder if the zip already
+                            // nested everything (e.g. an existing <GameID>/ dir).
+                            std::wstring wrap = SingleChildDir(tmpDir);
+                            placed = MoveDirChildrenInto(wrap.empty() ? tmpDir : wrap, dest);
+                        } else {
+                            // Unknown ID: trust the zip's own layout (it should
+                            // already contain the <GameID>/ folder(s)).
+                            placed = MoveDirChildrenInto(tmpDir, loadTextures);
+                        }
+
+                        if (placed) {
+                            EnableDolphinHiresTextures(userDir);
+                            WriteTextFile(texMarker, stamp);
+                        }
                     }
+                    fs::remove_all(tmpDir, ec);
                 }
             }
             std::error_code ec;

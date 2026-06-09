@@ -84,6 +84,11 @@ struct Game {
     std::wstring emulatorPath;
     std::wstring romPath;
 
+    // True for entries the user added by hand (via AddGame) rather than ones
+    // produced by a platform scan. Manual entries are never repopulated by a
+    // rescan, so they must survive the startup purge and library merges.
+    bool         manualEntry = false;
+
     // Server-backed install info
     bool         serverBacked = false;
     std::wstring serverGameId;
