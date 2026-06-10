@@ -478,6 +478,16 @@ static std::vector<BYTE> HmacCtrXor(const std::vector<BYTE>& key,
 
 ServerClient::ServerClient(ServerConfig cfg) : m_cfg(std::move(cfg)) {
     m_cfg.baseUrl = TrimTrailingSlash(m_cfg.baseUrl);
+    // A base URL stored without a scheme (e.g. "arcade.orlandoaio.net") makes
+    // WinHttpCrackUrl reject every request as "Invalid URL". Default to https,
+    // except for bare LAN host:port forms which are plain http.
+    if (!m_cfg.baseUrl.empty() && !IsAbsoluteHttpUrl(m_cfg.baseUrl)) {
+        bool looksLocal = m_cfg.baseUrl.rfind(L"10.", 0) == 0 ||
+                          m_cfg.baseUrl.rfind(L"192.168.", 0) == 0 ||
+                          m_cfg.baseUrl.rfind(L"127.", 0) == 0 ||
+                          m_cfg.baseUrl.rfind(L"localhost", 0) == 0;
+        m_cfg.baseUrl = (looksLocal ? L"http://" : L"https://") + m_cfg.baseUrl;
+    }
     if (m_cfg.installRoot.empty())
         m_cfg.installRoot = GetAppDataPath() + L"\\server_games";
 }
