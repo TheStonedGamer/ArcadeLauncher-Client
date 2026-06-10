@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "LibraryDialog.h"
+#include "DarkTheme.h"
 
 #include <windows.h>
 #include <shobjidl.h>
@@ -58,7 +59,7 @@ void RegisterModalClass(const wchar_t* name, WNDPROC proc) {
     wc.lpfnWndProc = proc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = dark::BgBrush();
     wc.lpszClassName = name;
     RegisterClassExW(&wc);
     registered.push_back(name);
@@ -84,6 +85,8 @@ HWND CreateCenteredModal(const wchar_t* cls, const wchar_t* title, HWND owner,
 }
 
 void RunModalLoop(HWND hwnd, HWND owner, bool& done) {
+    dark::EnableTitleBar(hwnd);
+    dark::Apply(hwnd);   // child controls already exist (created in WM_CREATE)
     if (owner) EnableWindow(owner, FALSE);
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -240,6 +243,7 @@ LRESULT CALLBACK LibFoldersProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
 
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
@@ -377,6 +381,7 @@ LRESULT CALLBACK InstallLocProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
 
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
@@ -458,6 +463,7 @@ LRESULT CALLBACK TextPromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
         if (id == IDOK) {

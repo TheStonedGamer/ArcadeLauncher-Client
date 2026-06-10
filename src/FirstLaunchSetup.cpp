@@ -2,6 +2,7 @@
 #include "FirstLaunchSetup.h"
 #include "EmulatorDownloader.h"
 #include "DuckStationConfig.h"
+#include "DarkTheme.h"
 #include <commctrl.h>
 #include <thread>
 #pragma comment(lib, "comctl32.lib")
@@ -90,6 +91,7 @@ LRESULT CALLBACK EmulatorSetupWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LP
 }
 
 LRESULT EmulatorSetupWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
     switch (msg) {
 
     case WM_CLOSE:
@@ -352,7 +354,7 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
         wc.lpfnWndProc   = WndProc;
         wc.hInstance     = GetModuleHandleW(nullptr);
         wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.hbrBackground = dark::BgBrush();
         wc.lpszClassName = WC_NAME;
         RegisterClassExW(&wc);
         s_registered = true;
@@ -378,6 +380,8 @@ void EmulatorSetupWindow::Open(HWND parent, AppConfig& cfg,
                              parent, nullptr, GetModuleHandleW(nullptr), this);
 
     Build(m_hwnd);
+    dark::EnableTitleBar(m_hwnd);
+    dark::Apply(m_hwnd);
 
     // Disable the parent while this window is open (simulates modal)
     EnableWindow(parent, FALSE);

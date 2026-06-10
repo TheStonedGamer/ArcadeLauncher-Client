@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "SettingsWindow.h"
+#include "DarkTheme.h"
 #include "EmulatorDownloader.h"
 #include "EmulatorUpdateChecker.h"
 #include "PlatformIcons.h"
@@ -226,6 +227,7 @@ LRESULT CALLBACK SettingsWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)self);
         self->m_hwnd = hwnd;
         self->CreateChrome(hwnd);
+        dark::EnableTitleBar(hwnd);
         self->SwitchPage(self->m_startPage);
         return 0;
     }
@@ -249,9 +251,9 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HBRUSH sepBr = CreateSolidBrush(RGB(70, 70, 70));
         FillRect(hdc, &sep, sepBr);
         DeleteObject(sepBr);
-        // Content + bottom
+        // Content + bottom — dark to match the rest of the launcher.
         RECT ct = { SB_W + 1, 0, rc.right, rc.bottom };
-        FillRect(hdc, &ct, GetSysColorBrush(COLOR_BTNFACE));
+        FillRect(hdc, &ct, dark::BgBrush());
         return 1;
     }
 
@@ -264,8 +266,15 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!m_sidebarBrush) m_sidebarBrush = CreateSolidBrush(C_SB_BG);
             return (LRESULT)m_sidebarBrush;
         }
+        if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;  // other lists
         break;
     }
+
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLOREDIT:
+        if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
+        break;
 
     case WM_MEASUREITEM: {
         auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lp);
@@ -568,6 +577,9 @@ void SettingsWindow::SwitchPage(int idx) {
     default: break;
     }
     LoadCurrentPage();
+    // Theme the freshly-created page controls (strip white edit borders, dark
+    // scrollbars). Colors themselves come from the WM_CTLCOLOR* handlers.
+    dark::Apply(m_hwnd);
 }
 
 void SettingsWindow::SaveCurrentPage() {

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "GameEditDialog.h"
 #include "IgdbPlatforms.h"
+#include "DarkTheme.h"
 
 void GameEditDialog::Show(HWND parent,
                            const std::wstring& currentTitle,
@@ -41,7 +42,7 @@ void GameEditDialog::Run(HWND parent,
         wc.cbSize        = sizeof(wc);
         wc.lpfnWndProc   = WndProc;
         wc.hInstance     = GetModuleHandleW(nullptr);
-        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.hbrBackground = dark::BgBrush();
         wc.lpszClassName = WNDCLS;
         wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
         RegisterClassExW(&wc);
@@ -84,6 +85,8 @@ void GameEditDialog::Run(HWND parent,
     if (!m_hwnd) return;
 
     BuildControls(m_hwnd, isEmulated);
+    dark::EnableTitleBar(m_hwnd);
+    dark::Apply(m_hwnd);
 
     // Pre-fill edit box and select all text
     SetWindowTextW(m_edit, currentTitle.c_str());
@@ -136,6 +139,7 @@ LRESULT CALLBACK GameEditDialog::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 }
 
 LRESULT GameEditDialog::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
     switch (msg) {
     case WM_CLOSE:
         m_done = true;

@@ -6,6 +6,7 @@
 #include "IgdbSync.h"
 #include "AccountDialog.h"
 #include "LibraryDialog.h"
+#include "DarkTheme.h"
 #include <commctrl.h>
 #include <shlobj.h>      // SHGetKnownFolderPath, IShellLinkW
 #include <shobjidl.h>
@@ -116,6 +117,11 @@ struct ServerInstallProgressPayload {
     uint64_t total = 0;
 };
 
+static LRESULT CALLBACK CopyProgressWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 class CopyProgressDialog {
 public:
     bool Create(HWND owner, const std::wstring& title, const std::wstring& verb = L"Copying to local temp cache") {
@@ -126,10 +132,10 @@ public:
         if (!registered) {
             WNDCLASSEXW wc{};
             wc.cbSize = sizeof(wc);
-            wc.lpfnWndProc = DefWindowProcW;
+            wc.lpfnWndProc = CopyProgressWndProc;
             wc.hInstance = GetModuleHandleW(nullptr);
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+            wc.hbrBackground = dark::BgBrush();
             wc.lpszClassName = COPY_PROGRESS_WNDCLASS;
             RegisterClassExW(&wc);
             registered = true;
@@ -165,6 +171,9 @@ public:
 
         SendMessageW(m_progress, PBM_SETRANGE32, 0, 1000);
         SendMessageW(m_progress, PBM_SETPOS, 0, 0);
+
+        dark::EnableTitleBar(m_hwnd);
+        dark::Apply(m_hwnd);
 
         EnableWindow(owner, FALSE);
         ShowWindow(m_hwnd, SW_SHOW);
@@ -300,10 +309,14 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
         // The first static is the big title — give it the larger font.
         if (HWND firstChild = GetWindow(hwnd, GW_CHILD))
             SendMessageW(firstChild, WM_SETFONT, (WPARAM)titleFont, TRUE);
+        dark::EnableTitleBar(hwnd);
+        dark::Apply(hwnd);
         SetFocus(st->username);
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
 
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
@@ -344,7 +357,7 @@ static bool ShowServerLoginDialog(HWND owner, ServerConfig& cfg) {
         wc.lpfnWndProc = ServerLoginWndProc;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        wc.hbrBackground = dark::BgBrush();
         wc.lpszClassName = SERVER_LOGIN_WNDCLASS;
         RegisterClassExW(&wc);
         registered = true;
@@ -2522,6 +2535,7 @@ static LRESULT CALLBACK DownloadStatusWndProc(HWND hwnd, UINT msg, WPARAM wp, LP
         ShowWindow(hwnd, SW_HIDE);
         return 0;
     }
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
@@ -2534,7 +2548,7 @@ void App::OpenDownloadStatus() {
             wc.lpfnWndProc = DownloadStatusWndProc;
             wc.hInstance = GetModuleHandleW(nullptr);
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+            wc.hbrBackground = dark::BgBrush();
             wc.lpszClassName = DOWNLOAD_STATUS_WNDCLASS;
             RegisterClassExW(&wc);
 
@@ -2578,6 +2592,8 @@ void App::OpenDownloadStatus() {
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
             14, 256, 452, 250, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         SendMessageW(m_downloadProgress, PBM_SETRANGE32, 0, 1000);
+        dark::EnableTitleBar(m_downloadStatusWnd);
+        dark::Apply(m_downloadStatusWnd);
     }
     // Reset sampling so the graph starts clean each time it is opened.
     m_speedLastTick = 0;

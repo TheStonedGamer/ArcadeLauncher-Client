@@ -96,6 +96,7 @@
     <!-- Source files -->
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\App.cpp" />
+    <ClCompile Include="src\DarkTheme.cpp" />
     <ClCompile Include="src\Renderer.cpp" />
     <ClCompile Include="src\GameLibrary.cpp" />
     <ClCompile Include="src\Config.cpp" />
@@ -140,6 +141,7 @@
     <!-- Header files -->
     <ClInclude Include="src\pch.h" />
     <ClInclude Include="src\App.h" />
+    <ClInclude Include="src\DarkTheme.h" />
     <ClInclude Include="src\Renderer.h" />
     <ClInclude Include="src\GameLibrary.h" />
     <ClInclude Include="src\Config.h" />

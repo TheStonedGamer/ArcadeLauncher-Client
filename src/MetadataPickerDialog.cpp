@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "MetadataPickerDialog.h"
+#include "DarkTheme.h"
+#include <commctrl.h>
 
 #include <commctrl.h>
 #pragma comment(lib, "comctl32.lib")
@@ -48,7 +50,7 @@ void MetadataPickerDialog::Open(HWND parent,
         wc.cbSize        = sizeof(wc);
         wc.lpfnWndProc   = WndProc;
         wc.hInstance     = GetModuleHandleW(nullptr);
-        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.hbrBackground = dark::BgBrush();
         wc.lpszClassName = WNDCLS;
         wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
         RegisterClassExW(&wc);
@@ -118,10 +120,19 @@ LRESULT CALLBACK MetadataPickerDialog::WndProc(HWND hwnd, UINT msg, WPARAM wp, L
 }
 
 LRESULT MetadataPickerDialog::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (LRESULT r; dark::OnCtlColor(msg, wp, lp, r)) return r;
     switch (msg) {
 
     case WM_CREATE:
         BuildControls(hwnd);
+        dark::EnableTitleBar(hwnd);
+        dark::Apply(hwnd);
+        if (m_list) {
+            // ListView needs explicit dark colors (CTLCOLOR doesn't reach it).
+            ListView_SetBkColor(m_list, dark::PANEL);
+            ListView_SetTextBkColor(m_list, dark::PANEL);
+            ListView_SetTextColor(m_list, dark::TEXT);
+        }
         return 0;
 
     case WM_CLOSE:
