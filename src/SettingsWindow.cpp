@@ -821,15 +821,15 @@ void SettingsWindow::BuildRyujinxPage() {
 void SettingsWindow::BuildRpcs3Page() {
     int y = PageHeader(m_hwnd, m_pageControls, L"RPCS3");
 
-    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 120));
+    AddPC(Group(m_hwnd, L" Executable ", K_CX, y, K_CW, 128));
     AddPC(Label(m_hwnd, L"Path:", K_CX + 12, y + 22, 44));
     AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 58, y + 20, K_BX - K_CX - 64));
     AddPC(Btn  (m_hwnd, L"Browse…",        ID_P_BTN1, K_BX, y + 20));
     AddPC(Btn  (m_hwnd, L"Download latest", ID_P_BTN5, K_BX, y + 48));
-    AddEmulatorProgressBar(K_CX + 12, y + 82, K_BX - K_CX - 16);
+    AddEmulatorProgressBar(K_CX + 12, y + 80, K_BX - K_CX - 16);
     AddPC(StatLabel(m_hwnd, L"Checking for updates\x2026", ID_P_STAT1,
-                    K_CX + 12, y + 100, K_BX - K_CX - 16, 20));
-    y += 130;
+                    K_CX + 12, y + 100, K_BX - K_CX - 16, 18));
+    y += 138;
 
     // ── Graphics (RPCS3) ───────────────────────────────────────────────────────
     AddPC(Group(m_hwnd, L" Graphics ", K_CX, y, K_CW, 130));
