@@ -23,7 +23,7 @@
 207 RCDATA "platform_logos\\ps3.png"
 208 RCDATA "platform_logos\\xbox360.png"
 209 RCDATA "platform_logos\\switch.png"
-210 RCDATA "platform_logos\\xbox.ico"
+210 RCDATA "platform_logos\\xbox.png"
 
 // ─── Application manifest ─────────────────────────────────────────────────────
 // Opts into Common Controls v6 (visual styles) and declares DPI awareness.
