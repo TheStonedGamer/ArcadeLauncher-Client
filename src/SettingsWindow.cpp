@@ -856,7 +856,7 @@ void SettingsWindow::BuildRpcs3Page() {
     AddPC(Combo     (m_hwnd, ID_EC_C4,        D_COL1, y + 80, D_CBW));
     AddPC(SmallLabel(m_hwnd, L"Anisotropic filtering", D_COL2, y + 64, D_CBW));
     AddPC(Combo     (m_hwnd, ID_EC_C5,        D_COL2, y + 80, D_CBW));
-    AddPC(SmallLabel(m_hwnd, L"Resolution scale %", D_COL3, y + 64, 120));
+    AddPC(SmallLabel(m_hwnd, L"Resolution scale %", D_COL3, y + 64, 160));
     AddPC(Edit      (m_hwnd, ID_EC_E1,        D_COL3, y + 80, 70));
     AddPC(Check(m_hwnd, L"V-Sync",  ID_EC_K1, D_COL1,       y + 110, 80));
     AddPC(Check(m_hwnd, L"MSAA",    ID_EC_K2, D_COL1 + 84,  y + 110, 80));
