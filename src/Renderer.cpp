@@ -48,6 +48,10 @@ bool Renderer::Initialize(HWND hwnd) {
         D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(m_width, m_height));
     HR(m_factory->CreateHwndRenderTarget(rtp, hwndRtp, m_rt.GetAddressOf()));
     m_rt->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    // On Win8+/Win11 the Hwnd render target also implements ID2D1DeviceContext,
+    // which lets us downscale logos with HIGH_QUALITY_CUBIC instead of the blocky
+    // 2x2 LINEAR filter. Optional — fall back to LINEAR if the QI fails.
+    m_rt.As(&m_dc);
 
     CreateBrushes();
     Resize(m_width, m_height);
@@ -420,9 +424,10 @@ void Renderer::DrawSidebar(const RenderState& state) {
                                                iconX + iconSz + 3.0f, iconY + iconSz + 3.0f);
                 m_brushCard->SetColor(D2D1::ColorF(0.93f, 0.94f, 0.96f, active ? 1.0f : 0.78f));
                 m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6.0f, 6.0f), m_brushCard.Get());
-                m_rt->DrawBitmap(icon, D2D1::RectF(iconX, iconY, iconX + iconSz, iconY + iconSz),
-                                 active ? 1.0f : 0.85f,
-                                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                // Inset 1px inside the chip so the logo doesn't touch the rounded edge.
+                DrawIconFit(icon, D2D1::RectF(iconX + 1.0f, iconY + 1.0f,
+                                              iconX + iconSz - 1.0f, iconY + iconSz - 1.0f),
+                            active ? 1.0f : 0.85f);
             } else {
                 D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(20.0f, y + 19.0f), 5, 5);
                 m_brushAccent->SetColor(PlatformColor(e.p));
@@ -711,6 +716,27 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
     }
 }
 
+void Renderer::DrawIconFit(ID2D1Bitmap* bmp, D2D1_RECT_F box, float opacity) {
+    if (!bmp) return;
+    D2D1_SIZE_F sz = bmp->GetSize();
+    if (sz.width <= 0 || sz.height <= 0) return;
+
+    // Fit (contain) within box, preserving aspect ratio.
+    float boxW = box.right - box.left, boxH = box.bottom - box.top;
+    float scale = (std::min)(boxW / sz.width, boxH / sz.height);
+    float w = sz.width * scale, h = sz.height * scale;
+    float cx = (box.left + box.right) * 0.5f, cy = (box.top + box.bottom) * 0.5f;
+    D2D1_RECT_F dst = D2D1::RectF(cx - w * 0.5f, cy - h * 0.5f,
+                                  cx + w * 0.5f, cy + h * 0.5f);
+
+    if (m_dc) {
+        m_dc->DrawBitmap(bmp, dst, opacity,
+                         D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr);
+    } else {
+        m_rt->DrawBitmap(bmp, dst, opacity, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+}
+
 void Renderer::DrawPlatformBadge(Platform p, D2D1_POINT_2F center) {
     D2D1_ELLIPSE e = D2D1::Ellipse(center, 13.0f, 13.0f);
     m_brushCard->SetColor(D2D1::ColorF(0.05f, 0.05f, 0.08f, 0.85f));
@@ -720,7 +746,7 @@ void Renderer::DrawPlatformBadge(Platform p, D2D1_POINT_2F center) {
     if (icon) {
         D2D1_RECT_F dst = D2D1::RectF(center.x - 9.0f, center.y - 9.0f,
                                       center.x + 9.0f, center.y + 9.0f);
-        m_rt->DrawBitmap(icon, dst, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        DrawIconFit(icon, dst, 1.0f);
     } else {
         m_brushAccent->SetColor(PlatformColor(p));
         D2D1_ELLIPSE inner = D2D1::Ellipse(center, 5.0f, 5.0f);

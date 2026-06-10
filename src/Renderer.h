@@ -187,6 +187,10 @@ private:
                       float x, float y, float w, ID2D1Brush* brush, bool draw = true);
     void DrawPlatformBadge(Platform p, D2D1_POINT_2F center);
     void DrawPlaceholderArt(D2D1_RECT_F rect, Platform p);
+    // Draws a bitmap centered inside `box`, preserving aspect ratio (so wordmark
+    // logos aren't squished into a square) and using high-quality cubic scaling
+    // when available. `opacity` 0..1.
+    void DrawIconFit(ID2D1Bitmap* bmp, D2D1_RECT_F box, float opacity);
 
     ID2D1Bitmap* GetArt(const std::wstring& id) const;
     ComPtr<ID2D1Bitmap> LoadBitmapFromFile(const std::wstring& path);
@@ -197,6 +201,7 @@ private:
 
     ComPtr<ID2D1Factory>          m_factory;
     ComPtr<ID2D1HwndRenderTarget> m_rt;
+    ComPtr<ID2D1DeviceContext>    m_dc;  // QI of m_rt; enables high-quality cubic bitmap scaling
     ComPtr<IDWriteFactory>        m_dwFactory;
     ComPtr<IWICImagingFactory>    m_wic;
 
