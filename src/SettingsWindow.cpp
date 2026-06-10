@@ -648,22 +648,9 @@ void SettingsWindow::BuildGeneralPage() {
                 ID_P_CHK3, K_CX + 12, y + 64, K_CW - 24));
     y += 98;
 
-    // Cover art, descriptions and the game catalogue are all provided by the
-    // ArcadeLauncher server, so the client no longer exposes IGDB credentials,
-    // metadata refresh, or local ROM-library controls.
-    AddPC(Group(m_hwnd, L" ArcadeLauncher Server ", K_CX, y, K_CW, 176));
-    AddPC(Check(m_hwnd, L"Enable server library sync", ID_P_CHK4,
-                K_CX + 12, y + 20, K_CW - 24));
-    AddPC(Label(m_hwnd, L"Server URL:", K_CX + 12, y + 48, 92));
-    AddPC(Edit(m_hwnd, ID_P_EDIT3, K_CX + 106, y + 46, K_CW - 118));
-    AddPC(Label(m_hwnd, L"Username:", K_CX + 12, y + 76, 92));
-    AddPC(Edit(m_hwnd, ID_P_EDIT4, K_CX + 106, y + 74, K_CW - 118));
-    AddPC(Label(m_hwnd, L"Password:", K_CX + 12, y + 104, 92));
-    AddPC(Edit(m_hwnd, ID_P_EDIT5, K_CX + 106, y + 102, K_CW - 118, ES_PASSWORD));
-    AddPC(Label(m_hwnd, L"Install Root:", K_CX + 12, y + 132, 92));
-    AddPC(Edit(m_hwnd, ID_P_EDIT6, K_CX + 106, y + 130, K_CW - 118));
-    AddPC(SmallLabel(m_hwnd, L"Bearer tokens are issued automatically after username/password sign-in.",
-                     K_CX + 12, y + 160, K_CW - 24));
+    // Server connection (URL, credentials, bearer token) is configured at
+    // sign-in via the account dialog, not here — the General page only exposes
+    // launcher behavior toggles.
 }
 
 void SettingsWindow::BuildSteamPage() {
@@ -1203,21 +1190,12 @@ void SettingsWindow::LoadGeneralPage() {
     Chk(PC(ID_P_CHK1), m_work.startFullscreen);
     Chk(PC(ID_P_CHK2), m_work.minimizeOnLaunch);
     Chk(PC(ID_P_CHK3), ReadStartupReg());
-    Chk(PC(ID_P_CHK4), m_work.server.enabled);
-    SetWindowTextW(PC(ID_P_EDIT3), m_work.server.baseUrl.c_str());
-    SetWindowTextW(PC(ID_P_EDIT4), m_work.server.username.c_str());
-    SetWindowTextW(PC(ID_P_EDIT5), m_work.server.password.c_str());
-    SetWindowTextW(PC(ID_P_EDIT6), m_work.server.installRoot.c_str());
 }
 void SettingsWindow::SaveGeneralPage() {
     m_work.startFullscreen  = IsChk(PC(ID_P_CHK1));
     m_work.minimizeOnLaunch = IsChk(PC(ID_P_CHK2));
     WriteStartupReg(IsChk(PC(ID_P_CHK3)));
-    m_work.server.enabled     = IsChk(PC(ID_P_CHK4));
-    m_work.server.baseUrl     = GetTxt(PC(ID_P_EDIT3));
-    m_work.server.username    = GetTxt(PC(ID_P_EDIT4));
-    m_work.server.password    = GetTxt(PC(ID_P_EDIT5));
-    m_work.server.installRoot = GetTxt(PC(ID_P_EDIT6));
+    // Server connection fields are owned by the sign-in flow; preserved as-is.
 }
 
 void SettingsWindow::LoadSteamPage() {
