@@ -119,6 +119,7 @@
     <ClCompile Include="src\PlatformIcons.cpp" />
     <ClCompile Include="src\SettingsWindow.cpp" />
     <ClCompile Include="src\EmulatorDownloader.cpp" />
+    <ClCompile Include="src\AssetEnsure.cpp" />
     <ClCompile Include="src\EmulatorUpdateChecker.cpp" />
     <ClCompile Include="src\AppUpdater.cpp" />
     <ClCompile Include="src\RomDatabase.cpp" />
@@ -163,6 +164,7 @@
     <ClInclude Include="src\PlatformIcons.h" />
     <ClInclude Include="src\SettingsWindow.h" />
     <ClInclude Include="src\EmulatorDownloader.h" />
+    <ClInclude Include="src\AssetEnsure.h" />
     <ClInclude Include="src\EmulatorUpdateChecker.h" />
     <ClInclude Include="src\AppUpdater.h" />
     <ClInclude Include="src\ArchiveExtractor.h" />

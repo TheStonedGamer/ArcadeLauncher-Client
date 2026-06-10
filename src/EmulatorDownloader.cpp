@@ -285,14 +285,15 @@ static void TomlSet(std::wstring& doc, const std::wstring& section,
     rejoin();
 }
 
-static void SetupXemuFirmware(const std::wstring& archiveUrl,
-                              const std::wstring& xemuDestDir,
-                              const std::function<void(uint64_t, uint64_t)>& onProgress) {
-    // Derive the server base from the emulator archive URL:
-    //   http://host:port/emulators/xemu-...zip  ->  http://host:port
-    size_t ep = archiveUrl.find(L"/emulators/");
-    if (ep == std::wstring::npos) return;
-    std::wstring fwBase = archiveUrl.substr(0, ep) + L"/emulators/xemu-firmware/";
+// `fwBase` is the server URL of the firmware folder, e.g.
+//   http://host:port/emulators/xemu-firmware/
+// Missing files are pulled (hdd.qcow2 is ~1 GB so it only ever downloads once),
+// and xemu.toml is (re)written every call so the emulator settings are always
+// deployed even when the firmware files were already present.
+void SetupXemuFirmware(const std::wstring& fwBase,
+                       const std::wstring& xemuDestDir,
+                       const std::function<void(uint64_t, uint64_t)>& onProgress) {
+    if (fwBase.empty()) return;
 
     std::wstring fwDir = xemuDestDir + L"\\firmware";
     CreateDirectoryW(fwDir.c_str(), nullptr);
@@ -352,19 +353,16 @@ static void SetupXemuFirmware(const std::wstring& archiveUrl,
     }
 }
 
-// ── Worker thread ─────────────────────────────────────────────────────────────
+// ── Install core ──────────────────────────────────────────────────────────────
+// Fetches/extracts the emulator and provisions its extras. Returns the result
+// directly (exePath set on success, or L"ERR:..." on failure) so it can be used
+// both from the settings-window worker thread (which posts the result) and from
+// the per-launch asset self-heal (which consumes it synchronously). `onProgress`
+// may be empty.
 
-static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
-                   std::wstring appDataDir) {
-    auto post = [&](EmuDownloadResult* result) {
-        PostMessageW(hwnd, WM_EMUDOWNLOAD_DONE, (WPARAM)pageIdx, (LPARAM)result);
-    };
-    auto postProgress = [&](uint64_t downloaded, uint64_t total) {
-        auto* progress = new EmuDownloadProgress{ downloaded, total };
-        if (!PostMessageW(hwnd, WM_EMUDOWNLOAD_PROGRESS, (WPARAM)pageIdx, (LPARAM)progress))
-            delete progress;
-    };
-
+EmuDownloadResult InstallEmulatorSync(const EmulatorDownloadSpec& spec,
+                                      const std::wstring& appDataDir,
+                                      std::function<void(uint64_t, uint64_t)> onProgress) {
     std::wstring tag;
     std::wstring assetUrl = spec.directUrl;
     if (assetUrl.empty()) {
@@ -372,19 +370,15 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
         std::wstring apiUrl = L"https://api.github.com/repos/" +
                               ToWide(spec.githubRepo) + L"/releases/latest";
         std::string json = HttpGet(apiUrl);
-        if (json.empty()) {
-            post(new EmuDownloadResult{ L"ERR:Could not reach GitHub API. Check your internet connection." });
-            return;
-        }
+        if (json.empty())
+            return { L"ERR:Could not reach GitHub API. Check your internet connection." };
 
         tag = ParseTagName(json);
 
         // 2. Find matching asset URL
         assetUrl = FindAssetUrl(json, spec.urlPattern);
-        if (assetUrl.empty()) {
-            post(new EmuDownloadResult{ L"ERR:No matching download found for \"" + spec.urlPattern + L"\"." });
-            return;
-        }
+        if (assetUrl.empty())
+            return { L"ERR:No matching download found for \"" + spec.urlPattern + L"\"." };
     } else if (tag.empty()) {
         tag = spec.urlPattern;
     }
@@ -401,24 +395,19 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
     if (q  != std::wstring::npos) fileName = fileName.substr(0, q);
 
     std::wstring archivePath = destDir + L"\\" + fileName;
-    if (!DownloadFile(assetUrl, archivePath, postProgress)) {
-        post(new EmuDownloadResult{ L"ERR:File download failed." });
-        return;
-    }
+    if (!DownloadFile(assetUrl, archivePath, onProgress))
+        return { L"ERR:File download failed." };
 
     // 4. If the asset is already an executable, use it directly — no extraction.
     std::wstring fnLower = fileName;
     for (auto& c : fnLower) c = towlower(c);
-    if (fnLower.size() >= 4 && fnLower.compare(fnLower.size() - 4, 4, L".exe") == 0) {
-        post(new EmuDownloadResult{ archivePath, tag });
-        return;
-    }
+    if (fnLower.size() >= 4 && fnLower.compare(fnLower.size() - 4, 4, L".exe") == 0)
+        return { archivePath, tag };
 
     // 5. Extract (ZIP via PowerShell; 7z via LZMA SDK)
     if (!ExtractArchive(archivePath, destDir)) {
         DeleteFileW(archivePath.c_str());
-        post(new EmuDownloadResult{ L"ERR:Extraction failed. The downloaded archive may be corrupt." });
-        return;
+        return { L"ERR:Extraction failed. The downloaded archive may be corrupt." };
     }
     DeleteFileW(archivePath.c_str());
 
@@ -427,8 +416,14 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
 
     // 7. For xemu, provision the Xbox firmware (BIOS/MCPX/HDD) from the server
     //    and write xemu.toml so original Xbox games boot without manual setup.
-    if (spec.destName == L"xemu" && !exePath.empty())
-        SetupXemuFirmware(assetUrl, destDir, postProgress);
+    //    Derive the firmware base from the archive URL:
+    //      http://host:port/emulators/xemu-...zip -> http://host:port/emulators/xemu-firmware/
+    if (spec.destName == L"xemu" && !exePath.empty()) {
+        size_t ep = assetUrl.find(L"/emulators/");
+        if (ep != std::wstring::npos)
+            SetupXemuFirmware(assetUrl.substr(0, ep) + L"/emulators/xemu-firmware/",
+                              destDir, onProgress);
+    }
 
     // 8. Make Dolphin self-contained: a portable.txt next to Dolphin.exe makes
     //    Dolphin keep its config/saves in a "User" folder beside the exe, so the
@@ -448,7 +443,21 @@ static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
         CreateDirectoryW((exeDir + L"\\User").c_str(), nullptr);
     }
 
-    post(new EmuDownloadResult{ exePath, tag });
+    return { exePath, tag };
+}
+
+// ── Worker thread ─────────────────────────────────────────────────────────────
+
+static void Worker(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
+                   std::wstring appDataDir) {
+    auto postProgress = [&](uint64_t downloaded, uint64_t total) {
+        auto* progress = new EmuDownloadProgress{ downloaded, total };
+        if (!PostMessageW(hwnd, WM_EMUDOWNLOAD_PROGRESS, (WPARAM)pageIdx, (LPARAM)progress))
+            delete progress;
+    };
+
+    auto* result = new EmuDownloadResult(InstallEmulatorSync(spec, appDataDir, postProgress));
+    PostMessageW(hwnd, WM_EMUDOWNLOAD_DONE, (WPARAM)pageIdx, (LPARAM)result);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

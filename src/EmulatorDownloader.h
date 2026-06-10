@@ -29,6 +29,22 @@ struct EmulatorDownloadSpec {
 void DownloadEmulatorAsync(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
                            const std::wstring& appDataDir);
 
+// Synchronous install used by the per-launch asset self-heal. Downloads,
+// extracts and provisions extras for `spec`, returning the result directly
+// (exePath set on success, or `L"ERR:..."`). Blocks the calling thread; run it
+// off the UI thread. `onProgress` may be empty.
+EmuDownloadResult InstallEmulatorSync(const EmulatorDownloadSpec& spec,
+                                      const std::wstring& appDataDir,
+                                      std::function<void(uint64_t, uint64_t)> onProgress = {});
+
+// Provision xemu's Xbox firmware (bios.bin / mcpx.bin / hdd.qcow2) from the
+// server and (re)write xemu.toml so the settings are deployed. `fwBaseUrl` is the
+// firmware folder URL, e.g. http://host:port/emulators/xemu-firmware/. Missing
+// files are downloaded (skip if present); the toml is rewritten every call.
+void SetupXemuFirmware(const std::wstring& fwBaseUrl,
+                       const std::wstring& xemuDestDir,
+                       const std::function<void(uint64_t, uint64_t)>& onProgress = {});
+
 // Synchronously download `url` to `destPath` over WinHTTP (http/https, ranged or
 // whole-file). Returns true on success. Optional progress callback (done, total).
 bool DownloadFile(const std::wstring& url, const std::wstring& destPath,

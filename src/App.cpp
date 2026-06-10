@@ -4,6 +4,7 @@
 #include "Platform/EpicScanner.h"
 #include "Platform/GogScanner.h"
 #include "IgdbSync.h"
+#include "AssetEnsure.h"
 #include "AccountDialog.h"
 #include "LibraryDialog.h"
 #include "DarkTheme.h"
@@ -817,6 +818,13 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
             std::thread([this]() { ScanAllPlatforms(); }).detach();
             InvalidateRect(m_hwnd, nullptr, FALSE);
         });
+    } else {
+        // Every subsequent launch: silently self-heal any missing emulators or
+        // server-hosted extras (PS1 BIOS, OG Xbox firmware, PS3 firmware) and
+        // re-deploy emulator settings. Background thread; results post back via
+        // WM_APP_ASSETS_EMU / WM_APP_ASSETS_TOAST. Skipped on first launch since
+        // the setup window above already installs everything.
+        EnsureServerAssetsAsync(m_hwnd, m_config.Get(), GetAppDataPath());
     }
 
     // Start art fetcher
@@ -1319,6 +1327,39 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             m_renderer.ClearAvatar();
         }
         InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_APP_ASSETS_EMU: {
+        // The per-launch self-heal (re)installed an emulator on a worker thread.
+        // Apply the located exe + tag to config on the UI thread, persist, and
+        // refresh the sidebar logos (some derive from emulator exe icons).
+        auto* r = reinterpret_cast<AssetEmuResult*>(lp);
+        if (r) {
+            auto& e = m_config.Get().emulators;
+            switch (r->slot) {
+            case EmuSlot::Dolphin:     e.dolphinPath = r->exePath;     e.dolphinTag = r->tag;     break;
+            case EmuSlot::Ryujinx:     e.ryujinxPath = r->exePath;     e.ryujinxTag = r->tag;     break;
+            case EmuSlot::Rpcs3:       e.rpcs3Path   = r->exePath;     e.rpcs3Tag   = r->tag;     break;
+            case EmuSlot::N64:         e.n64Path     = r->exePath;     e.n64Tag     = r->tag;     break;
+            case EmuSlot::NesSnes:     e.nesPath = e.snesPath = r->exePath; e.nesTag = e.snesTag = r->tag; break;
+            case EmuSlot::Duckstation: e.duckstationPath = r->exePath; e.duckstationTag = r->tag; break;
+            case EmuSlot::Pcsx2:       e.pcsx2Path   = r->exePath;     e.pcsx2Tag   = r->tag;     break;
+            case EmuSlot::Xenia:       e.xeniaPath   = r->exePath;     e.xeniaTag   = r->tag;     break;
+            case EmuSlot::Xemu:        e.xemuPath    = r->exePath;     e.xemuTag    = r->tag;     break;
+            }
+            delete r;
+            SaveAll();
+            m_renderer.LoadPlatformIcons(m_platformIcons, m_config.Get().emulators);
+            UpdateSidebarFlags();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+
+    case WM_APP_ASSETS_TOAST: {
+        auto* t = reinterpret_cast<AssetToast*>(lp);
+        if (t) { ShowToast(t->title, t->message); delete t; }
         return 0;
     }
 
