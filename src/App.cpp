@@ -21,10 +21,120 @@ static std::wstring ThisExePath() {
     return buf;
 }
 
+// Build a Windows .ico from a game's cached cover image so shortcuts show the
+// game art instead of the launcher icon. The cover is aspect-fit and centered on
+// a 256x256 transparent square, encoded as PNG, and wrapped in a single-entry ICO
+// (Vista+ supports PNG-compressed icon entries). Returns the .ico path, or empty
+// on any failure (caller falls back to the launcher exe icon).
+static std::wstring MakeGameIconFile(const std::wstring& coverPath,
+                                     const std::wstring& gameId) {
+    if (coverPath.empty() ||
+        GetFileAttributesW(coverPath.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return {};
+
+    ComPtr<IWICImagingFactory> wic;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&wic))))
+        return {};
+
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(wic->CreateDecoderFromFilename(coverPath.c_str(), nullptr, GENERIC_READ,
+                                              WICDecodeMetadataCacheOnLoad, &dec)))
+        return {};
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(dec->GetFrame(0, &frame))) return {};
+    ComPtr<IWICFormatConverter> conv;
+    if (FAILED(wic->CreateFormatConverter(&conv))) return {};
+    if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+                                WICBitmapDitherTypeNone, nullptr, 0.0,
+                                WICBitmapPaletteTypeCustom)))
+        return {};
+
+    UINT sw = 0, sh = 0;
+    if (FAILED(conv->GetSize(&sw, &sh)) || sw == 0 || sh == 0) return {};
+    const UINT DIM = 256;
+    // Aspect-fit into DIM x DIM.
+    UINT dw = DIM, dh = DIM;
+    if (sw >= sh) { dh = (UINT)((double)sh / sw * DIM + 0.5); if (dh == 0) dh = 1; }
+    else          { dw = (UINT)((double)sw / sh * DIM + 0.5); if (dw == 0) dw = 1; }
+
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(wic->CreateBitmapScaler(&scaler))) return {};
+    if (FAILED(scaler->Initialize(conv.Get(), dw, dh, WICBitmapInterpolationModeFant)))
+        return {};
+
+    std::vector<BYTE> scaled((size_t)dw * dh * 4);
+    if (FAILED(scaler->CopyPixels(nullptr, dw * 4, (UINT)scaled.size(), scaled.data())))
+        return {};
+
+    // Composite centered onto a transparent DIM x DIM canvas.
+    std::vector<BYTE> canvas((size_t)DIM * DIM * 4, 0);
+    UINT ox = (DIM - dw) / 2, oy = (DIM - dh) / 2;
+    for (UINT y = 0; y < dh; ++y)
+        memcpy(&canvas[((oy + y) * DIM + ox) * 4], &scaled[y * dw * 4], (size_t)dw * 4);
+
+    // Encode the canvas as PNG into a memory stream.
+    ComPtr<IStream> mem;
+    mem.Attach(SHCreateMemStream(nullptr, 0));
+    if (!mem) return {};
+    ComPtr<IWICBitmapEncoder> enc;
+    if (FAILED(wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &enc))) return {};
+    if (FAILED(enc->Initialize(mem.Get(), WICBitmapEncoderNoCache))) return {};
+    ComPtr<IWICBitmapFrameEncode> fenc;
+    ComPtr<IPropertyBag2> props;
+    if (FAILED(enc->CreateNewFrame(&fenc, &props))) return {};
+    if (FAILED(fenc->Initialize(props.Get()))) return {};
+    if (FAILED(fenc->SetSize(DIM, DIM))) return {};
+    WICPixelFormatGUID pf = GUID_WICPixelFormat32bppBGRA;
+    if (FAILED(fenc->SetPixelFormat(&pf))) return {};
+    if (FAILED(fenc->WritePixels(DIM, DIM * 4, (UINT)canvas.size(), canvas.data()))) return {};
+    if (FAILED(fenc->Commit())) return {};
+    if (FAILED(enc->Commit())) return {};
+
+    // Pull the PNG bytes back out of the stream.
+    STATSTG stat{};
+    if (FAILED(mem->Stat(&stat, STATFLAG_NONAME))) return {};
+    ULONG pngSize = (ULONG)stat.cbSize.QuadPart;
+    if (pngSize == 0) return {};
+    std::vector<BYTE> png(pngSize);
+    LARGE_INTEGER zero{};
+    mem->Seek(zero, STREAM_SEEK_SET, nullptr);
+    ULONG got = 0;
+    if (FAILED(mem->Read(png.data(), pngSize, &got)) || got != pngSize) return {};
+
+    // Wrap the PNG in a single-entry ICO (width/height byte 0 => 256).
+    std::wstring dir = GetAppDataPath() + L"\\game_icons";
+    std::error_code ec; fs::create_directories(dir, ec);
+    std::wstring icoPath = dir + L"\\" + gameId + L".ico";
+
+    HANDLE h = CreateFileW(icoPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    auto put16 = [](std::vector<BYTE>& b, uint16_t v) { b.push_back(v & 0xFF); b.push_back(v >> 8); };
+    auto put32 = [](std::vector<BYTE>& b, uint32_t v) {
+        b.push_back(v & 0xFF); b.push_back((v >> 8) & 0xFF);
+        b.push_back((v >> 16) & 0xFF); b.push_back((v >> 24) & 0xFF);
+    };
+    std::vector<BYTE> hdr;
+    put16(hdr, 0); put16(hdr, 1); put16(hdr, 1);        // ICONDIR
+    hdr.push_back(0); hdr.push_back(0);                  // width, height (0 = 256)
+    hdr.push_back(0); hdr.push_back(0);                  // colorCount, reserved
+    put16(hdr, 1); put16(hdr, 32);                       // planes, bitCount
+    put32(hdr, pngSize);                                 // bytesInRes
+    put32(hdr, 6 + 16);                                  // imageOffset
+    DWORD wrote = 0;
+    bool ok = WriteFile(h, hdr.data(), (DWORD)hdr.size(), &wrote, nullptr) &&
+              WriteFile(h, png.data(), pngSize, &wrote, nullptr);
+    CloseHandle(h);
+    return ok ? icoPath : std::wstring();
+}
+
 // Write a .lnk at lnkPath that runs `target args`. Creates parent dirs.
 // Returns true on success. COM is assumed initialized (it is, in wWinMain).
+// `iconPath` (if non-empty and existing) overrides the default exe icon.
 static bool WriteShellLink(const std::wstring& lnkPath, const std::wstring& target,
-                           const std::wstring& args, const std::wstring& desc) {
+                           const std::wstring& args, const std::wstring& desc,
+                           const std::wstring& iconPath = L"") {
     std::error_code ec;
     fs::create_directories(fs::path(lnkPath).parent_path(), ec);
     ComPtr<IShellLinkW> link;
@@ -34,7 +144,11 @@ static bool WriteShellLink(const std::wstring& lnkPath, const std::wstring& targ
     link->SetPath(target.c_str());
     if (!args.empty()) link->SetArguments(args.c_str());
     if (!desc.empty()) link->SetDescription(desc.c_str());
-    link->SetIconLocation(target.c_str(), 0);
+    if (!iconPath.empty() &&
+        GetFileAttributesW(iconPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+        link->SetIconLocation(iconPath.c_str(), 0);
+    else
+        link->SetIconLocation(target.c_str(), 0);
     ComPtr<IPersistFile> pf;
     if (FAILED(link.As(&pf))) return false;
     return SUCCEEDED(pf->Save(lnkPath.c_str(), TRUE));
@@ -57,11 +171,15 @@ static std::wstring SafeShortcutName(const std::wstring& title) {
 // under "Arcade Launcher\Games\<platform>".
 static void CreateGameShortcuts(const std::wstring& gameId, const std::wstring& title,
                                 const std::wstring& platform,
-                                bool desktop, bool startMenu) {
+                                bool desktop, bool startMenu,
+                                const std::wstring& coverPath = L"") {
     if (!desktop && !startMenu) return;
     std::wstring exe = ThisExePath();
     std::wstring args = L"--launch " + gameId;
     std::wstring name = SafeShortcutName(title);
+    // Build a per-game .ico from the cover art; shortcuts fall back to the
+    // launcher icon if this fails.
+    std::wstring icon = MakeGameIconFile(coverPath, SafeShortcutName(gameId));
 
     auto knownFolder = [](REFKNOWNFOLDERID id) -> std::wstring {
         PWSTR p = nullptr; std::wstring r;
@@ -73,14 +191,14 @@ static void CreateGameShortcuts(const std::wstring& gameId, const std::wstring& 
     if (desktop) {
         std::wstring dir = knownFolder(FOLDERID_Desktop);
         if (!dir.empty())
-            WriteShellLink(dir + L"\\" + name + L".lnk", exe, args, title);
+            WriteShellLink(dir + L"\\" + name + L".lnk", exe, args, title, icon);
     }
     if (startMenu) {
         std::wstring programs = knownFolder(FOLDERID_Programs);
         if (!programs.empty()) {
             std::wstring dir = programs + L"\\Arcade Launcher\\Games\\" +
                                SafeShortcutName(platform);
-            WriteShellLink(dir + L"\\" + name + L".lnk", exe, args, title);
+            WriteShellLink(dir + L"\\" + name + L".lnk", exe, args, title, icon);
         }
     }
 }
@@ -1000,7 +1118,8 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (wantDesktop || wantStartMenu)
                     CreateGameShortcuts(stored->id, stored->title,
                                         PlatformName(stored->platform),
-                                        wantDesktop, wantStartMenu);
+                                        wantDesktop, wantStartMenu,
+                                        stored->coverArtPath);
                 if (!autoLaunch)
                     ShowToast(L"Download complete",
                               stored->title + L" is ready to play.");
