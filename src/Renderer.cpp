@@ -418,9 +418,11 @@ void Renderer::DrawSidebar(const RenderState& state) {
                 float iconX = 8.0f, iconY = y + (38.0f - iconSz) / 2.0f;
                 // Rounded chip behind the logo. Most console logos are dark
                 // wordmarks (PlayStation, Switch, NES) that need a light tile to
-                // show on the dark sidebar. The Xbox orbs, however, are light/
-                // silver and wash out on a light tile, so those get a dark chip.
-                bool lightLogo = (e.p == Platform::Xbox || e.p == Platform::Xbox360);
+                // show on the dark sidebar. A few logos are light/silver and wash
+                // out on a light tile (the Xbox orbs, the thin light-blue PS2
+                // mark), so those get a dark chip instead.
+                bool lightLogo = (e.p == Platform::Xbox || e.p == Platform::Xbox360 ||
+                                  e.p == Platform::PS2);
                 D2D1_RECT_F chip = D2D1::RectF(iconX - 3.0f, iconY - 3.0f,
                                                iconX + iconSz + 3.0f, iconY + iconSz + 3.0f);
                 if (lightLogo)
