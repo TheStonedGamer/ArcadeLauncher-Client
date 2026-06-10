@@ -198,6 +198,54 @@ static bool IsNewerThanCurrent(const std::wstring& tag) {
     return pat > ARCADE_VERSION_PATCH;
 }
 
+// ── Update-attempt marker (loop breaker) ──────────────────────────────────────
+// The per-machine MSI replaces the running exe, so an update requires us to exit,
+// install, then relaunch. If the install ever fails to apply (declined UAC, MSI
+// error, etc.) the relaunched-but-still-old binary would re-detect the same
+// release and try again forever. We persist the tag we last attempted; if the
+// same tag is still "newer" a short time later, we stop auto-attempting so the
+// app stays usable instead of flickering through an endless update loop.
+
+static constexpr long long ATTEMPT_COOLDOWN_100NS = 30LL * 60 * 10'000'000; // 30 min
+
+static std::wstring AttemptMarkerPath() {
+    return GetAppDataPath() + L"\\update_attempt.txt";
+}
+
+// Returns true if we attempted this exact tag within the cooldown window.
+static bool RecentlyAttempted(const std::wstring& tag) {
+    std::wstring path = AttemptMarkerPath();
+
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return false;
+
+    HANDLE hf = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hf == INVALID_HANDLE_VALUE) return false;
+    char buf[256]{}; DWORD read = 0;
+    ReadFile(hf, buf, sizeof(buf) - 1, &read, nullptr);
+    CloseHandle(hf);
+    std::wstring stored = ToWide(std::string(buf, read));
+    if (stored != tag) return false;
+
+    FILETIME now{}; GetSystemTimeAsFileTime(&now);
+    ULARGE_INTEGER n{ fad.ftLastWriteTime.dwLowDateTime, fad.ftLastWriteTime.dwHighDateTime };
+    ULARGE_INTEGER t{ now.dwLowDateTime, now.dwHighDateTime };
+    return (long long)(t.QuadPart - n.QuadPart) < ATTEMPT_COOLDOWN_100NS;
+}
+
+static void RecordAttempt(const std::wstring& tag) {
+    std::wstring dir = GetAppDataPath();
+    CreateDirectoryW(dir.c_str(), nullptr);
+    std::string body = ToUtf8(tag);
+    HANDLE hf = CreateFileW(AttemptMarkerPath().c_str(), GENERIC_WRITE, 0, nullptr,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hf == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(hf, body.data(), (DWORD)body.size(), &written, nullptr);
+    CloseHandle(hf);
+}
+
 // ── Background workers ────────────────────────────────────────────────────────
 
 static void CheckWorker(HWND hwnd) {
@@ -208,6 +256,10 @@ static void CheckWorker(HWND hwnd) {
     std::wstring tag = ToWide(JsonStr(json, "tag_name"));
     if (tag.empty() || !IsNewerThanCurrent(tag)) return;
 
+    // Loop breaker: if we already tried (and apparently failed to apply) this same
+    // release very recently, don't keep relaunching into the updater.
+    if (RecentlyAttempted(tag)) return;
+
     // Construct the predictable MSI asset URL
     std::wstring msiUrl =
         L"https://github.com/TheStonedGamer/ArcadeLauncher-Client/releases/download/"
@@ -217,7 +269,7 @@ static void CheckWorker(HWND hwnd) {
     PostMessageW(hwnd, WM_APP_UPDATE_FOUND, 0, (LPARAM)info);
 }
 
-static void DownloadWorker(HWND hwnd, std::wstring msiUrl) {
+static void DownloadWorker(HWND hwnd, std::wstring tag, std::wstring msiUrl) {
     wchar_t tempDir[MAX_PATH];
     GetTempPathW(MAX_PATH, tempDir);
     std::wstring dest = std::wstring(tempDir) + L"ArcadeLauncher-update.msi";
@@ -227,14 +279,52 @@ static void DownloadWorker(HWND hwnd, std::wstring msiUrl) {
         return;
     }
 
-    // Hand off to msiexec fully silent (/quiet) so the Windows Installer shows
-    // no UI of its own — the launcher's own progress bar is the only thing the
-    // user sees. (A single UAC elevation prompt still appears for the per-machine
-    // install.) /norestart so it never reboots the machine on us.
-    std::wstring args = L"/i \"" + dest + L"\" /quiet /norestart";
-    ShellExecuteW(nullptr, nullptr, L"msiexec.exe",
-                  args.c_str(), nullptr, SW_SHOW);
+    // Record the attempt up-front so a failed install can't loop (see above).
+    RecordAttempt(tag);
 
+    // A per-machine MSI must run elevated, and `msiexec /quiet` cannot raise its
+    // own UAC prompt — so we elevate ONCE here (the only prompt the user sees),
+    // then everything is silent. We can't install while our exe is locked, so we
+    // hand the work to an elevated PowerShell helper that:
+    //   1. waits for this process to exit (releasing the exe),
+    //   2. runs msiexec fully silently,
+    //   3. relaunches the freshly-installed binary.
+    // Short (8.3) paths avoid embedded-space quoting headaches inside -Command,
+    // so the helper uses only single quotes (no -ExecutionPolicy override needed).
+    wchar_t exePath[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    wchar_t shortMsi[MAX_PATH]{}, shortExe[MAX_PATH]{};
+    if (!GetShortPathNameW(dest.c_str(), shortMsi, MAX_PATH))
+        wcscpy_s(shortMsi, dest.c_str());
+    if (!GetShortPathNameW(exePath, shortExe, MAX_PATH))
+        wcscpy_s(shortExe, exePath);
+
+    DWORD pid = GetCurrentProcessId();
+    std::wstring psCmd =
+        L"try { Wait-Process -Id " + std::to_wstring(pid) + L" -Timeout 120 } catch {}; "
+        L"Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','" + shortMsi +
+        L"','/quiet','/norestart' -Wait; "
+        L"Start-Process -FilePath '" + shortExe + L"'";
+    std::wstring psArgs =
+        L"-NoProfile -WindowStyle Hidden -Command \"" + psCmd + L"\"";
+
+    SHELLEXECUTEINFOW sei{ sizeof(sei) };
+    sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = L"runas";  // elevate the helper; msiexec then installs silently
+    sei.lpFile = L"powershell.exe";
+    sei.lpParameters = psArgs.c_str();
+    sei.nShow  = SW_HIDE;
+
+    if (!ShellExecuteExW(&sei)) {
+        // User declined elevation (or it failed). Do NOT exit/relaunch — staying
+        // on the current version avoids the flicker loop; the cooldown marker
+        // keeps us from immediately retrying.
+        PostMessageW(hwnd, WM_APP_UPDATE_READY, 1 /*failure*/, 0);
+        return;
+    }
+    if (sei.hProcess) CloseHandle(sei.hProcess);
+
+    // Helper is running elevated; tell the UI to exit so the install can proceed.
     PostMessageW(hwnd, WM_APP_UPDATE_READY, 0 /*success*/, 0);
 }
 
@@ -244,6 +334,6 @@ void CheckForAppUpdateAsync(HWND hwnd) {
     std::thread(CheckWorker, hwnd).detach();
 }
 
-void DownloadAndInstallAsync(HWND hwnd, std::wstring msiUrl) {
-    std::thread(DownloadWorker, hwnd, std::move(msiUrl)).detach();
+void DownloadAndInstallAsync(HWND hwnd, std::wstring tag, std::wstring msiUrl) {
+    std::thread(DownloadWorker, hwnd, std::move(tag), std::move(msiUrl)).detach();
 }

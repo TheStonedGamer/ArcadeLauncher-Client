@@ -1339,7 +1339,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_updateDlg->Create(hwnd, L"Updating ArcadeLauncher " + info->tag,
                                  L"Downloading update");
         }
-        DownloadAndInstallAsync(m_hwnd, info->msiUrl);
+        DownloadAndInstallAsync(m_hwnd, info->tag, info->msiUrl);
         delete info;
         return 0;
     }
@@ -1358,28 +1358,16 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_updateDlg = nullptr;
             }
             MessageBoxW(hwnd,
-                L"The update could not be downloaded.\n\n"
-                L"Please visit github.com/TheStonedGamer/ArcadeLauncher-Client/releases to update manually.",
-                L"Update Failed", MB_OK | MB_ICONWARNING);
+                L"The update could not be installed.\n\n"
+                L"If you declined the administrator prompt, restart the app to try again, "
+                L"or visit github.com/TheStonedGamer/ArcadeLauncher-Client/releases to update manually.",
+                L"Update", MB_OK | MB_ICONWARNING);
         } else {
-            // The silent installer (msiexec /quiet) is running. Keep our own bar
-            // on screen showing "Installing…" — the MSI shows no UI of its own.
+            // The elevated installer helper is now running. It waits for us to
+            // exit, installs silently, then relaunches the new binary — so all we
+            // do here is show a final status and exit to release the exe lock.
             if (g_updateDlg)
                 g_updateDlg->ShowFinishing(L"Installing update… the app will restart automatically.");
-            // msiexec is running — exit immediately so it can replace the binary.
-            // Schedule a PowerShell one-liner that waits 10 s then relaunches us,
-            // then call ExitProcess so no thread holds a file lock on the exe.
-            wchar_t exePath[MAX_PATH]{};
-            GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-
-            std::wstring psCmd =
-                L"Start-Sleep -Seconds 10; "
-                L"Start-Process -FilePath '" + std::wstring(exePath) + L"'";
-            std::wstring psArgs =
-                L"-NoProfile -WindowStyle Hidden -Command \"" + psCmd + L"\"";
-            ShellExecuteW(nullptr, L"open", L"powershell.exe",
-                          psArgs.c_str(), nullptr, SW_HIDE);
-
             SaveAll();
             RemoveTrayIcon();
             ExitProcess(0);

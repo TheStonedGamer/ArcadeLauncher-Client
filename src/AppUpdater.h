@@ -21,6 +21,6 @@ struct AppUpdateInfo {
 // Posts WM_APP_UPDATE_FOUND if one is found; silent on failure / up-to-date.
 void CheckForAppUpdateAsync(HWND hwnd);
 
-// Fires a background thread that downloads the MSI and hands it to msiexec.
-// Posts WM_APP_UPDATE_READY when done (success or failure).
-void DownloadAndInstallAsync(HWND hwnd, std::wstring msiUrl);
+// Fires a background thread that downloads the MSI and hands it to an elevated
+// installer helper. Posts WM_APP_UPDATE_READY when done (success or failure).
+void DownloadAndInstallAsync(HWND hwnd, std::wstring tag, std::wstring msiUrl);
