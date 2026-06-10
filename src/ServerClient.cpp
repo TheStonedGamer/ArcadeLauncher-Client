@@ -482,6 +482,27 @@ ServerClient::ServerClient(ServerConfig cfg) : m_cfg(std::move(cfg)) {
         m_cfg.installRoot = GetAppDataPath() + L"\\server_games";
 }
 
+// Translate a WinHTTP failure (GetLastError right after a failed Send/Receive)
+// into a human-readable message so "Request failed" stops being a dead end.
+static std::wstring WinHttpErrorText(const wchar_t* stage) {
+    DWORD e = GetLastError();
+    const wchar_t* msg = nullptr;
+    switch (e) {
+        case ERROR_WINHTTP_TIMEOUT:               msg = L"connection timed out"; break;
+        case ERROR_WINHTTP_CANNOT_CONNECT:        msg = L"cannot connect to server"; break;
+        case ERROR_WINHTTP_CONNECTION_ERROR:      msg = L"connection error"; break;
+        case ERROR_WINHTTP_NAME_NOT_RESOLVED:     msg = L"server name could not be resolved"; break;
+        case ERROR_WINHTTP_SECURE_FAILURE:        msg = L"TLS/SSL handshake failed"; break;
+        case ERROR_WINHTTP_INVALID_SERVER_RESPONSE: msg = L"invalid server response"; break;
+        case ERROR_WINHTTP_OPERATION_CANCELLED:   msg = L"operation cancelled"; break;
+        default: break;
+    }
+    std::wstring out = std::wstring(L"Request failed (") + stage + L": ";
+    out += msg ? msg : L"WinHTTP error";
+    out += L" " + std::to_wstring(e) + L")";
+    return out;
+}
+
 std::wstring ServerClient::Url(const std::wstring& path) const {
     if (IsAbsoluteHttpUrl(path)) return path;
     if (!path.empty() && path.front() != L'/')
@@ -541,8 +562,8 @@ bool ServerClient::HttpGet(const std::wstring& url,
         WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
     if (ok) ok = WinHttpReceiveResponse(req, nullptr);
     if (!ok) {
+        error = WinHttpErrorText(L"GET");
         WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
-        error = L"Request failed";
         return false;
     }
 
@@ -615,8 +636,8 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
         (DWORD)post.size(), (DWORD)post.size(), 0);
     if (ok) ok = WinHttpReceiveResponse(req, nullptr);
     if (!ok) {
+        error = WinHttpErrorText(L"POST");
         WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
-        error = L"Request failed";
         return false;
     }
 
@@ -688,8 +709,8 @@ bool ServerClient::HttpSendRaw(const std::wstring& verb,
         (DWORD)data.size(), (DWORD)data.size(), 0);
     if (ok) ok = WinHttpReceiveResponse(req, nullptr);
     if (!ok) {
+        error = WinHttpErrorText(verb.c_str());
         WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
-        error = L"Request failed";
         return false;
     }
 

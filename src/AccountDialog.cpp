@@ -531,9 +531,30 @@ struct AccountState {
     std::wstring loadIdentity;
     bool         loadTotpEnabled = false;
     std::string  loadAvatarBytes;
+
+    // Password-change runs on its own worker so the slow authenticated POST
+    // (TLS + server-side Argon2) never freezes the dialog. Joined in WM_DESTROY.
+    HANDLE       pwThread = nullptr;
+    std::wstring pwCurrent;    // current password input for the worker
+    std::wstring pwNew;        // new password the worker is applying
+    bool         pwOk = false; // worker result
+    std::wstring pwErr;        // worker error message
 };
 
 static constexpr UINT WM_ACCOUNT_LOADED = WM_USER + 1;
+static constexpr UINT WM_PW_CHANGED     = WM_USER + 2;
+
+// Worker thread: performs the password change off the UI thread, then posts
+// WM_PW_CHANGED. The AccountState outlives the thread (joined in WM_DESTROY).
+DWORD WINAPI PasswordChangeThread(LPVOID param) {
+    auto* st = reinterpret_cast<AccountState*>(param);
+    ServerConfig cfg = *st->cfg;
+    ServerClient client(cfg);
+    st->pwErr.clear();
+    st->pwOk = client.ChangePassword(st->pwCurrent, st->pwNew, st->pwErr);
+    if (st->hwnd) PostMessageW(st->hwnd, WM_PW_CHANGED, 0, 0);
+    return 0;
+}
 
 // (Re)fetch the account avatar from the server and rebuild the preview bitmap.
 // Synchronous — runs on the modal dialog's UI thread (the request is small).
@@ -658,6 +679,27 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
+    if (msg == WM_PW_CHANGED) {
+        if (st->pwThread) {
+            WaitForSingleObject(st->pwThread, INFINITE);
+            CloseHandle(st->pwThread);
+            st->pwThread = nullptr;
+        }
+        EnableWindow(st->changeBtn, TRUE);
+        if (st->pwOk) {
+            st->cfg->password = st->pwNew;
+            st->cfg->authToken.clear();
+            st->changed = true;
+            SetWindowTextW(st->pwStatus, L"Password changed.");
+            SetWindowTextW(st->current, L"");
+            SetWindowTextW(st->newPw, L"");
+            SetWindowTextW(st->confirm, L"");
+        } else {
+            SetWindowTextW(st->pwStatus, st->pwErr.empty() ? L"Could not change password." : st->pwErr.c_str());
+        }
+        st->pwCurrent.clear();
+        return 0;
+    }
     if (msg == WM_PAINT) {
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps);
         const int ax = 410, ay = 44, ad = kAvatarDim;
@@ -701,30 +743,33 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             CloseHandle(st->loadThread);
             st->loadThread = nullptr;
         }
+        if (st->pwThread) {
+            WaitForSingleObject(st->pwThread, INFINITE);
+            CloseHandle(st->pwThread);
+            st->pwThread = nullptr;
+        }
         if (st->avatarBmp) { DeleteObject(st->avatarBmp); st->avatarBmp = nullptr; }
         return 0;
     }
     if (msg == WM_COMMAND) {
         int id = LOWORD(wp);
         if (id == 504) {  // change password
+            if (st->pwThread) return 0;   // already in flight
             std::wstring cur = TextOf(st->current);
             std::wstring np = TextOf(st->newPw);
             std::wstring cf = TextOf(st->confirm);
             if (np.size() < 10) { SetWindowTextW(st->pwStatus, L"New password must be at least 10 characters."); return 0; }
             if (np != cf) { SetWindowTextW(st->pwStatus, L"New passwords do not match."); return 0; }
-            ServerConfig cfg = *st->cfg;
-            ServerClient client(cfg);
-            std::wstring err;
-            if (client.ChangePassword(cur, np, err)) {
-                st->cfg->password = np;
-                st->cfg->authToken.clear();
-                st->changed = true;
-                SetWindowTextW(st->pwStatus, L"Password changed.");
-                SetWindowTextW(st->current, L"");
-                SetWindowTextW(st->newPw, L"");
-                SetWindowTextW(st->confirm, L"");
-            } else {
-                SetWindowTextW(st->pwStatus, err.empty() ? L"Could not change password." : err.c_str());
+            // Run the network request off the UI thread so the dialog stays
+            // responsive (the change can take a second on TLS + server Argon2).
+            st->pwCurrent = cur;
+            st->pwNew = np;
+            EnableWindow(st->changeBtn, FALSE);
+            SetWindowTextW(st->pwStatus, L"Changing password\x2026");
+            st->pwThread = CreateThread(nullptr, 0, PasswordChangeThread, st, 0, nullptr);
+            if (!st->pwThread) {
+                EnableWindow(st->changeBtn, TRUE);
+                SetWindowTextW(st->pwStatus, L"Could not start password change.");
             }
             return 0;
         }
