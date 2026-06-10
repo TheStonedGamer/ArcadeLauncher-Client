@@ -405,6 +405,23 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     SetPathForPage(page, result->exePath);
                     if (onPage)
                         SetWindowTextW(PC(ID_P_EDIT1), result->exePath.c_str());
+
+                    // DuckStation has no usable BIOS of its own — auto-deploy the
+                    // PS1 BIOS hosted on the server into its bios/ folder so PS1
+                    // games just work after a one-click emulator download.
+                    if (page == PAGE_PS1) {
+                        std::wstring exe = result->exePath;
+                        std::wstring biosUrl = EmulatorArchiveUrl(m_work, L"scph1001.bin");
+                        std::thread([exe, biosUrl]() {
+                            std::wstring biosDir = DuckBiosDir(exe);
+                            if (biosDir.empty()) return;
+                            std::error_code ec;
+                            fs::create_directories(biosDir, ec);
+                            std::wstring dest = biosDir + L"\\scph1001.bin";
+                            if (DownloadFile(biosUrl, dest))
+                                DuckConfigureBiosIni(exe, L"scph1001.bin");
+                        }).detach();
+                    }
                 } else if (onPage) {
                     MessageBoxW(m_hwnd,
                         L"Download and extraction succeeded, but the executable was not found "

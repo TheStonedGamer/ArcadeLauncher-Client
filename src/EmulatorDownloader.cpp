@@ -61,8 +61,8 @@ static std::string HttpGet(const std::wstring& url) {
     return body;
 }
 
-static bool DownloadFile(const std::wstring& url, const std::wstring& destPath,
-                         std::function<void(uint64_t, uint64_t)> onProgress = {}) {
+bool DownloadFile(const std::wstring& url, const std::wstring& destPath,
+                  std::function<void(uint64_t, uint64_t)> onProgress) {
     WHttpSession sess;
     if (!sess.h) return false;
 

@@ -28,3 +28,8 @@ struct EmulatorDownloadSpec {
 // the matching asset, extracts it, and posts WM_EMUDOWNLOAD_DONE to hwnd.
 void DownloadEmulatorAsync(HWND hwnd, int pageIdx, EmulatorDownloadSpec spec,
                            const std::wstring& appDataDir);
+
+// Synchronously download `url` to `destPath` over WinHTTP (http/https, ranged or
+// whole-file). Returns true on success. Optional progress callback (done, total).
+bool DownloadFile(const std::wstring& url, const std::wstring& destPath,
+                  std::function<void(uint64_t, uint64_t)> onProgress = {});

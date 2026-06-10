@@ -31,3 +31,8 @@ bool DuckDeployBios(const std::wstring& duckExe, const std::wstring& biosSrcPath
 // Where DuckStation looks for / where we place BIOS images (…\bios next to the
 // exe), or empty if duckExe is unset.
 std::wstring DuckBiosDir(const std::wstring& duckExe);
+
+// Point settings.ini's [BIOS] section at a BIOS image already sitting in the
+// bios/ folder (filename only, e.g. "scph1001.bin"). DuckStation also
+// auto-detects images there, so this is belt-and-braces.
+void DuckConfigureBiosIni(const std::wstring& duckExe, const std::wstring& biosFileName);

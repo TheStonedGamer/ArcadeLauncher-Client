@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "FirstLaunchSetup.h"
+#include "EmulatorDownloader.h"
+#include "DuckStationConfig.h"
 #include <commctrl.h>
+#include <thread>
 #pragma comment(lib, "comctl32.lib")
 
 // ── Fonts ─────────────────────────────────────────────────────────────────────
@@ -132,6 +135,24 @@ LRESULT EmulatorSetupWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                     e.state = EmuEntry::St::Done;
                     SetWindowTextW(e.hStatus, L"\x2713 Done");
                     if (m_cfg) e.apply(*m_cfg, res->exePath, res->tag);
+
+                    // Auto-deploy the server-hosted PS1 BIOS once DuckStation lands,
+                    // so PS1 games work without the user supplying their own BIOS.
+                    std::wstring lower = res->exePath;
+                    for (auto& ch : lower) ch = (wchar_t)towlower(ch);
+                    if (m_cfg && lower.find(L"duckstation") != std::wstring::npos) {
+                        std::wstring exe = res->exePath;
+                        std::wstring biosUrl = EmulatorArchiveUrl(*m_cfg, L"scph1001.bin");
+                        std::thread([exe, biosUrl]() {
+                            std::wstring biosDir = DuckBiosDir(exe);
+                            if (biosDir.empty()) return;
+                            std::error_code ec;
+                            fs::create_directories(biosDir, ec);
+                            std::wstring dest = biosDir + L"\\scph1001.bin";
+                            if (DownloadFile(biosUrl, dest))
+                                DuckConfigureBiosIni(exe, L"scph1001.bin");
+                        }).detach();
+                    }
                 } else {
                     e.state = EmuEntry::St::Failed;
                     std::wstring msg = res->exePath.size() > 4
