@@ -999,6 +999,54 @@ ComPtr<ID2D1Bitmap> Renderer::LoadBitmapFromFile(const std::wstring& path) {
     return bmp;
 }
 
+bool Renderer::DecodeImageFile(const std::wstring& path, DecodedImage& out) {
+    if (path.empty()) return false;
+
+    // Use a private WIC factory so this is independent of the render thread's
+    // m_wic and safe to run concurrently on a worker thread.
+    ComPtr<IWICImagingFactory>    wic;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(wic.GetAddressOf()))))
+        return false;
+
+    ComPtr<IWICBitmapDecoder>     dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter>   conv;
+    if (FAILED(wic->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+               WICDecodeMetadataCacheOnLoad, dec.GetAddressOf())))
+        return false;
+    if (FAILED(dec->GetFrame(0, frame.GetAddressOf()))) return false;
+    if (FAILED(wic->CreateFormatConverter(conv.GetAddressOf()))) return false;
+    if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+               WICBitmapDitherTypeNone, nullptr, 0.0,
+               WICBitmapPaletteTypeMedianCut)))
+        return false;
+
+    UINT w = 0, h = 0;
+    if (FAILED(conv->GetSize(&w, &h)) || w == 0 || h == 0) return false;
+
+    out.width  = w;
+    out.height = h;
+    out.pixels.resize((size_t)w * h * 4);
+    WICRect rc{ 0, 0, (INT)w, (INT)h };
+    if (FAILED(conv->CopyPixels(&rc, w * 4, (UINT)out.pixels.size(), out.pixels.data())))
+        return false;
+    return true;
+}
+
+bool Renderer::StoreDecodedArt(const DecodedImage& img) {
+    if (!m_rt || img.pixels.empty() || img.width == 0 || img.height == 0) return false;
+    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap> bmp;
+    if (FAILED(m_rt->CreateBitmap(D2D1::SizeU(img.width, img.height),
+               img.pixels.data(), img.width * 4, props, bmp.GetAddressOf())))
+        return false;
+    std::lock_guard<std::mutex> lk(m_artMutex);
+    m_artCache[img.gameId] = std::move(bmp);
+    return true;
+}
+
 // ── Hit testing ───────────────────────────────────────────────────────────────
 
 int Renderer::HitTestGrid(float x, float y, const RenderState& state,

@@ -110,6 +110,22 @@ public:
     bool LoadGameArt(const std::wstring& gameId, const std::wstring& path);
     void UnloadGameArt(const std::wstring& gameId);
 
+    // CPU pixel buffer produced by an off-thread decode. The expensive WIC decode
+    // is done on a worker thread (DecodeImageFile); the render thread then turns
+    // the buffer into a D2D bitmap cheaply via StoreDecodedArt — so loading box
+    // art never blocks the UI.
+    struct DecodedImage {
+        std::wstring        gameId;
+        UINT                width = 0;
+        UINT                height = 0;
+        std::vector<BYTE>   pixels;   // 32bpp PBGRA, stride = width*4
+    };
+    // Decode an image file to a CPU BGRA buffer. Safe to call off the render
+    // thread; the calling thread must have COM initialized. Returns false on error.
+    static bool DecodeImageFile(const std::wstring& path, DecodedImage& out);
+    // Upload an already-decoded buffer as the game's art bitmap (render thread only).
+    bool StoreDecodedArt(const DecodedImage& img);
+
     // Call after Initialize() to load and attach platform icons.
     void LoadPlatformIcons(PlatformIcons& icons, const EmulatorConfig& emuCfg);
 

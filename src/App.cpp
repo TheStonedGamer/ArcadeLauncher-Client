@@ -637,7 +637,52 @@ static void CleanupXbox360GodLocalCache(const std::wstring& cacheRootPath) {
 }
 
 App::App() {}
-App::~App() {}
+App::~App() { StopArtDecodeWorker(); }
+
+void App::StartArtDecodeWorker() {
+    if (m_artThread.joinable()) return;
+    HWND hwnd = m_hwnd;
+    m_artThread = std::thread([this, hwnd]() {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        for (;;) {
+            std::pair<std::wstring, std::wstring> job;
+            {
+                std::unique_lock<std::mutex> lk(m_artQueueMutex);
+                m_artQueueCv.wait(lk, [this] { return m_artStop || !m_artQueue.empty(); });
+                if (m_artStop && m_artQueue.empty()) break;
+                job = std::move(m_artQueue.front());
+                m_artQueue.pop_front();
+            }
+            auto* img = new Renderer::DecodedImage();
+            img->gameId = job.first;
+            if (Renderer::DecodeImageFile(job.second, *img) && !img->pixels.empty()) {
+                if (!PostMessageW(hwnd, WM_ART_DECODED, 0, (LPARAM)img))
+                    delete img;   // window gone — drop it
+            } else {
+                delete img;
+            }
+        }
+        CoUninitialize();
+    });
+}
+
+void App::StopArtDecodeWorker() {
+    {
+        std::lock_guard<std::mutex> lk(m_artQueueMutex);
+        m_artStop = true;
+    }
+    m_artQueueCv.notify_all();
+    if (m_artThread.joinable()) m_artThread.join();
+}
+
+void App::QueueArtDecode(const std::wstring& gameId, const std::wstring& path) {
+    if (gameId.empty() || path.empty()) return;
+    {
+        std::lock_guard<std::mutex> lk(m_artQueueMutex);
+        m_artQueue.emplace_back(gameId, path);
+    }
+    m_artQueueCv.notify_one();
+}
 
 bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     m_hInst = hInstance;
@@ -702,6 +747,16 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     }
 
     ApplyFilter();
+
+    // Start the off-thread art decoder and immediately load any covers already
+    // cached on disk, so the grid shows local box art instantly instead of
+    // waiting for the network metadata sync to complete.
+    StartArtDecodeWorker();
+    for (const auto& g : m_library.All()) {
+        if (!g.coverArtPath.empty() &&
+            GetFileAttributesW(g.coverArtPath.c_str()) != INVALID_FILE_ATTRIBUTES)
+            QueueArtDecode(g.id, g.coverArtPath);
+    }
 
     if (cfg.startFullscreen) {
         DWORD style = (DWORD)GetWindowLongW(m_hwnd, GWL_STYLE);
@@ -1148,11 +1203,24 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         std::wstring* idPtr = reinterpret_cast<std::wstring*>(lp);
         std::wstring  id    = std::move(*idPtr);
         delete idPtr;
+        // Decode off the UI thread — the worker posts WM_ART_DECODED when the
+        // CPU buffer is ready, keeping the render thread responsive.
         if (auto* g = m_library.FindById(id)) {
             if (!g->coverArtPath.empty())
-                m_renderer.LoadGameArt(g->id, g->coverArtPath);
+                QueueArtDecode(g->id, g->coverArtPath);
         }
-        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_ART_DECODED: {
+        // Worker finished decoding a cover into a CPU buffer. Upload it as a D2D
+        // bitmap here on the render thread (cheap) and repaint.
+        std::unique_ptr<Renderer::DecodedImage> img(
+            reinterpret_cast<Renderer::DecodedImage*>(lp));
+        if (img) {
+            m_renderer.StoreDecodedArt(*img);
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
         return 0;
     }
 

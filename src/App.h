@@ -162,6 +162,20 @@ private:
         std::wstring error;
     };
     std::wstring m_pendingLaunchId;  // --launch <id> from a shortcut, run at startup
+
+    // Off-thread box-art decode. WIC decoding is expensive; doing it on the UI
+    // thread froze the launcher when many covers loaded at once. A single worker
+    // thread decodes queued (id,path) pairs into CPU buffers and posts
+    // WM_ART_DECODED so the render thread only does the cheap D2D upload.
+    void QueueArtDecode(const std::wstring& gameId, const std::wstring& path);
+    void StartArtDecodeWorker();
+    void StopArtDecodeWorker();
+    std::thread                                          m_artThread;
+    std::mutex                                           m_artQueueMutex;
+    std::condition_variable                              m_artQueueCv;
+    std::deque<std::pair<std::wstring, std::wstring>>    m_artQueue;
+    bool                                                 m_artStop = false;
+
     std::mutex m_downloadMutex;
     std::mutex m_authMutex;  // serializes server token refresh
     std::deque<DownloadJob> m_downloadQueue;
@@ -218,6 +232,8 @@ private:
     static constexpr UINT WM_CHANGELOGS_READY = WM_USER + 105;
     // Avatar bytes fetched off-thread; lParam = new std::string* (or null = clear)
     static constexpr UINT WM_AVATAR_READY = WM_USER + 106;
+    // Box art decoded off-thread; lParam = new Renderer::DecodedImage* (UI thread owns/deletes)
+    static constexpr UINT WM_ART_DECODED = WM_USER + 107;
 
     // Context menu command IDs
     static constexpr UINT IDM_LAUNCH      = 5001;
