@@ -411,7 +411,7 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
             26, 50, 430, 18, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
 
         LoginLabel(hwnd, L"Backend URL", 26, 86, 110);
-        st->url = LoginEdit(hwnd, 101, st->cfg->baseUrl.empty() ? L"http://10.0.0.210:8721" : st->cfg->baseUrl, 150, 84, 330);
+        st->url = LoginEdit(hwnd, 101, st->cfg->baseUrl.empty() ? L"https://arcade.orlandoaio.net" : st->cfg->baseUrl, 150, 84, 330);
         LoginLabel(hwnd, L"Username/email", 26, 122, 110);
         st->username = LoginEdit(hwnd, 102, st->cfg->username, 150, 120, 330);
         LoginLabel(hwnd, L"Password", 26, 158, 110);

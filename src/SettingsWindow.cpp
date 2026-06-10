@@ -50,7 +50,7 @@ static std::wstring TrimTrailingSlash(std::wstring value) {
 
 static std::wstring EmulatorArchiveUrl(const AppConfig& cfg, const wchar_t* archiveName) {
     std::wstring base = TrimTrailingSlash(cfg.server.baseUrl.empty()
-        ? L"http://10.0.0.210:8721"
+        ? L"https://arcade.orlandoaio.net"
         : cfg.server.baseUrl);
     return base + L"/emulators/" + archiveName;
 }
