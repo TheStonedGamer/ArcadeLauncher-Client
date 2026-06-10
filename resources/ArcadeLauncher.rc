@@ -10,6 +10,21 @@
 // and shown in the taskbar, alt-tab switcher, and Explorer.
 101 ICON "icon.ico"
 
+// ─── Embedded platform logos ─────────────────────────────────────────────────
+// Real console logos, bundled into the exe (and therefore the MSI) so they are
+// always present without a runtime download. IDs match src/PlatformLogoRes.h.
+200 RCDATA "platform_logos\\gamecube.png"
+201 RCDATA "platform_logos\\wii.png"
+202 RCDATA "platform_logos\\n64.png"
+203 RCDATA "platform_logos\\nes.png"
+204 RCDATA "platform_logos\\snes.png"
+205 RCDATA "platform_logos\\ps1.png"
+206 RCDATA "platform_logos\\ps2.png"
+207 RCDATA "platform_logos\\ps3.png"
+208 RCDATA "platform_logos\\xbox360.png"
+209 RCDATA "platform_logos\\switch.png"
+210 RCDATA "platform_logos\\xbox.ico"
+
 // ─── Application manifest ─────────────────────────────────────────────────────
 // Opts into Common Controls v6 (visual styles) and declares DPI awareness.
 1 RT_MANIFEST "ArcadeLauncher.manifest"

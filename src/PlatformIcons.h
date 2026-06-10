@@ -46,6 +46,9 @@ private:
     ComPtr<ID2D1Bitmap> LoadFromFile(const std::wstring& filePath,
                                      ID2D1RenderTarget* rt,
                                      IWICImagingFactory* wic);
+    ComPtr<ID2D1Bitmap> LoadFromResource(int resId,
+                                         ID2D1RenderTarget* rt,
+                                         IWICImagingFactory* wic);
     ComPtr<ID2D1Bitmap> HIconToD2D(HICON hIcon, ID2D1RenderTarget* rt);
     ComPtr<ID2D1Bitmap> CreateGeneratedIcon(Platform platform, ID2D1RenderTarget* rt);
 

@@ -412,8 +412,16 @@ void Renderer::DrawSidebar(const RenderState& state) {
             if (icon) {
                 float iconSz = 20.0f;
                 float iconX = 8.0f, iconY = y + (38.0f - iconSz) / 2.0f;
+                // Light rounded chip behind the logo. Many real console logos are
+                // dark wordmarks (PlayStation, Switch, Xbox 360) that would vanish
+                // on the dark sidebar, so we give every platform icon a consistent
+                // light tile to sit on.
+                D2D1_RECT_F chip = D2D1::RectF(iconX - 3.0f, iconY - 3.0f,
+                                               iconX + iconSz + 3.0f, iconY + iconSz + 3.0f);
+                m_brushCard->SetColor(D2D1::ColorF(0.93f, 0.94f, 0.96f, active ? 1.0f : 0.78f));
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6.0f, 6.0f), m_brushCard.Get());
                 m_rt->DrawBitmap(icon, D2D1::RectF(iconX, iconY, iconX + iconSz, iconY + iconSz),
-                                 active ? 1.0f : 0.65f,
+                                 active ? 1.0f : 0.85f,
                                  D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
             } else {
                 D2D1_ELLIPSE dot = D2D1::Ellipse(D2D1::Point2F(20.0f, y + 19.0f), 5, 5);

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "PlatformIcons.h"
+#include "PlatformLogoRes.h"
 
 static std::wstring RegRead(HKEY root, const wchar_t* subkey, const wchar_t* val) {
     HKEY hk; wchar_t buf[MAX_PATH]{};
@@ -233,8 +234,8 @@ void PlatformIcons::Load(const EmulatorConfig& emuCfg,
         { Platform::Epic,    FindEpicExe() },
         { Platform::GOG,     FindGogExe() },
         { Platform::Dolphin, FindDolphinExe(emuCfg.dolphinPath) },
-        { Platform::GameCube, FindDolphinExe(emuCfg.dolphinPath) },
-        { Platform::Wii,     FindDolphinExe(emuCfg.dolphinPath) },
+        // GameCube/Wii intentionally omitted here — they use the actual console
+        // logos (downloaded via DownloadConsoleIcons), not the Dolphin exe icon.
         { Platform::Ryujinx, FindRyujinxExe(emuCfg.ryujinxPath) },
         { Platform::RPCS3,   emuCfg.rpcs3Path       },
         { Platform::N64,     emuCfg.n64Path         },
@@ -251,6 +252,28 @@ void PlatformIcons::Load(const EmulatorConfig& emuCfg,
             continue;
         auto bmp = LoadFromExe(e.exe, rt, wic);
         if (bmp) m_icons[(int)e.p] = std::move(bmp);
+    }
+
+    // Real console logos bundled in the exe. These take precedence over the
+    // emulator exe icons above so each console tab shows the actual platform
+    // logo (e.g. the N64 wordmark instead of the Gopher64 emulator icon).
+    struct LogoRes { Platform p; int id; };
+    static const LogoRes kEmbeddedLogos[] = {
+        { Platform::GameCube, IDR_LOGO_GAMECUBE },
+        { Platform::Wii,      IDR_LOGO_WII      },
+        { Platform::N64,      IDR_LOGO_N64      },
+        { Platform::NES,      IDR_LOGO_NES      },
+        { Platform::SNES,     IDR_LOGO_SNES     },
+        { Platform::PS1,      IDR_LOGO_PS1      },
+        { Platform::PS2,      IDR_LOGO_PS2      },
+        { Platform::RPCS3,    IDR_LOGO_PS3      },
+        { Platform::Xbox360,  IDR_LOGO_XBOX360  },
+        { Platform::Ryujinx,  IDR_LOGO_SWITCH   },
+        { Platform::Xbox,     IDR_LOGO_XBOX     },
+    };
+    for (auto& l : kEmbeddedLogos) {
+        auto bmp = LoadFromResource(l.id, rt, wic);
+        if (bmp) m_icons[(int)l.p] = std::move(bmp);
     }
 
     // Repacks: load from cache (non-blocking; async download via TryDownloadAndLoadRepacks)
@@ -306,6 +329,9 @@ bool PlatformIcons::DownloadConsoleIcons(const std::wstring& appDataDir) {
 void PlatformIcons::TryLoadConsoleIcons(ID2D1RenderTarget* rt, IWICImagingFactory* wic) {
     std::wstring appDir = GetAppDataPath();
     for (auto& ci : kConsoleIcons) {
+        // Never override a bundled console logo (loaded in Load) with the lower-
+        // quality favicon fallback — only fill platforms that have no icon yet.
+        if (m_icons.count((int)ci.platform)) continue;
         std::wstring path = appDir + L"\\" + ci.cacheFile;
         if (!FileExists(path)) continue;
         auto bmp = LoadFromFile(path, rt, wic);
@@ -377,6 +403,41 @@ ComPtr<ID2D1Bitmap> PlatformIcons::LoadFromExe(const std::wstring& exePath,
 
     auto bmp = HIconToD2D(hIcon, rt);
     DestroyIcon(hIcon);
+    return bmp;
+}
+
+// Loads an embedded RT_RCDATA blob (PNG or ICO) by resource id and decodes it
+// with WIC. These are the bundled console logos that ship inside the exe.
+ComPtr<ID2D1Bitmap> PlatformIcons::LoadFromResource(int resId,
+                                                     ID2D1RenderTarget* rt,
+                                                     IWICImagingFactory* wic) {
+    if (!rt || !wic) return nullptr;
+
+    HRSRC hRes = FindResourceW(nullptr, MAKEINTRESOURCEW(resId), RT_RCDATA);
+    if (!hRes) return nullptr;
+    HGLOBAL hData = LoadResource(nullptr, hRes);
+    if (!hData) return nullptr;
+    void* p = LockResource(hData);
+    DWORD  sz = SizeofResource(nullptr, hRes);
+    if (!p || sz == 0) return nullptr;
+
+    ComPtr<IWICStream> stream;
+    if (FAILED(wic->CreateStream(stream.GetAddressOf()))) return nullptr;
+    if (FAILED(stream->InitializeFromMemory((BYTE*)p, sz))) return nullptr;
+
+    ComPtr<IWICBitmapDecoder>     dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter>   conv;
+    if (FAILED(wic->CreateDecoderFromStream(stream.Get(), nullptr,
+               WICDecodeMetadataCacheOnLoad, dec.GetAddressOf()))) return nullptr;
+    if (FAILED(dec->GetFrame(0, frame.GetAddressOf()))) return nullptr;
+    if (FAILED(wic->CreateFormatConverter(conv.GetAddressOf()))) return nullptr;
+    if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+               WICBitmapDitherTypeNone, nullptr, 0.0,
+               WICBitmapPaletteTypeMedianCut))) return nullptr;
+
+    ComPtr<ID2D1Bitmap> bmp;
+    rt->CreateBitmapFromWicBitmap(conv.Get(), nullptr, bmp.GetAddressOf());
     return bmp;
 }
 
