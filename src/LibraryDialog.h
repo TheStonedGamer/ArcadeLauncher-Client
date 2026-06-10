@@ -15,9 +15,15 @@ bool ShowLibraryFoldersDialog(HWND owner, ServerConfig& cfg);
 // the chosen install root and the function returns true; false on cancel.
 // `moving` switches the wording to a move operation. cfg may be modified (new
 // folder added / default / always-ask changed) — caller should persist.
+// When installing (moving == false), the dialog also offers "create a desktop
+// shortcut" and "create a Start Menu shortcut" checkboxes; if the corresponding
+// out-pointer is non-null it receives the user's choice (so the caller can make
+// the shortcuts once the install finishes). Ignored for moves.
 bool ShowInstallLocationDialog(HWND owner, ServerConfig& cfg,
                                const std::wstring& gameTitle,
-                               std::wstring& outRoot, bool moving);
+                               std::wstring& outRoot, bool moving,
+                               bool* outDesktopShortcut = nullptr,
+                               bool* outStartMenuShortcut = nullptr);
 
 // Generic single-line text prompt (launch options, new collection name, …).
 // `value` is seeded with the initial text and receives the result. Returns true

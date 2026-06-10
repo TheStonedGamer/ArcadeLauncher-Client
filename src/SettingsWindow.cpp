@@ -184,14 +184,20 @@ void SettingsWindow::Open(HWND parent, AppConfig& cfg,
     RegisterClassExW(&wc);
 
     RECT pr; GetWindowRect(parent, &pr);
-    int X = pr.left + (pr.right  - pr.left - WIN_W) / 2;
-    int Y = pr.top  + (pr.bottom - pr.top  - WIN_H) / 2;
+    // Size the WINDOW so the CLIENT area is exactly WIN_W x WIN_H — the page
+    // layout (K_CX/K_CW, BOT_Y) is in client coords and assumes the full extent.
+    RECT swr = { 0, 0, WIN_W, WIN_H };
+    AdjustWindowRectEx(&swr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    int winW = swr.right - swr.left;
+    int winH = swr.bottom - swr.top;
+    int X = pr.left + (pr.right  - pr.left - winW) / 2;
+    int Y = pr.top  + (pr.bottom - pr.top  - winH) / 2;
 
     m_hwnd = CreateWindowExW(
         WS_EX_DLGMODALFRAME,
         WNDCLASS, L"Settings",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-        X, Y, WIN_W, WIN_H, parent, nullptr, GetModuleHandleW(nullptr), this);
+        X, Y, winW, winH, parent, nullptr, GetModuleHandleW(nullptr), this);
 
     if (m_hwnd) {
         EnableWindow(parent, FALSE);
@@ -1020,6 +1026,7 @@ void SettingsWindow::BuildPS1Page() {
     AddPC(SmallLabel(m_hwnd, L"Volume (0\x2013""100)", D_COL2, y + 18, 120));
     AddPC(Edit      (m_hwnd, ID_EC_E1,         D_COL2, y + 34, 70));
     AddPC(Btn  (m_hwnd, L"Open DuckStation\x2026", ID_EC_B1, D_COL3, y + 32, 160, 26));
+    AddPC(Btn  (m_hwnd, L"Set PS1 BIOS\x2026",     ID_EC_B2, D_COL3, y + 4, 160, 26));
     y += 90;
 }
 
@@ -2096,6 +2103,32 @@ void SettingsWindow::HandlePageCommand(int id) {
                             L"DuckStation", MB_OK | MB_ICONINFORMATION);
             else
                 ShellExecuteW(m_hwnd, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        else if (id == ID_EC_B2) {  // Set PS1 BIOS (e.g. SCPH1001.BIN)
+            std::wstring exe = GetTxt(PC(ID_P_EDIT1));
+            if (exe.empty()) {
+                MessageBoxW(m_hwnd, L"Set the DuckStation executable path first.",
+                            L"DuckStation", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            wchar_t buf[MAX_PATH]{};
+            OPENFILENAMEW ofn{};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner   = m_hwnd;
+            ofn.lpstrFilter = L"PS1 BIOS (*.bin)\0*.bin\0All Files\0*.*\0";
+            ofn.lpstrFile   = buf;
+            ofn.nMaxFile    = MAX_PATH;
+            ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            ofn.lpstrTitle  = L"Choose the PS1 BIOS (SCPH1001.BIN)";
+            if (GetOpenFileNameW(&ofn)) {
+                if (DuckDeployBios(exe, buf))
+                    MessageBoxW(m_hwnd,
+                        (L"BIOS installed to:\n" + DuckBiosDir(exe)).c_str(),
+                        L"DuckStation", MB_OK | MB_ICONINFORMATION);
+                else
+                    MessageBoxW(m_hwnd, L"Could not install the BIOS file.",
+                                L"DuckStation", MB_OK | MB_ICONERROR);
+            }
         }
         break;
 

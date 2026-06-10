@@ -66,14 +66,21 @@ void RegisterModalClass(const wchar_t* name, WNDPROC proc) {
 // Centered modal window + standard IsDialogMessage loop.
 HWND CreateCenteredModal(const wchar_t* cls, const wchar_t* title, HWND owner,
                          int w, int h, void* param) {
+    // w/h are the desired CLIENT size. Inflate by the non-client frame so the
+    // caption/borders don't eat into the right and bottom padding (controls are
+    // positioned in client coordinates).
+    RECT wr = { 0, 0, w, h };
+    AdjustWindowRectEx(&wr, WS_CAPTION | WS_POPUP | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    int winW = wr.right - wr.left;
+    int winH = wr.bottom - wr.top;
     RECT rc{};
     if (owner) GetWindowRect(owner, &rc);
     else rc = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
     return CreateWindowExW(WS_EX_DLGMODALFRAME, cls, title,
         WS_CAPTION | WS_POPUP | WS_SYSMENU,
-        rc.left + ((rc.right - rc.left) - w) / 2,
-        rc.top + ((rc.bottom - rc.top) - h) / 2,
-        w, h, owner, nullptr, GetModuleHandleW(nullptr), param);
+        rc.left + ((rc.right - rc.left) - winW) / 2,
+        rc.top + ((rc.bottom - rc.top) - winH) / 2,
+        winW, winH, owner, nullptr, GetModuleHandleW(nullptr), param);
 }
 
 void RunModalLoop(HWND hwnd, HWND owner, bool& done) {
@@ -340,7 +347,7 @@ bool ShowTotpEnroll(HWND owner, ServerConfig& cfg) {
     st.cfg = &cfg;
     st.owner = owner;
     HWND hwnd = CreateCenteredModal(kTotpClass, L"Enable Two-Factor Authentication",
-                                    owner, 500, 470, &st);
+                                    owner, 484, 440, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.enabled;
@@ -412,7 +419,7 @@ bool ShowTotpDisable(HWND owner, ServerConfig& cfg) {
     DisableState st;
     st.cfg = &cfg;
     HWND hwnd = CreateCenteredModal(cls, L"Disable Two-Factor Authentication",
-                                    owner, 480, 290, &st);
+                                    owner, 464, 254, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.disabled;
@@ -507,7 +514,20 @@ struct AccountState {
     // Profile picture (server-synced). avatarBmp is a top-down 32bpp DIB used for
     // the circular preview; null = show the username-initial placeholder.
     HBITMAP avatarBmp = nullptr;
+
+    // Background loader: the initial account + avatar fetch runs on this thread so
+    // a slow/unreachable server never blocks the UI thread (the old synchronous
+    // fetch inside WM_CREATE made the launcher go "not responding" and could
+    // crash mid-creation). Results are delivered via WM_USER+1.
+    HANDLE loadThread = nullptr;
+    // Filled by the worker, consumed on the UI thread in WM_USER+1.
+    bool         loadGotAccount = false;
+    std::wstring loadIdentity;
+    bool         loadTotpEnabled = false;
+    std::string  loadAvatarBytes;
 };
+
+static constexpr UINT WM_ACCOUNT_LOADED = WM_USER + 1;
 
 // (Re)fetch the account avatar from the server and rebuild the preview bitmap.
 // Synchronous — runs on the modal dialog's UI thread (the request is small).
@@ -539,6 +559,36 @@ void RefreshAccount(AccountState* st) {
         ? L"Two-factor authentication is ON."
         : L"Two-factor authentication is OFF.");
     SetWindowTextW(st->totpBtn, st->totpEnabled ? L"Disable 2FA…" : L"Enable 2FA…");
+}
+
+// Worker thread: fetch account info + avatar off the UI thread. Posts
+// WM_ACCOUNT_LOADED when done; the dialog joins this thread in WM_DESTROY so the
+// AccountState it writes into stays alive for the thread's whole lifetime.
+DWORD WINAPI AccountLoadThread(LPVOID param) {
+    auto* st = reinterpret_cast<AccountState*>(param);
+    ServerConfig cfg = *st->cfg;
+    ServerClient client(cfg);
+
+    ServerClient::AccountInfo info;
+    std::wstring err;
+    if (client.GetAccount(info, err)) {
+        std::wstring who = info.username;
+        if (!info.email.empty()) who += L"  <" + info.email + L">";
+        if (info.isAdmin) who += L"   (admin)";
+        st->loadIdentity = who;
+        st->loadTotpEnabled = info.totpEnabled;
+        st->loadGotAccount = true;
+    } else {
+        st->loadIdentity = L"Signed in as " + st->cfg->username;
+        st->loadGotAccount = false;
+    }
+
+    std::string bytes; std::wstring aerr;
+    if (client.GetAvatar(bytes, aerr) && !bytes.empty())
+        st->loadAvatarBytes = std::move(bytes);
+
+    if (st->hwnd) PostMessageW(st->hwnd, WM_ACCOUNT_LOADED, 0, 0);
+    return 0;
 }
 
 LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -576,12 +626,31 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         EnsureFonts();
         ApplyFont(hwnd, g_uiFont, g_titleFont);
-        RefreshAccount(st);
-        ReloadAvatar(st);
+        // Show placeholders immediately, then fetch account + avatar in the
+        // background so a slow/unreachable server can't freeze or crash the UI.
+        SetWindowTextW(st->identity, (L"Signed in as " + st->cfg->username).c_str());
+        SetWindowTextW(st->totpStatus, L"Loading\x2026");
+        st->loadThread = CreateThread(nullptr, 0, AccountLoadThread, st, 0, nullptr);
         SetFocus(st->current);
         return 0;
     }
     if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+    if (msg == WM_ACCOUNT_LOADED) {
+        st->totpEnabled = st->loadTotpEnabled;
+        if (!st->loadIdentity.empty())
+            SetWindowTextW(st->identity, st->loadIdentity.c_str());
+        SetWindowTextW(st->totpStatus, st->totpEnabled
+            ? L"Two-factor authentication is ON."
+            : L"Two-factor authentication is OFF.");
+        SetWindowTextW(st->totpBtn, st->totpEnabled ? L"Disable 2FA\x2026" : L"Enable 2FA\x2026");
+        if (!st->loadAvatarBytes.empty()) {
+            if (st->avatarBmp) { DeleteObject(st->avatarBmp); st->avatarBmp = nullptr; }
+            st->avatarBmp = DecodeAvatarThumb(st->loadAvatarBytes, kAvatarDim);
+            std::string().swap(st->loadAvatarBytes);
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
     if (msg == WM_PAINT) {
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps);
         const int ax = 410, ay = 44, ad = kAvatarDim;
@@ -619,6 +688,12 @@ LRESULT CALLBACK AccountWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (msg == WM_DESTROY) {
+        // Join the loader so it can't write into AccountState after it is gone.
+        if (st->loadThread) {
+            WaitForSingleObject(st->loadThread, INFINITE);
+            CloseHandle(st->loadThread);
+            st->loadThread = nullptr;
+        }
         if (st->avatarBmp) { DeleteObject(st->avatarBmp); st->avatarBmp = nullptr; }
         return 0;
     }
@@ -716,7 +791,7 @@ bool ShowAccountDialog(HWND owner, ServerConfig& cfg) {
     AccountState st;
     st.cfg = &cfg;
     st.owner = owner;
-    HWND hwnd = CreateCenteredModal(kAccountClass, L"Account", owner, 520, 450, &st);
+    HWND hwnd = CreateCenteredModal(kAccountClass, L"Account", owner, 542, 438, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.changed;
@@ -726,7 +801,7 @@ bool ShowForcedPasswordChange(HWND owner, ServerConfig& cfg) {
     RegisterModalClass(kForceClass, ForceWndProc);
     ForceState st;
     st.cfg = &cfg;
-    HWND hwnd = CreateCenteredModal(kForceClass, L"Password Change Required", owner, 500, 320, &st);
+    HWND hwnd = CreateCenteredModal(kForceClass, L"Password Change Required", owner, 474, 290, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.changed;

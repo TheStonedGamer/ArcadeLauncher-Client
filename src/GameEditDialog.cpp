@@ -48,29 +48,37 @@ void GameEditDialog::Run(HWND parent,
         registered = true;
     }
 
-    // Height: base 168 (title + platform rows + buttons)
+    // CLIENT height = lowest control + a ~22px bottom margin (BuildControls lays
+    // controls out top-down in client coordinates).
     // + 30 if emulated (rename checkbox row). Properties mode is taller to fit
     // the read-only info block and the launch-options editor.
     int H;
     const wchar_t* caption;
     if (m_props) {
-        H = 380 + (isEmulated ? 30 : 0);
+        H = isEmulated ? 343 : 313;
         caption = L"Game Properties";
     } else {
-        H = isEmulated ? 200 : 170;
+        H = isEmulated ? 165 : 135;
         caption = L"Edit Game";
     }
 
+    // W/H are the desired client size; inflate by the frame so the caption and
+    // borders don't eat into the right/bottom padding.
+    RECT wr = { 0, 0, W, H };
+    AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    int winW = wr.right - wr.left;
+    int winH = wr.bottom - wr.top;
+
     RECT pr;
     GetWindowRect(parent, &pr);
-    int px = pr.left + (pr.right  - pr.left - W) / 2;
-    int py = pr.top  + (pr.bottom - pr.top  - H) / 2;
+    int px = pr.left + (pr.right  - pr.left - winW) / 2;
+    int py = pr.top  + (pr.bottom - pr.top  - winH) / 2;
 
     m_hwnd = CreateWindowExW(
         WS_EX_DLGMODALFRAME,
         WNDCLS, caption,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        px, py, W, H,
+        px, py, winW, winH,
         parent, nullptr, GetModuleHandleW(nullptr), this);
 
     if (!m_hwnd) return;

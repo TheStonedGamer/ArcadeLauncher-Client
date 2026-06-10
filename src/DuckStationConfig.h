@@ -20,3 +20,14 @@ struct DuckSettings {
 std::wstring DuckConfigPath(const std::wstring& duckExe);
 void DuckLoadSettings(const std::wstring& duckExe, DuckSettings& out);
 bool DuckApplySettings(const std::wstring& duckExe, const DuckSettings& s);
+
+// Copy a PS1 BIOS image (e.g. SCPH1001.BIN) into DuckStation's bios/ folder next
+// to the exe and point settings.ini's [BIOS] section at it (DuckStation also
+// auto-detects images dropped in that folder). Returns true if the file was
+// placed. `duckExe` is the DuckStation executable path; `biosSrcPath` the chosen
+// BIOS file.
+bool DuckDeployBios(const std::wstring& duckExe, const std::wstring& biosSrcPath);
+
+// Where DuckStation looks for / where we place BIOS images (…\bios next to the
+// exe), or empty if duckExe is unset.
+std::wstring DuckBiosDir(const std::wstring& duckExe);

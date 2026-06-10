@@ -24,6 +24,16 @@ public:
     bool Initialize(HINSTANCE hInstance, bool startInTray = false);
     int  Run();
 
+    // Set by wWinMain when invoked as `ArcadeLauncher.exe --launch <id>` (from a
+    // game shortcut). The game is launched once the UI is up.
+    void SetPendingLaunchId(const std::wstring& id) { m_pendingLaunchId = id; }
+    // Launch (or install) a game by its catalog id. No-op if unknown.
+    void LaunchById(const std::wstring& id);
+
+    // WM_COPYDATA tag used to forward a `--launch <id>` request from a second
+    // instance to the already-running one.
+    static constexpr ULONG_PTR kCopyDataLaunchId = 0xA5CADE01;
+
 private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -62,7 +72,9 @@ private:
     // Resolve the install location (library folder) for a server game. Returns
     // false if the user cancelled the picker. outRoot is empty when no library
     // folders are configured (the server default installRoot is then used).
-    bool ChooseInstallRoot(const std::wstring& title, std::wstring& outRoot);
+    bool ChooseInstallRoot(const std::wstring& title, std::wstring& outRoot,
+                           bool* outDesktopShortcut = nullptr,
+                           bool* outStartMenuShortcut = nullptr);
     void DownloadGameInBackground(int visibleIdx);
     void OpenDownloadStatus();
     void RefreshDownloadStatusWindow();
@@ -145,8 +157,11 @@ private:
         bool failed = false;
         bool autoLaunch = false;  // launch the game when this install completes
         std::wstring installRoot; // chosen library folder (empty = server default)
+        bool makeDesktopShortcut = false;   // create shortcuts once installed
+        bool makeStartMenuShortcut = false;
         std::wstring error;
     };
+    std::wstring m_pendingLaunchId;  // --launch <id> from a shortcut, run at startup
     std::mutex m_downloadMutex;
     std::mutex m_authMutex;  // serializes server token refresh
     std::deque<DownloadJob> m_downloadQueue;

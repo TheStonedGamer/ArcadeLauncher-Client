@@ -7,8 +7,81 @@
 #include "AccountDialog.h"
 #include "LibraryDialog.h"
 #include <commctrl.h>
+#include <shlobj.h>      // SHGetKnownFolderPath, IShellLinkW
+#include <shobjidl.h>
 
 #pragma comment(lib, "comctl32.lib")
+
+// Full path to this running launcher executable.
+static std::wstring ThisExePath() {
+    wchar_t buf[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    return buf;
+}
+
+// Write a .lnk at lnkPath that runs `target args`. Creates parent dirs.
+// Returns true on success. COM is assumed initialized (it is, in wWinMain).
+static bool WriteShellLink(const std::wstring& lnkPath, const std::wstring& target,
+                           const std::wstring& args, const std::wstring& desc) {
+    std::error_code ec;
+    fs::create_directories(fs::path(lnkPath).parent_path(), ec);
+    ComPtr<IShellLinkW> link;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&link))))
+        return false;
+    link->SetPath(target.c_str());
+    if (!args.empty()) link->SetArguments(args.c_str());
+    if (!desc.empty()) link->SetDescription(desc.c_str());
+    link->SetIconLocation(target.c_str(), 0);
+    ComPtr<IPersistFile> pf;
+    if (FAILED(link.As(&pf))) return false;
+    return SUCCEEDED(pf->Save(lnkPath.c_str(), TRUE));
+}
+
+// Sanitize a game title into a safe .lnk filename (strip path-invalid chars).
+static std::wstring SafeShortcutName(const std::wstring& title) {
+    std::wstring out;
+    for (wchar_t c : title) {
+        if (wcschr(L"\\/:*?\"<>|", c)) out += L' ';
+        else out += c;
+    }
+    while (!out.empty() && (out.back() == L' ' || out.back() == L'.')) out.pop_back();
+    if (out.empty()) out = L"Game";
+    return out;
+}
+
+// Create desktop and/or Start Menu shortcuts that launch a game by id through
+// the launcher (`ArcadeLauncher.exe --launch <id>`). Start Menu entries live
+// under "Arcade Launcher\Games\<platform>".
+static void CreateGameShortcuts(const std::wstring& gameId, const std::wstring& title,
+                                const std::wstring& platform,
+                                bool desktop, bool startMenu) {
+    if (!desktop && !startMenu) return;
+    std::wstring exe = ThisExePath();
+    std::wstring args = L"--launch " + gameId;
+    std::wstring name = SafeShortcutName(title);
+
+    auto knownFolder = [](REFKNOWNFOLDERID id) -> std::wstring {
+        PWSTR p = nullptr; std::wstring r;
+        if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &p))) r = p;
+        if (p) CoTaskMemFree(p);
+        return r;
+    };
+
+    if (desktop) {
+        std::wstring dir = knownFolder(FOLDERID_Desktop);
+        if (!dir.empty())
+            WriteShellLink(dir + L"\\" + name + L".lnk", exe, args, title);
+    }
+    if (startMenu) {
+        std::wstring programs = knownFolder(FOLDERID_Programs);
+        if (!programs.empty()) {
+            std::wstring dir = programs + L"\\Arcade Launcher\\Games\\" +
+                               SafeShortcutName(platform);
+            WriteShellLink(dir + L"\\" + name + L".lnk", exe, args, title);
+        }
+    }
+}
 
 static const wchar_t* WNDCLASS_NAME = L"ArcadeLauncherWnd";
 static const wchar_t* COPY_PROGRESS_WNDCLASS = L"ArcadeLauncherCopyProgressWnd";
@@ -66,13 +139,17 @@ public:
         GetWindowRect(owner, &ownerRc);
         int w = 420;
         int h = 138;
-        int x = ownerRc.left + ((ownerRc.right - ownerRc.left) - w) / 2;
-        int y = ownerRc.top + ((ownerRc.bottom - ownerRc.top) - h) / 2;
+        RECT wr = { 0, 0, w, h };
+        AdjustWindowRectEx(&wr, WS_CAPTION | WS_POPUP, FALSE, WS_EX_DLGMODALFRAME);
+        int winW = wr.right - wr.left;
+        int winH = wr.bottom - wr.top;
+        int x = ownerRc.left + ((ownerRc.right - ownerRc.left) - winW) / 2;
+        int y = ownerRc.top + ((ownerRc.bottom - ownerRc.top) - winH) / 2;
 
         m_hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, COPY_PROGRESS_WNDCLASS,
             title.c_str(),
             WS_CAPTION | WS_POPUP,
-            x, y, w, h, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
+            x, y, winW, winH, owner, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!m_hwnd) return false;
 
         m_title = CreateWindowExW(0, WC_STATICW, title.c_str(),
@@ -278,14 +355,18 @@ static bool ShowServerLoginDialog(HWND owner, ServerConfig& cfg) {
         GetWindowRect(owner, &rc);
     else
         rc = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
-    int w = 520, h = 350;
+    int w = 506, h = 336;
+    RECT lwr = { 0, 0, w, h };
+    AdjustWindowRectEx(&lwr, WS_CAPTION | WS_POPUP | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    int winW = lwr.right - lwr.left;
+    int winH = lwr.bottom - lwr.top;
     ServerLoginState st{ &cfg, owner };
     if (owner) EnableWindow(owner, FALSE);
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, SERVER_LOGIN_WNDCLASS,
         L"ArcadeLauncher Server Sign In", WS_CAPTION | WS_POPUP | WS_SYSMENU,
-        rc.left + ((rc.right - rc.left) - w) / 2,
-        rc.top + ((rc.bottom - rc.top) - h) / 2,
-        w, h, owner, nullptr, GetModuleHandleW(nullptr), &st);
+        rc.left + ((rc.right - rc.left) - winW) / 2,
+        rc.top + ((rc.bottom - rc.top) - winH) / 2,
+        winW, winH, owner, nullptr, GetModuleHandleW(nullptr), &st);
     if (!hwnd) {
         if (owner) EnableWindow(owner, TRUE);
         return false;
@@ -712,7 +793,19 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     SetTimer(m_hwnd, TIMER_SAVE, 30000,  nullptr); // autosave every 30s
     SetTimer(m_hwnd, TIMER_RESYNC, 600000, nullptr); // re-sync server catalog every 10 min
 
+    // Launched from a game shortcut (`--launch <id>`): start it once the loop runs.
+    if (!m_pendingLaunchId.empty())
+        PostMessageW(m_hwnd, WM_USER + 8, 0,
+                     (LPARAM)new std::wstring(m_pendingLaunchId));
+
     return true;
+}
+
+void App::LaunchById(const std::wstring& id) {
+    if (auto* g = m_library.FindById(id)) {
+        Game copy = *g;
+        LaunchGame(copy);
+    }
 }
 
 int App::Run() {
@@ -781,6 +874,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (!payload) return 0;
         std::unique_ptr<ServerInstallDonePayload> done(payload);
         bool autoLaunch = false;
+        bool wantDesktop = false, wantStartMenu = false;
         {
             std::lock_guard<std::mutex> lk(m_downloadMutex);
             for (auto& job : m_downloadQueue) {
@@ -790,6 +884,8 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     job.failed = !done->result.ok;
                     job.error = done->result.error;
                     autoLaunch = job.autoLaunch;
+                    wantDesktop = job.makeDesktopShortcut;
+                    wantStartMenu = job.makeStartMenuShortcut;
                     if (done->result.ok && job.total > 0) job.done = job.total;
                     break;
                 }
@@ -807,6 +903,10 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 stored->installState = InstallState::Installed;
                 stored->installProgressPermille = 1000;
                 SaveAll();
+                if (wantDesktop || wantStartMenu)
+                    CreateGameShortcuts(stored->id, stored->title,
+                                        PlatformName(stored->platform),
+                                        wantDesktop, wantStartMenu);
                 if (!autoLaunch)
                     ShowToast(L"Download complete",
                               stored->title + L" is ready to play.");
@@ -1050,6 +1150,32 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
+    }
+
+    case WM_USER + 8: {
+        // Launch a game by id (from a desktop/Start-Menu shortcut, possibly
+        // forwarded from a second instance).
+        std::unique_ptr<std::wstring> id(reinterpret_cast<std::wstring*>(lp));
+        if (id && !id->empty()) LaunchById(*id);
+        return 0;
+    }
+
+    case WM_COPYDATA: {
+        // A second `--launch <id>` instance forwarded a game id to us.
+        auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lp);
+        if (cds && cds->dwData == kCopyDataLaunchId && cds->lpData &&
+            cds->cbData >= sizeof(wchar_t)) {
+            std::wstring id(reinterpret_cast<const wchar_t*>(cds->lpData),
+                            cds->cbData / sizeof(wchar_t));
+            while (!id.empty() && id.back() == L'\0') id.pop_back();
+            if (!id.empty()) {
+                ShowWindow(hwnd, SW_SHOW);
+                ShowWindow(hwnd, SW_RESTORE);
+                SetForegroundWindow(hwnd);
+                LaunchById(id);
+            }
+        }
+        return TRUE;
     }
 
     case WM_CHANGELOGS_READY: {
@@ -1929,12 +2055,16 @@ void App::LaunchGame(const Game& game) {
 
 // Enqueue a server game for background install (optionally auto-launching when
 // the install completes). Shared by the Play action and the Download button.
-bool App::ChooseInstallRoot(const std::wstring& title, std::wstring& outRoot) {
+bool App::ChooseInstallRoot(const std::wstring& title, std::wstring& outRoot,
+                            bool* outDesktopShortcut, bool* outStartMenuShortcut) {
     ServerConfig& server = m_config.Get().server;
     outRoot.clear();
+    if (outDesktopShortcut)   *outDesktopShortcut = false;
+    if (outStartMenuShortcut) *outStartMenuShortcut = false;
     if (server.libraryFolders.empty()) return true;  // server default installRoot
     if (server.alwaysAskInstallLocation) {
-        if (!ShowInstallLocationDialog(m_hwnd, server, title, outRoot, false))
+        if (!ShowInstallLocationDialog(m_hwnd, server, title, outRoot, false,
+                                       outDesktopShortcut, outStartMenuShortcut))
             return false;
         SaveAll();  // dialog may have added a folder or changed the default
         return true;
@@ -1951,7 +2081,9 @@ void App::QueueServerInstall(const Game& game, bool autoLaunch) {
     // Steam-style install-location selection. Pick the target library folder
     // before queuing so the worker installs into the chosen drive.
     std::wstring chosenRoot;
-    if (!ChooseInstallRoot(game.title, chosenRoot)) return;  // cancelled
+    bool wantDesktop = false, wantStartMenu = false;
+    if (!ChooseInstallRoot(game.title, chosenRoot, &wantDesktop, &wantStartMenu))
+        return;  // cancelled
 
     // Make sure a valid shared token is in the config before the background
     // worker (which reads m_config) starts hitting the server.
@@ -1975,6 +2107,8 @@ void App::QueueServerInstall(const Game& game, bool autoLaunch) {
         job.title = game.title;
         job.autoLaunch = autoLaunch;
         job.installRoot = chosenRoot;
+        job.makeDesktopShortcut = wantDesktop;
+        job.makeStartMenuShortcut = wantStartMenu;
         m_downloadQueue.push_back(std::move(job));
     }
     if (auto* stored = m_library.FindById(game.id)) {
@@ -2345,9 +2479,13 @@ void App::OpenDownloadStatus() {
         }
         RECT rc{};
         GetWindowRect(m_hwnd, &rc);
+        RECT dswr = { 0, 0, 480, 528 };
+        AdjustWindowRectEx(&dswr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX, FALSE, WS_EX_TOOLWINDOW);
+        int dsW = dswr.right - dswr.left;
+        int dsH = dswr.bottom - dswr.top;
         m_downloadStatusWnd = CreateWindowExW(WS_EX_TOOLWINDOW, DOWNLOAD_STATUS_WNDCLASS,
             L"Downloads", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX,
-            rc.right - 500, rc.top + 90, 480, 548, m_hwnd, nullptr,
+            rc.right - dsW - 20, rc.top + 90, dsW, dsH, m_hwnd, nullptr,
             GetModuleHandleW(nullptr), nullptr);
         SetWindowLongPtrW(m_downloadStatusWnd, GWLP_USERDATA, (LONG_PTR)this);
 

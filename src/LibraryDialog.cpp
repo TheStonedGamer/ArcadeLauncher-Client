@@ -66,14 +66,21 @@ void RegisterModalClass(const wchar_t* name, WNDPROC proc) {
 
 HWND CreateCenteredModal(const wchar_t* cls, const wchar_t* title, HWND owner,
                          int w, int h, void* param) {
+    // w/h are the desired CLIENT size. Inflate by the non-client frame so the
+    // caption/borders don't eat into the right and bottom padding (controls are
+    // positioned in client coordinates).
+    RECT wr = { 0, 0, w, h };
+    AdjustWindowRectEx(&wr, WS_CAPTION | WS_POPUP | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    int winW = wr.right - wr.left;
+    int winH = wr.bottom - wr.top;
     RECT rc{};
     if (owner) GetWindowRect(owner, &rc);
     else rc = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
     return CreateWindowExW(WS_EX_DLGMODALFRAME, cls, title,
         WS_CAPTION | WS_POPUP | WS_SYSMENU,
-        rc.left + ((rc.right - rc.left) - w) / 2,
-        rc.top + ((rc.bottom - rc.top) - h) / 2,
-        w, h, owner, nullptr, GetModuleHandleW(nullptr), param);
+        rc.left + ((rc.right - rc.left) - winW) / 2,
+        rc.top + ((rc.bottom - rc.top) - winH) / 2,
+        winW, winH, owner, nullptr, GetModuleHandleW(nullptr), param);
 }
 
 void RunModalLoop(HWND hwnd, HWND owner, bool& done) {
@@ -295,6 +302,8 @@ enum {
     IDC_IL_LIST = 200,
     IDC_IL_ADD,
     IDC_IL_DONTASK,
+    IDC_IL_DESKTOP,
+    IDC_IL_STARTMENU,
     IDC_IL_OK,
     IDC_IL_CANCEL,
 };
@@ -303,11 +312,15 @@ struct InstallLocState {
     ServerConfig* cfg = nullptr;
     bool moving = false;
     std::wstring* outRoot = nullptr;
+    bool* outDesktop = nullptr;
+    bool* outStartMenu = nullptr;
     HWND hwnd = nullptr;
     bool done = false;
     bool ok = false;
     HWND list = nullptr;
     HWND dontAsk = nullptr;
+    HWND desktopChk = nullptr;
+    HWND startMenuChk = nullptr;
 };
 
 void RepopulateInstallList(InstallLocState* st) {
@@ -336,14 +349,24 @@ LRESULT CALLBACK InstallLocProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         MakeButton(hwnd, IDC_IL_ADD, L"Add Folder\x2026", 22, 216, 120);
 
         if (!st->moving) {
+            st->desktopChk = CreateWindowExW(0, WC_BUTTONW,
+                L"Create a desktop shortcut",
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                22, 250, 300, 22, hwnd, (HMENU)(intptr_t)IDC_IL_DESKTOP,
+                GetModuleHandleW(nullptr), nullptr);
+            st->startMenuChk = CreateWindowExW(0, WC_BUTTONW,
+                L"Add to Start Menu (Arcade Launcher \x2192 Games)",
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                22, 274, 360, 22, hwnd, (HMENU)(intptr_t)IDC_IL_STARTMENU,
+                GetModuleHandleW(nullptr), nullptr);
             st->dontAsk = CreateWindowExW(0, WC_BUTTONW,
                 L"Always install to the selected folder (don't ask again)",
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                22, 254, 460, 22, hwnd, (HMENU)(intptr_t)IDC_IL_DONTASK,
+                22, 298, 460, 22, hwnd, (HMENU)(intptr_t)IDC_IL_DONTASK,
                 GetModuleHandleW(nullptr), nullptr);
         }
 
-        int by = st->moving ? 256 : 288;
+        int by = st->moving ? 256 : 332;
         MakeButton(hwnd, IDC_IL_OK, st->moving ? L"Move" : L"Install",
                    336, by, 100, 28, BS_DEFPUSHBUTTON);
         MakeButton(hwnd, IDC_IL_CANCEL, L"Cancel", 444, by, 98, 28);
@@ -387,6 +410,12 @@ LRESULT CALLBACK InstallLocProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 cfg.alwaysAskInstallLocation = false;
                 cfg.defaultLibraryIndex = sel;
             }
+            if (st->outDesktop)
+                *st->outDesktop = st->desktopChk &&
+                    SendMessageW(st->desktopChk, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            if (st->outStartMenu)
+                *st->outStartMenu = st->startMenuChk &&
+                    SendMessageW(st->startMenuChk, BM_GETCHECK, 0, 0) == BST_CHECKED;
             st->ok = true; st->done = true; DestroyWindow(hwnd);
             return 0;
         }
@@ -451,7 +480,7 @@ bool ShowLibraryFoldersDialog(HWND owner, ServerConfig& cfg) {
     RegisterModalClass(cls, LibFoldersProc);
     LibFoldersState st;
     st.cfg = &cfg;
-    HWND hwnd = CreateCenteredModal(cls, L"Library Folders", owner, 580, 440, &st);
+    HWND hwnd = CreateCenteredModal(cls, L"Library Folders", owner, 564, 406, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.changed;
@@ -459,16 +488,20 @@ bool ShowLibraryFoldersDialog(HWND owner, ServerConfig& cfg) {
 
 bool ShowInstallLocationDialog(HWND owner, ServerConfig& cfg,
                                const std::wstring& gameTitle,
-                               std::wstring& outRoot, bool moving) {
+                               std::wstring& outRoot, bool moving,
+                               bool* outDesktopShortcut,
+                               bool* outStartMenuShortcut) {
     const wchar_t* cls = L"ArcadeLauncherInstallLocWnd";
     RegisterModalClass(cls, InstallLocProc);
     InstallLocState st;
     st.cfg = &cfg;
     st.moving = moving;
     st.outRoot = &outRoot;
+    st.outDesktop = outDesktopShortcut;
+    st.outStartMenu = outStartMenuShortcut;
     std::wstring title = (moving ? L"Move " : L"Install ") + gameTitle;
     HWND hwnd = CreateCenteredModal(cls, title.c_str(), owner,
-                                    580, moving ? 360 : 390, &st);
+                                    564, moving ? 306 : 392, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.ok;
@@ -481,7 +514,7 @@ bool ShowTextPrompt(HWND owner, const std::wstring& title,
     TextPromptState st;
     st.value = &value;
     st.label = label;
-    HWND hwnd = CreateCenteredModal(cls, title.c_str(), owner, 490, 180, &st);
+    HWND hwnd = CreateCenteredModal(cls, title.c_str(), owner, 472, 150, &st);
     if (!hwnd) return false;
     RunModalLoop(hwnd, owner, st.done);
     return st.ok;

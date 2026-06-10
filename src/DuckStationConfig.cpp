@@ -78,3 +78,38 @@ bool DuckApplySettings(const std::wstring& duckExe, const DuckSettings& s) {
 
     return DsWriteFile(path, t.ToString());
 }
+
+std::wstring DuckBiosDir(const std::wstring& duckExe) {
+    if (duckExe.empty()) return {};
+    fs::path dir = fs::path(duckExe).parent_path();
+    if (dir.empty()) return {};
+    return (dir / "bios").wstring();
+}
+
+bool DuckDeployBios(const std::wstring& duckExe, const std::wstring& biosSrcPath) {
+    if (duckExe.empty() || biosSrcPath.empty()) return false;
+    std::wstring biosDirW = DuckBiosDir(duckExe);
+    if (biosDirW.empty()) return false;
+
+    std::error_code ec;
+    fs::path biosDir = biosDirW;
+    fs::create_directories(biosDir, ec);
+    fs::path destName = fs::path(biosSrcPath).filename();
+    fs::path dest = biosDir / destName;
+    fs::copy_file(biosSrcPath, dest, fs::copy_options::overwrite_existing, ec);
+    if (ec && !fs::exists(dest, ec)) return false;
+
+    // Point settings.ini at it (merged into any existing config; DuckStation
+    // also auto-detects images in the bios/ folder, so this is belt-and-braces).
+    std::wstring path = DuckConfigPath(duckExe);
+    if (!path.empty()) {
+        IniFile t; t.Parse(DsReadFile(path));
+        std::string fn = ToUtf8(destName.wstring());
+        t.SetRaw("BIOS", "SearchDirectory", "bios");
+        t.SetRaw("BIOS", "PathNTSC-U", fn);
+        t.SetRaw("BIOS", "PathNTSC-J", fn);
+        t.SetRaw("BIOS", "PathPAL",    fn);
+        DsWriteFile(path, t.ToString());
+    }
+    return true;
+}

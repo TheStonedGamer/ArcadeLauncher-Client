@@ -58,8 +58,15 @@ void MetadataPickerDialog::Open(HWND parent,
     // Center over parent
     RECT pr;
     GetWindowRect(parent, &pr);
-    int px = pr.left + (pr.right  - pr.left - W) / 2;
-    int py = pr.top  + (pr.bottom - pr.top  - H) / 2;
+    // W/H are the desired client size; inflate by the frame so the caption and
+    // borders don't eat into the right/bottom padding (controls are laid out in
+    // client coordinates).
+    RECT wr = { 0, 0, W, H };
+    AdjustWindowRectEx(&wr, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    int winW = wr.right - wr.left;
+    int winH = wr.bottom - wr.top;
+    int px = pr.left + (pr.right  - pr.left - winW) / 2;
+    int py = pr.top  + (pr.bottom - pr.top  - winH) / 2;
 
     std::wstring title = L"Match Metadata — “" + gameTitle + L"”";
 
@@ -67,7 +74,7 @@ void MetadataPickerDialog::Open(HWND parent,
         WS_EX_DLGMODALFRAME,
         WNDCLS, title.c_str(),
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        px, py, W, H,
+        px, py, winW, winH,
         parent, nullptr, GetModuleHandleW(nullptr), this);
 
     if (!m_hwnd) return;

@@ -56,6 +56,6 @@ private:
 
     std::vector<IgdbGame> m_candidates;
 
-    static constexpr int W = 650, H = 510;
+    static constexpr int W = 650, H = 500;
     static constexpr wchar_t WNDCLS[] = L"ArcadeMetaPicker";
 };
