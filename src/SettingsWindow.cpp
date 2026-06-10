@@ -648,34 +648,9 @@ void SettingsWindow::BuildGeneralPage() {
                 ID_P_CHK3, K_CX + 12, y + 64, K_CW - 24));
     y += 98;
 
-    AddPC(Group(m_hwnd, L" IGDB Metadata  (optional — enables cover art and descriptions) ",
-                K_CX, y, K_CW, 158));
-    y += 20;
-    AddPC(Label(m_hwnd, L"Twitch Client ID:", K_CX + 12, y + 6, 130));
-    AddPC(Edit (m_hwnd, ID_P_EDIT1, K_CX + 146, y + 4, K_CW - 158));
-    y += 28;
-    AddPC(Label(m_hwnd, L"Client Secret:",   K_CX + 12, y + 6, 130));
-    AddPC(Edit (m_hwnd, ID_P_EDIT2, K_CX + 146, y + 4, K_CW - 158, ES_PASSWORD));
-    y += 28;
-    AddPC(SmallLabel(m_hwnd,
-          L"Register a free app at dev.twitch.tv → OAuth Apps to get these credentials.",
-          K_CX + 12, y + 4, K_CW - 24));
-    y += 34;
-    AddPC(Btn(m_hwnd, L"Refresh Metadata",   ID_P_BTN4, K_CX + 12, y, 136, 26));
-    AddPC(Btn(m_hwnd, L"Re-acquire All",      ID_P_BTN5, K_CX + 156, y, 120, 26));
-    AddPC(SmallLabel(m_hwnd,
-          L"Refresh: fetch missing.   Re-acquire: clear all matches and refetch everything.",
-          K_CX + 284, y + 4, K_CW - 296));
-    y += 38;
-
-    // ── Game Database ─────────────────────────────────────────────────────────
-    AddPC(Group(m_hwnd, L" Game Database  (requires IGDB credentials) ", K_CX, y, K_CW, 68));
-    AddPC(Btn(m_hwnd, L"Sync from IGDB", ID_P_BTN6, K_CX + 12, y + 20, 130, 26));
-    AddPC(StatLabel(m_hwnd,
-          L"Downloads the full game catalogue for all emulated platforms.",
-          ID_P_STAT2, K_CX + 152, y + 26, K_CW - 164, 17));
-    y += 76;
-
+    // Cover art, descriptions and the game catalogue are all provided by the
+    // ArcadeLauncher server, so the client no longer exposes IGDB credentials,
+    // metadata refresh, or local ROM-library controls.
     AddPC(Group(m_hwnd, L" ArcadeLauncher Server ", K_CX, y, K_CW, 176));
     AddPC(Check(m_hwnd, L"Enable server library sync", ID_P_CHK4,
                 K_CX + 12, y + 20, K_CW - 24));
@@ -689,12 +664,6 @@ void SettingsWindow::BuildGeneralPage() {
     AddPC(Edit(m_hwnd, ID_P_EDIT6, K_CX + 106, y + 130, K_CW - 118));
     AddPC(SmallLabel(m_hwnd, L"Bearer tokens are issued automatically after username/password sign-in.",
                      K_CX + 12, y + 160, K_CW - 24));
-    y += 184;
-
-    AddPC(Group(m_hwnd, L" Local ROM Libraries ", K_CX, y, K_CW, 68));
-    AddPC(Btn(m_hwnd, L"Clear Local ROM Libraries", ID_P_BTN3, K_CX + 12, y + 24, 176, 26));
-    AddPC(SmallLabel(m_hwnd, L"Removes local ROM scan paths. Steam, Epic, and GOG stay enabled.",
-                     K_CX + 200, y + 26, K_CW - 212));
 }
 
 void SettingsWindow::BuildSteamPage() {
@@ -1234,8 +1203,6 @@ void SettingsWindow::LoadGeneralPage() {
     Chk(PC(ID_P_CHK1), m_work.startFullscreen);
     Chk(PC(ID_P_CHK2), m_work.minimizeOnLaunch);
     Chk(PC(ID_P_CHK3), ReadStartupReg());
-    SetWindowTextW(PC(ID_P_EDIT1), m_work.igdbClientId.c_str());
-    SetWindowTextW(PC(ID_P_EDIT2), m_work.igdbClientSecret.c_str());
     Chk(PC(ID_P_CHK4), m_work.server.enabled);
     SetWindowTextW(PC(ID_P_EDIT3), m_work.server.baseUrl.c_str());
     SetWindowTextW(PC(ID_P_EDIT4), m_work.server.username.c_str());
@@ -1246,8 +1213,6 @@ void SettingsWindow::SaveGeneralPage() {
     m_work.startFullscreen  = IsChk(PC(ID_P_CHK1));
     m_work.minimizeOnLaunch = IsChk(PC(ID_P_CHK2));
     WriteStartupReg(IsChk(PC(ID_P_CHK3)));
-    m_work.igdbClientId     = GetTxt(PC(ID_P_EDIT1));
-    m_work.igdbClientSecret = GetTxt(PC(ID_P_EDIT2));
     m_work.server.enabled     = IsChk(PC(ID_P_CHK4));
     m_work.server.baseUrl     = GetTxt(PC(ID_P_EDIT3));
     m_work.server.username    = GetTxt(PC(ID_P_EDIT4));
@@ -1880,45 +1845,6 @@ void SettingsWindow::SaveCustomPage(int idx) {
 // ─── Command dispatch ─────────────────────────────────────────────────────────
 
 void SettingsWindow::HandlePageCommand(int id) {
-    // General page: metadata action buttons
-    if (m_currentPage == PAGE_GENERAL) {
-        if (id == ID_P_BTN3) {
-            auto& e = m_work.emulators;
-            e.dolphinRomDirs.clear();
-            e.ryujinxRomDirs.clear();
-            e.rpcs3RomDirs.clear();
-            e.n64RomDirs.clear();
-            e.nesRomDirs.clear();
-            e.snesRomDirs.clear();
-            e.duckstationRomDirs.clear();
-            e.pcsx2RomDirs.clear();
-            e.xeniaRomDirs.clear();
-            e.xemuRomDirs.clear();
-            m_work.libraries.customLibraries.clear();
-            MessageBoxW(m_hwnd,
-                L"Local ROM library paths were cleared. Click Apply or OK to save and rescan.",
-                L"Local Libraries Cleared", MB_OK | MB_ICONINFORMATION);
-            return;
-        }
-        if (id == ID_P_BTN4 && m_onRefreshMeta)   { m_onRefreshMeta();   return; }
-        if (id == ID_P_BTN5 && m_onReacquireMeta) { m_onReacquireMeta(); return; }
-        if (id == ID_P_BTN6) {
-            if (!m_igdbClient || !m_igdbClient->HasCredentials()) {
-                MessageBoxW(m_hwnd,
-                    L"Enter your IGDB (Twitch) credentials above and save first.",
-                    L"No credentials", MB_OK | MB_ICONINFORMATION);
-                return;
-            }
-            EnableWindow(PC(ID_P_BTN6), FALSE);
-            SetWindowTextW(PC(ID_P_BTN6), L"Syncing…");
-            SetWindowTextW(PC(ID_P_STAT2), L"Downloading game list from IGDB…");
-
-            std::wstring dest = GetAppDataPath() + L"\\romdb.sqlite";
-            IgdbSync::StartAsync(m_hwnd, *m_igdbClient, dest);
-            return;
-        }
-    }
-
     switch (m_currentPage) {
 
     case PAGE_STEAM:
