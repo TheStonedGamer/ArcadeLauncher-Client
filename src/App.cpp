@@ -283,7 +283,7 @@ static LRESULT CALLBACK ServerLoginWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARA
 
         CreateWindowExW(0, WC_BUTTONW, L"Sign In", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
             286, 276, 92, 30, hwnd, (HMENU)IDOK, GetModuleHandleW(nullptr), nullptr);
-        CreateWindowExW(0, WC_BUTTONW, L"Offline", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        CreateWindowExW(0, WC_BUTTONW, L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
             388, 276, 92, 30, hwnd, (HMENU)IDCANCEL, GetModuleHandleW(nullptr), nullptr);
 
         // Apply a modern UI font to every child control for a cleaner look.
@@ -657,9 +657,13 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     LoadAll();
 
     auto& cfg = m_config.Get();
+    // Steam-style login gate: when not signed in, show ONLY the sign-in window.
+    // The launcher window is not created until the user signs in. Closing or
+    // cancelling the sign-in window exits the app instead of opening the client.
     if (cfg.server.baseUrl.empty() || cfg.server.username.empty() || cfg.server.password.empty()) {
-        if (ShowServerLoginDialog(nullptr, cfg.server))
-            SaveAll();
+        if (!ShowServerLoginDialog(nullptr, cfg.server))
+            return false;
+        SaveAll();
     }
 
     m_hwnd = CreateWindowExW(0, WNDCLASS_NAME, L"ArcadeLauncher",
@@ -3413,21 +3417,21 @@ void App::OpenAccountSettings() {
 }
 
 void App::LogOut() {
-    // Drop the cached session + stored credential and clear the topbar avatar,
-    // then bring the user back to the sign-in modal (same path as 401 re-auth).
+    // Steam-style sign-out: remove the stored account (token + credentials) and
+    // close the launcher. The next launch shows only the sign-in window until
+    // the user signs back in (see the login gate in Initialize).
     {
         std::lock_guard<std::mutex> lk(m_authMutex);
         auto& s = m_config.Get().server;
         s.authToken.clear();
         s.tokenFingerprint.clear();
         s.password.clear();
+        s.username.clear();
     }
     m_renderer.ClearAvatar();
     SaveAll();
-    InvalidateRect(m_hwnd, nullptr, FALSE);
 
-    if (PromptReAuth())
-        RefreshAvatar();
+    DestroyWindow(m_hwnd);   // WM_DESTROY → PostQuitMessage exits the message loop
 }
 
 void App::RefreshAvatar() {
