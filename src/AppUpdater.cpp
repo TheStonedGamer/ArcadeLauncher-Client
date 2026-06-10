@@ -227,8 +227,11 @@ static void DownloadWorker(HWND hwnd, std::wstring msiUrl) {
         return;
     }
 
-    // Hand off to msiexec — UAC prompt appears naturally
-    std::wstring args = L"/i \"" + dest + L"\" /passive /norestart";
+    // Hand off to msiexec fully silent (/quiet) so the Windows Installer shows
+    // no UI of its own — the launcher's own progress bar is the only thing the
+    // user sees. (A single UAC elevation prompt still appears for the per-machine
+    // install.) /norestart so it never reboots the machine on us.
+    std::wstring args = L"/i \"" + dest + L"\" /quiet /norestart";
     ShellExecuteW(nullptr, nullptr, L"msiexec.exe",
                   args.c_str(), nullptr, SW_SHOW);
 

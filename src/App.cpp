@@ -200,6 +200,15 @@ public:
         Pump();
     }
 
+    // Switch to a full-bar "finishing" state (e.g. while the silent installer
+    // runs) and keep the window up. Caller owns when to Close/destroy.
+    void ShowFinishing(const std::wstring& text) {
+        if (!m_hwnd) return;
+        SendMessageW(m_progress, PBM_SETPOS, 1000, 0);
+        SetWindowTextW(m_status, text.c_str());
+        Pump();
+    }
+
     void Close() {
         if (m_owner) {
             EnableWindow(m_owner, TRUE);
@@ -1341,18 +1350,22 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_APP_UPDATE_READY:
-        if (g_updateDlg) {
-            g_updateDlg->Close();
-            delete g_updateDlg;
-            g_updateDlg = nullptr;
-        }
         if (wp == 1) {
-            // Download failed
+            // Download failed — tear down the progress UI and report.
+            if (g_updateDlg) {
+                g_updateDlg->Close();
+                delete g_updateDlg;
+                g_updateDlg = nullptr;
+            }
             MessageBoxW(hwnd,
                 L"The update could not be downloaded.\n\n"
                 L"Please visit github.com/TheStonedGamer/ArcadeLauncher-Client/releases to update manually.",
                 L"Update Failed", MB_OK | MB_ICONWARNING);
         } else {
+            // The silent installer (msiexec /quiet) is running. Keep our own bar
+            // on screen showing "Installing…" — the MSI shows no UI of its own.
+            if (g_updateDlg)
+                g_updateDlg->ShowFinishing(L"Installing update… the app will restart automatically.");
             // msiexec is running — exit immediately so it can replace the binary.
             // Schedule a PowerShell one-liner that waits 10 s then relaunches us,
             // then call ExitProcess so no thread holds a file lock on the exe.
