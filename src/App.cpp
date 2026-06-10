@@ -1081,6 +1081,12 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         OnSize(LOWORD(lp), HIWORD(lp));
         return 0;
 
+    case WM_ERASEBKGND:
+        // Direct2D paints the entire client area every frame in OnPaint, so
+        // letting Windows erase to the (black) class brush first only causes a
+        // visible flash while the window is being dragged/resized. Swallow it.
+        return 1;
+
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
