@@ -227,6 +227,11 @@ private:
     std::wstring m_verb;
 };
 
+// Active auto-update progress dialog (single app instance, single update at a
+// time). Created when an update is found, driven by WM_APP_UPDATE_PROGRESS,
+// destroyed on WM_APP_UPDATE_READY.
+static CopyProgressDialog* g_updateDlg = nullptr;
+
 struct ServerLoginState {
     ServerConfig* cfg = nullptr;
     HWND owner = nullptr;
@@ -1315,24 +1320,32 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_APP_UPDATE_FOUND: {
-        // Background thread found a newer release — surface the window so the
-        // prompt is visible even when running hidden in the tray.
+        // Background thread found a newer release — surface the window (it may be
+        // hidden in the tray) and start the update automatically, Steam-style:
+        // no prompt, a progress bar, then a silent install on exit.
         ShowWindow_(true);
         auto* info = reinterpret_cast<AppUpdateInfo*>(lp);
-        std::wstring msg =
-            L"ArcadeLauncher " + info->tag + L" is available!\n\n"
-            L"Download and install now?\n"
-            L"The app will close automatically once the installer is ready.";
-        int choice = MessageBoxW(hwnd, msg.c_str(),
-                                 L"Update Available",
-                                 MB_YESNO | MB_ICONINFORMATION | MB_DEFBUTTON1);
-        if (choice == IDYES)
-            DownloadAndInstallAsync(m_hwnd, info->msiUrl);
+        if (!g_updateDlg) {
+            g_updateDlg = new CopyProgressDialog();
+            g_updateDlg->Create(hwnd, L"Updating ArcadeLauncher " + info->tag,
+                                 L"Downloading update");
+        }
+        DownloadAndInstallAsync(m_hwnd, info->msiUrl);
         delete info;
         return 0;
     }
 
+    case WM_APP_UPDATE_PROGRESS:
+        if (g_updateDlg)
+            g_updateDlg->SetProgress((uint64_t)(int)wp, 100, 0.0);
+        return 0;
+
     case WM_APP_UPDATE_READY:
+        if (g_updateDlg) {
+            g_updateDlg->Close();
+            delete g_updateDlg;
+            g_updateDlg = nullptr;
+        }
         if (wp == 1) {
             // Download failed
             MessageBoxW(hwnd,

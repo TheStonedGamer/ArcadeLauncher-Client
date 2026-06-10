@@ -66,7 +66,9 @@ static std::string HttpGetStr(const std::wstring& url) {
 }
 
 // Downloads url to destPath, following redirects. Returns true on success.
-static bool HttpDownloadToFile(const std::wstring& url, const std::wstring& destPath) {
+// If progressHwnd is set, posts WM_APP_UPDATE_PROGRESS (percent) as bytes arrive.
+static bool HttpDownloadToFile(const std::wstring& url, const std::wstring& destPath,
+                               HWND progressHwnd = nullptr) {
     // GitHub release assets redirect: github.com -> objects.githubusercontent.com.
     // We re-crack the URL after each redirect manually because WinHTTP's built-in
     // redirect policy only follows same-host redirects for HTTPS -> HTTPS.
@@ -121,6 +123,13 @@ static bool HttpDownloadToFile(const std::wstring& url, const std::wstring& dest
                     HANDLE hFile = CreateFileW(destPath.c_str(),
                         GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
                     if (hFile != INVALID_HANDLE_VALUE) {
+                        // Total size for progress (GitHub asset responses carry it).
+                        DWORD total = 0, szTotal = sizeof(total);
+                        WinHttpQueryHeaders(hReq,
+                            WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                            nullptr, &total, &szTotal, nullptr);
+                        uint64_t got = 0;
+                        int lastPct = -1;
                         DWORD avail = 0;
                         success = true;
                         while (WinHttpQueryDataAvailable(hReq, &avail) && avail > 0) {
@@ -131,6 +140,14 @@ static bool HttpDownloadToFile(const std::wstring& url, const std::wstring& dest
                             }
                             DWORD written = 0;
                             WriteFile(hFile, buf.data(), read, &written, nullptr);
+                            got += read;
+                            if (progressHwnd && total > 0) {
+                                int pct = (int)((got * 100) / total);
+                                if (pct != lastPct) {
+                                    lastPct = pct;
+                                    PostMessageW(progressHwnd, WM_APP_UPDATE_PROGRESS, (WPARAM)pct, 0);
+                                }
+                            }
                         }
                         CloseHandle(hFile);
                         if (!success) DeleteFileW(destPath.c_str());
@@ -205,7 +222,7 @@ static void DownloadWorker(HWND hwnd, std::wstring msiUrl) {
     GetTempPathW(MAX_PATH, tempDir);
     std::wstring dest = std::wstring(tempDir) + L"ArcadeLauncher-update.msi";
 
-    if (!HttpDownloadToFile(msiUrl, dest)) {
+    if (!HttpDownloadToFile(msiUrl, dest, hwnd)) {
         PostMessageW(hwnd, WM_APP_UPDATE_READY, 1 /*failure*/, 0);
         return;
     }
