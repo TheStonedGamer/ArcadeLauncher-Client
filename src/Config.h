@@ -87,6 +87,10 @@ struct AppConfig {
     bool        firstLaunchDone  = false;
     bool        startFullscreen  = false;
     bool        minimizeOnLaunch = true;
+    // When on, the launcher keeps a Windows Defender exclusion on the PC games
+    // install root (toggled in Settings -> General; applied via elevated
+    // PowerShell Add-/Remove-MpPreference).
+    bool        defenderExclusions = false;
     int         windowWidth  = 1280;
     int         windowHeight = 720;
     std::wstring steamGridDbApiKey;

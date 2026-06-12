@@ -135,6 +135,52 @@ static std::wstring SafeFilePart(std::wstring s) {
     return s;
 }
 
+// Sanitize a single path component for the standardized install-folder name:
+// strip the Windows-illegal characters (\ / : * ? " < > |) and control chars,
+// collapse whitespace to underscores, trim leading/trailing dot/space/underscore
+// (Windows rejects trailing dots/spaces), and bound the length.
+static std::wstring SanitizeNameComponent(const std::wstring& s) {
+    std::wstring out;
+    out.reserve(s.size());
+    for (wchar_t c : s) {
+        if (c == L'\\' || c == L'/' || c == L':' || c == L'*' || c == L'?' ||
+            c == L'"' || c == L'<' || c == L'>' || c == L'|')
+            continue;                       // drop illegal characters outright
+        if (c < 0x20) continue;             // drop control characters
+        if (c == L' ' || c == L'\t')        // spaces/tabs -> underscore
+            { if (out.empty() || out.back() != L'_') out.push_back(L'_'); continue; }
+        out.push_back(c);
+    }
+    while (!out.empty() && (out.back() == L'.' || out.back() == L'_' || out.back() == L' '))
+        out.pop_back();
+    while (!out.empty() && out.front() == L'_')
+        out.erase(out.begin());
+    if (out.size() > 80) out.resize(80);
+    return out;
+}
+
+// Standardized install-folder name: "<sanitized game name>-<id>". The id is the
+// server's unique catalog identifier (itself prefixed "<platform>-..."), so the
+// folder is human-readable yet collision-free across platforms/titles.
+static std::wstring InstallFolderName(const std::wstring& title, const std::wstring& id) {
+    std::wstring name = SanitizeNameComponent(title);
+    std::wstring safeId = SafeFilePart(id);
+    return name.empty() ? safeId : (name + L"-" + safeId);
+}
+
+// Resolve a game's install folder under `root`, preferring the standardized name
+// but transparently keeping any pre-existing legacy "<id>" folder so installs
+// made before this naming change are never orphaned/re-downloaded.
+static std::wstring ResolveInstallFolder(const std::wstring& root,
+                                         const std::wstring& title,
+                                         const std::wstring& id) {
+    std::wstring modern = root + L"\\" + InstallFolderName(title, id);
+    if (fs::exists(modern)) return modern;
+    std::wstring legacy = root + L"\\" + SafeFilePart(id);
+    if (fs::exists(legacy)) return legacy;
+    return modern;  // fresh install uses the standardized name
+}
+
 static std::wstring ParentPath(const std::wstring& path) {
     size_t slash = path.find_last_of(L"\\/");
     return slash == std::wstring::npos ? L"" : path.substr(0, slash);
@@ -951,7 +997,7 @@ bool ServerClient::FetchCatalog(std::vector<Game>& games, std::wstring& error) {
         g.igdbRating = (float)JsonFloat(obj, "igdbRating");
         g.releaseDate = (int64_t)JsonNumber(obj, "releaseDate");
         g.serverVersion = ToWide(JsonString(obj, "version"));
-        g.installRoot = m_cfg.installRoot + L"\\" + SafeFilePart(id);
+        g.installRoot = ResolveInstallFolder(m_cfg.installRoot, g.title, id);
         g.installState = fs::exists(g.installRoot) ? InstallState::Installed : InstallState::Missing;
         games.push_back(std::move(g));
     }
@@ -1265,7 +1311,7 @@ ServerInstallResult ServerClient::InstallGame(const Game& game,
         return result;
     }
 
-    std::wstring installRoot = m_cfg.installRoot + L"\\" + SafeFilePart(game.serverGameId);
+    std::wstring installRoot = ResolveInstallFolder(m_cfg.installRoot, game.title, game.serverGameId);
     bool pcArchive = manifest.installType == L"pc_archive";
     std::wstring extractedRoot = installRoot + L"\\installed";
     std::wstring markerPath = installRoot + L"\\.arcadelauncher-version";
@@ -1496,7 +1542,7 @@ bool ServerClient::UninstallGame(const Game& game, std::wstring& error) {
         return false;
     }
     std::wstring root = game.installRoot.empty()
-        ? m_cfg.installRoot + L"\\" + SafeFilePart(game.serverGameId)
+        ? ResolveInstallFolder(m_cfg.installRoot, game.title, game.serverGameId)
         : game.installRoot;
     if (root.empty() || !fs::exists(root))
         return true;
@@ -1524,7 +1570,7 @@ ServerValidateResult ServerClient::ValidateGame(const Game& game,
         return result;
     }
 
-    std::wstring installRoot = m_cfg.installRoot + L"\\" + SafeFilePart(game.serverGameId);
+    std::wstring installRoot = ResolveInstallFolder(m_cfg.installRoot, game.title, game.serverGameId);
     uint64_t total = 0, done = 0;
     for (const auto& f : manifest.files) total += f.size;
 

@@ -105,6 +105,7 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"firstLaunchDone\":" + B(m_cfg.firstLaunchDone) + ",\n";
     out += "  \"startFullscreen\":" + B(m_cfg.startFullscreen) + ",\n";
     out += "  \"minimizeOnLaunch\":" + B(m_cfg.minimizeOnLaunch) + ",\n";
+    out += "  \"defenderExclusions\":" + B(m_cfg.defenderExclusions) + ",\n";
     out += "  \"windowWidth\":"  + std::to_string(m_cfg.windowWidth)  + ",\n";
     out += "  \"windowHeight\":" + std::to_string(m_cfg.windowHeight) + ",\n";
     out += "  \"steamGridDbApiKey\":\"" + Escape(m_cfg.steamGridDbApiKey) + "\",\n";
@@ -192,6 +193,7 @@ void Config::Load(const std::wstring& path) {
     m_cfg.firstLaunchDone    = ReadBool(json, "firstLaunchDone");
     m_cfg.startFullscreen    = ReadBool(json, "startFullscreen");
     m_cfg.minimizeOnLaunch   = ReadBool(json, "minimizeOnLaunch");
+    m_cfg.defenderExclusions = ReadBool(json, "defenderExclusions");
     int w = ReadInt(json, "windowWidth");
     int h = ReadInt(json, "windowHeight");
     if (w > 0) m_cfg.windowWidth  = w;

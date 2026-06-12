@@ -636,17 +636,77 @@ void SettingsWindow::DestroyPageControls() {
 
 // ─── Page builders ────────────────────────────────────────────────────────────
 
+// Validate an install-root path before it is interpolated into a PowerShell
+// command. Requires an absolute drive-letter or UNC path and rejects any
+// character that could break out of the single-quoted string or inject a
+// command (quotes, backtick, $, ;, |, &, redirection, wildcards, control chars).
+// Returns false (and leaves out untouched) on rejection.
+static bool SanitizeExclusionPath(const std::wstring& in, std::wstring& out) {
+    if (in.size() < 3 || in.size() > 248) return false;
+    bool driveAbs = iswalpha(in[0]) && in[1] == L':' && (in[2] == L'\\' || in[2] == L'/');
+    bool unc = in[0] == L'\\' && in[1] == L'\\';
+    if (!driveAbs && !unc) return false;
+    for (size_t i = 0; i < in.size(); ++i) {
+        wchar_t c = in[i];
+        if (c < 0x20) return false;                          // control chars
+        if (c == L':' && i != 1) return false;               // ':' only as drive sep
+        if (c == L'"' || c == L'\'' || c == L'`' || c == L'$' ||
+            c == L';' || c == L'|' || c == L'&' || c == L'<' ||
+            c == L'>' || c == L'*' || c == L'?' || c == L'%')
+            return false;
+    }
+    out = in;
+    return true;
+}
+
+// Add or remove a Windows Defender exclusion for `path` via an elevated
+// PowerShell process. Runs on a detached thread so the Settings UI never blocks
+// on the UAC prompt or the process. Deliberately does NOT pass
+// -ExecutionPolicy Bypass (a single -Command invocation needs no policy change).
+static void ApplyDefenderExclusion(const std::wstring& path, bool add) {
+    std::wstring safe;
+    if (!SanitizeExclusionPath(path, safe)) {
+        MessageBoxW(nullptr,
+            L"The PC games install path could not be safely validated, so the "
+            L"Windows Defender exclusion was not changed.",
+            L"ArcadeLauncher", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    const wchar_t* cmdlet = add ? L"Add-MpPreference" : L"Remove-MpPreference";
+    // Single-quote the path; SanitizeExclusionPath guarantees it has no quote to
+    // escape and no metacharacters PowerShell would expand.
+    std::wstring args = std::wstring(
+        L"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"") +
+        cmdlet + L" -ExclusionPath '" + safe + L"'\"";
+    std::thread([args]() {
+        SHELLEXECUTEINFOW sei = { sizeof(sei) };
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+        sei.lpVerb = L"runas";            // request UAC elevation
+        sei.lpFile = L"powershell.exe";
+        sei.lpParameters = args.c_str();
+        sei.nShow = SW_HIDE;
+        if (ShellExecuteExW(&sei) && sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, 30000);
+            CloseHandle(sei.hProcess);
+        }
+        // A user who declines the UAC prompt simply leaves the exclusion
+        // unchanged; the stored toggle is reconciled on the next save.
+    }).detach();
+}
+
 void SettingsWindow::BuildGeneralPage() {
     int y = PageHeader(m_hwnd, m_pageControls, L"General");
 
-    AddPC(Group(m_hwnd, L" Behavior ", K_CX, y, K_CW, 90));
+    AddPC(Group(m_hwnd, L" Behavior ", K_CX, y, K_CW, 112));
     AddPC(Check(m_hwnd, L"Start fullscreen  (F11 to toggle at any time)",
                 ID_P_CHK1, K_CX + 12, y + 20, K_CW - 24));
     AddPC(Check(m_hwnd, L"Minimize launcher to tray when a game launches",
                 ID_P_CHK2, K_CX + 12, y + 42, K_CW - 24));
     AddPC(Check(m_hwnd, L"Start at Boot  (launches hidden in the system tray on Windows login)",
                 ID_P_CHK3, K_CX + 12, y + 64, K_CW - 24));
-    y += 98;
+    AddPC(Check(m_hwnd, L"Enable Windows Defender Exclusions for PC Game Folders  (requires admin)",
+                ID_P_CHK4, K_CX + 12, y + 86, K_CW - 24));
+    y += 120;
 
     // Server connection (URL, credentials, bearer token) is configured at
     // sign-in via the account dialog, not here — the General page only exposes
@@ -1190,11 +1250,23 @@ void SettingsWindow::LoadGeneralPage() {
     Chk(PC(ID_P_CHK1), m_work.startFullscreen);
     Chk(PC(ID_P_CHK2), m_work.minimizeOnLaunch);
     Chk(PC(ID_P_CHK3), ReadStartupReg());
+    Chk(PC(ID_P_CHK4), m_work.defenderExclusions);
 }
 void SettingsWindow::SaveGeneralPage() {
     m_work.startFullscreen  = IsChk(PC(ID_P_CHK1));
     m_work.minimizeOnLaunch = IsChk(PC(ID_P_CHK2));
     WriteStartupReg(IsChk(PC(ID_P_CHK3)));
+
+    // Defender exclusion toggle: only act (and prompt for UAC) when it actually
+    // changed, so re-saving the page doesn't re-elevate every time.
+    bool defenderOn = IsChk(PC(ID_P_CHK4));
+    if (defenderOn != m_work.defenderExclusions) {
+        std::wstring root = m_work.server.installRoot.empty()
+            ? (GetAppDataPath() + L"\\server_games")
+            : m_work.server.installRoot;
+        ApplyDefenderExclusion(root, defenderOn);
+        m_work.defenderExclusions = defenderOn;
+    }
     // Server connection fields are owned by the sign-in flow; preserved as-is.
 }
 
