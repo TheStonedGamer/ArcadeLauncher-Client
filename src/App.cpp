@@ -14,6 +14,10 @@
 
 #pragma comment(lib, "comctl32.lib")
 
+// Defined near LaunchInstalledGame; used by the WM_GAME_CLOSED handler too.
+static void RunHookCommand(const std::wstring& cmd);
+static void SyncSavesUp(ServerConfig sc, std::wstring serverGameId, std::wstring saveDir);
+
 // Full path to this running launcher executable.
 static std::wstring ThisExePath() {
     wchar_t buf[MAX_PATH]{};
@@ -1016,6 +1020,14 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     // input to this window so a controller can drive the whole UI from the couch.
     m_gamepad.Start(m_hwnd);
 
+    // Apply the persisted download speed cap to the live control.
+    DownloadControl::LimitKBps().store(cfg.downloadLimitKBps, std::memory_order_relaxed);
+
+    // Global hotkey Ctrl+Alt+A: summon/restore the launcher from anywhere
+    // (including from inside a game — the closest thing to an overlay without
+    // injecting into the game's process). Failure (hotkey taken) is harmless.
+    RegisterHotKey(m_hwnd, HOTKEY_SUMMON, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'A');
+
     // Launched from a game shortcut (`--launch <id>`): start it once the loop runs.
     if (!m_pendingLaunchId.empty())
         PostMessageW(m_hwnd, WM_USER + 8, 0,
@@ -1088,9 +1100,28 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_GAME_CLOSED:
         // A launched game just exited — restore the launcher to the front.
+        RunHookCommand(m_pendingPostExitCmd);
+        m_pendingPostExitCmd.clear();
+        // Cloud saves: push local-newer files in the background; copies go in
+        // by value so the thread never touches App state.
+        if (!m_pendingSaveSyncGameId.empty()) {
+            std::thread(SyncSavesUp, m_config.Get().server,
+                        m_pendingSaveSyncGameId, m_pendingSaveSyncDir).detach();
+            m_pendingSaveSyncGameId.clear();
+            m_pendingSaveSyncDir.clear();
+        }
         m_discord.SetIdle();
         ShowWindow_(true);
         InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_HOTKEY:
+        if ((int)wp == HOTKEY_SUMMON) {
+            // Toggle: bring to front if hidden/background, hide to tray if
+            // already the foreground window.
+            if (GetForegroundWindow() == m_hwnd) ShowWindow_(false);
+            else                                 ShowWindow_(true);
+        }
         return 0;
 
     case WM_SERVER_INSTALL_DONE: {
@@ -1146,6 +1177,15 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else {
                 stored->installState = InstallState::Missing;
                 stored->installProgressPermille = 0;
+                // A user-initiated cancel is not an error — just confirm quietly.
+                if (done->result.error == DownloadControl::kCancelledError) {
+                    ShowToast(L"Download cancelled",
+                              stored->title + L" can be re-queued any time (it resumes).");
+                    ApplyFilter();
+                    InvalidateRect(m_hwnd, nullptr, FALSE);
+                    RefreshDownloadStatusWindow();
+                    return 0;
+                }
                 // A 401 means the cached token was rejected (e.g. revoked or the
                 // machine fingerprint drifted) — drop it and offer interactive
                 // re-authentication so a stale session can be recovered without
@@ -1574,6 +1614,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 void App::OnCreate(HWND) {}
 
 void App::OnDestroy() {
+    UnregisterHotKey(m_hwnd, HOTKEY_SUMMON);
     RemoveTrayIcon();
     if (m_metaManager) m_metaManager->Shutdown();
     m_fetcher->Shutdown();
@@ -2117,6 +2158,13 @@ void App::ShowMenuBar() {
 
     AppendMenuW(hTools, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hTools, MF_STRING, IDM_TOOL_LIBRARY, L"Library Folders\x2026");
+    {
+        int lim = m_config.Get().downloadLimitKBps;
+        std::wstring label = lim > 0
+            ? L"Download Speed Limit (" + std::to_wstring(lim) + L" KB/s)\x2026"
+            : L"Download Speed Limit (unlimited)\x2026";
+        AppendMenuW(hTools, MF_STRING, IDM_TOOL_SPEEDLIMIT, label.c_str());
+    }
     AppendMenuW(hTools, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hTools, MF_STRING, IDM_TOOL_UPDATE, L"Check for Updates\x2026");
 
@@ -2160,6 +2208,24 @@ void App::ShowMenuBar() {
         // via WM_APP_UPDATE_NONE or WM_APP_UPDATE_FOUND.
         CheckForAppUpdateAsync(m_hwnd, true);
         break;
+    case IDM_TOOL_SPEEDLIMIT: {
+        std::wstring cur = m_config.Get().downloadLimitKBps > 0
+            ? std::to_wstring(m_config.Get().downloadLimitKBps) : L"";
+        std::wstring input = cur;
+        if (!ShowTextPrompt(m_hwnd, L"Download Speed Limit",
+                            L"Max download speed in KB/s (0 or blank = unlimited):",
+                            input))
+            break;
+        int kbps = _wtoi(input.c_str());
+        if (kbps < 0) kbps = 0;
+        m_config.Get().downloadLimitKBps = kbps;
+        DownloadControl::LimitKBps().store(kbps, std::memory_order_relaxed);
+        SaveAll();
+        ShowToast(L"Download limit",
+                  kbps > 0 ? std::to_wstring(kbps) + L" KB/s cap applied."
+                           : L"Download speed is now unlimited.");
+        break;
+    }
     }
 }
 
@@ -2435,6 +2501,124 @@ static std::wstring ApplyLaunchOptions(const std::wstring& baseArgs,
     return baseArgs.empty() ? opts : baseArgs + L" " + opts;
 }
 
+// Fire-and-forget a user-configured hook command, hidden, via cmd /C. Hook
+// failures must never block or fail a game launch, so errors are ignored.
+static void RunHookCommand(const std::wstring& cmd) {
+    if (cmd.empty()) return;
+    std::wstring full = L"cmd.exe /C " + cmd;
+    STARTUPINFOW si{ sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    std::vector<wchar_t> buf(full.begin(), full.end());
+    buf.push_back(L'\0');
+    if (CreateProcessW(nullptr, buf.data(), nullptr, nullptr, FALSE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+}
+
+// ── Cloud-save sync helpers ─────────────────────────────────────────────────
+// Mtimes are compared as epoch seconds on both sides; FILETIME is 100ns ticks
+// since 1601, hence the 116444736000000000 offset (same arithmetic as the
+// lastPlayed conversions elsewhere).
+
+static int64_t FileMtimeEpoch(const std::wstring& path) {
+    WIN32_FILE_ATTRIBUTE_DATA fad{};
+    if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) return 0;
+    LONGLONG ll = ((LONGLONG)fad.ftLastWriteTime.dwHighDateTime << 32) |
+                  fad.ftLastWriteTime.dwLowDateTime;
+    return (ll - 116444736000000000LL) / 10000000LL;
+}
+
+static void SetFileMtimeEpoch(const std::wstring& path, int64_t epoch) {
+    HANDLE h = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    LONGLONG ll = epoch * 10000000LL + 116444736000000000LL;
+    FILETIME ft{ (DWORD)(ll & 0xFFFFFFFF), (DWORD)(ll >> 32) };
+    SetFileTime(h, nullptr, nullptr, &ft);
+    CloseHandle(h);
+}
+
+// Caps mirror the server's: 50 MB per file, and the walk stops at 200 files so
+// pointing saveDir at a huge folder can't flood the database.
+static constexpr uint64_t kSaveFileMaxBytes = 50ull * 1024 * 1024;
+static constexpr size_t   kSaveFileMaxCount = 200;
+
+// Local save files under root, as (forward-slash relative path, mtime epoch).
+static std::vector<std::pair<std::wstring, int64_t>> ListLocalSaves(const std::wstring& root) {
+    std::vector<std::pair<std::wstring, int64_t>> out;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(root, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (out.size() >= kSaveFileMaxCount) break;
+        if (!it->is_regular_file(ec)) continue;
+        uint64_t sz = (uint64_t)it->file_size(ec);
+        if (ec || sz == 0 || sz > kSaveFileMaxBytes) continue;
+        std::wstring rel = fs::relative(it->path(), root, ec).wstring();
+        if (ec || rel.empty()) continue;
+        std::replace(rel.begin(), rel.end(), L'\\', L'/');
+        out.emplace_back(rel, FileMtimeEpoch(it->path().wstring()));
+    }
+    return out;
+}
+
+// Upload local-newer files after a play session. Runs on a detached thread —
+// must not touch App state, so everything it needs comes in by value.
+static void SyncSavesUp(ServerConfig sc, std::wstring serverGameId, std::wstring saveDir) {
+    ServerClient client(sc);
+    std::wstring error;
+    std::vector<ServerClient::SaveFileInfo> remote;
+    if (!client.ListSaves(serverGameId, remote, error)) return;
+
+    for (const auto& [rel, mtime] : ListLocalSaves(saveDir)) {
+        int64_t remoteMtime = -1;
+        for (const auto& r : remote)
+            if (r.path == rel) { remoteMtime = r.mtime; break; }
+        if (mtime <= remoteMtime) continue;  // server copy is same or newer
+
+        std::wstring local = saveDir + L"\\" + rel;
+        std::replace(local.begin(), local.end(), L'/', L'\\');
+        std::ifstream in(fs::path(local), std::ios::binary);
+        if (!in) continue;
+        std::string bytes((std::istreambuf_iterator<char>(in)),
+                          std::istreambuf_iterator<char>());
+        if (bytes.empty()) continue;
+        client.UploadSaveFile(serverGameId, rel, mtime, bytes, error);
+    }
+}
+
+// Pull server-newer files before launch. Blocking (runs on the UI thread just
+// before the game starts); save files are small so this is normally instant.
+void App::SyncSavesDown(const Game& game) {
+    ServerClient client(m_config.Get().server);
+    std::wstring error;
+    std::vector<ServerClient::SaveFileInfo> remote;
+    if (!client.ListSaves(game.serverGameId, remote, error)) return;
+
+    for (const auto& r : remote) {
+        std::wstring local = game.saveDir + L"\\" + r.path;
+        std::replace(local.begin(), local.end(), L'/', L'\\');
+        int64_t localMtime = FileMtimeEpoch(local);  // 0 when missing
+        if (r.mtime <= localMtime) continue;         // local copy is same or newer
+
+        std::string bytes;
+        if (!client.DownloadSaveFile(game.serverGameId, r.path, bytes, error) ||
+            bytes.empty())
+            continue;
+        std::error_code ec;
+        fs::create_directories(fs::path(local).parent_path(), ec);
+        std::ofstream out(fs::path(local), std::ios::binary | std::ios::trunc);
+        if (!out) continue;
+        out.write(bytes.data(), (std::streamsize)bytes.size());
+        out.close();
+        SetFileMtimeEpoch(local, r.mtime);
+    }
+}
+
 void App::LaunchInstalledGame(Game launchGame) {
     bool ok = false;
     std::wstring failReason;
@@ -2480,6 +2664,15 @@ void App::LaunchInstalledGame(Game launchGame) {
                     MB_OK | MB_ICONWARNING);
         return;
     }
+
+    // Cloud saves: pull server-newer files before the game opens them.
+    if (launchGame.serverBacked && !launchGame.saveDir.empty() &&
+        !launchGame.serverGameId.empty())
+        SyncSavesDown(launchGame);
+
+    // Pre-launch hook fires after the pre-flight checks pass, just before the
+    // actual start (close wallpaper engine, set resolution, mount an image…).
+    RunHookCommand(launchGame.preLaunchCmd);
 
     if (!launchGame.launchUri.empty()) {
         // URI launch (Steam, Epic).
@@ -2550,6 +2743,14 @@ void App::LaunchInstalledGame(Game launchGame) {
     }
 
     if (ok) {
+        // Remembered for the WM_GAME_CLOSED handler; only one game runs at a
+        // time (the context menu grays Launch while the monitor is busy).
+        m_pendingPostExitCmd = launchGame.postExitCmd;
+        if (launchGame.serverBacked && !launchGame.saveDir.empty() &&
+            !launchGame.serverGameId.empty()) {
+            m_pendingSaveSyncGameId = launchGame.serverGameId;
+            m_pendingSaveSyncDir    = launchGame.saveDir;
+        }
         m_discord.SetPlaying(launchGame.title, PlatformName(launchGame.platform));
         if (m_config.Get().minimizeOnLaunch)
             ShowWindow(m_hwnd, SW_HIDE);  // hide to tray when a game launches
@@ -2630,6 +2831,8 @@ void App::DownloadWorker() {
             it->running = true;
             gameId = it->gameId;
         }
+        // Each job starts with a clean cancel flag (cancel is per-active-job).
+        DownloadControl::Cancelled().store(false, std::memory_order_relaxed);
 
         Game game;
         std::wstring jobRoot;
@@ -2797,6 +3000,10 @@ static LRESULT CALLBACK DownloadStatusWndProc(HWND hwnd, UINT msg, WPARAM wp, LP
         app->TickDownloadStatus();
         return 0;
     }
+    if (msg == WM_COMMAND && app) {
+        app->DownloadStatusCommand((int)LOWORD(wp));
+        return 0;
+    }
     if (msg == WM_CLOSE) {
         KillTimer(hwnd, TIMER_DLSPEED);
         ShowWindow(hwnd, SW_HIDE);
@@ -2855,9 +3062,17 @@ void App::OpenDownloadStatus() {
             WS_CHILD | WS_VISIBLE,
             14, 94, 452, 150, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         SetWindowLongPtrW(m_downloadGraph, GWLP_USERDATA, (LONG_PTR)this);
+        m_downloadPauseBtn = CreateWindowExW(0, WC_BUTTONW, L"Pause",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            14, 254, 100, 26, m_downloadStatusWnd, (HMENU)(UINT_PTR)IDC_DL_PAUSE,
+            GetModuleHandleW(nullptr), nullptr);
+        CreateWindowExW(0, WC_BUTTONW, L"Cancel Selected",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            122, 254, 130, 26, m_downloadStatusWnd, (HMENU)(UINT_PTR)IDC_DL_CANCEL,
+            GetModuleHandleW(nullptr), nullptr);
         m_downloadList = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTBOXW, nullptr,
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-            14, 256, 452, 250, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+            14, 288, 452, 218, m_downloadStatusWnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         SendMessageW(m_downloadProgress, PBM_SETRANGE32, 0, 1000);
         dark::EnableTitleBar(m_downloadStatusWnd);
         dark::Apply(m_downloadStatusWnd);
@@ -2870,6 +3085,49 @@ void App::OpenDownloadStatus() {
     SetTimer(m_downloadStatusWnd, TIMER_DLSPEED, 500, nullptr);
     SetWindowPos(m_downloadStatusWnd, HWND_TOP, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void App::DownloadStatusCommand(int id) {
+    if (id == IDC_DL_PAUSE) {
+        bool nowPaused = !DownloadControl::Paused().load(std::memory_order_relaxed);
+        DownloadControl::Paused().store(nowPaused, std::memory_order_relaxed);
+        if (m_downloadPauseBtn)
+            SetWindowTextW(m_downloadPauseBtn, nowPaused ? L"Resume" : L"Pause");
+        RefreshDownloadStatusWindow();
+        return;
+    }
+    if (id != IDC_DL_CANCEL) return;
+
+    int sel = (int)SendMessageW(m_downloadList, LB_GETCURSEL, 0, 0);
+    if (sel < 0) return;
+    std::wstring cancelId;
+    bool wasRunning = false;
+    {
+        std::lock_guard<std::mutex> lk(m_downloadMutex);
+        if (sel >= (int)m_downloadQueue.size()) return;
+        auto& job = m_downloadQueue[sel];
+        if (job.complete || job.failed) return;       // nothing to cancel
+        cancelId = job.gameId;
+        if (job.running) {
+            wasRunning = true;                        // worker notices the flag
+        } else {
+            m_downloadQueue.erase(m_downloadQueue.begin() + sel);
+        }
+    }
+    if (wasRunning) {
+        // The streaming loop sees this between reads, aborts with a quiet
+        // cancelled result, and the .part file stays for a later resume.
+        DownloadControl::Cancelled().store(true, std::memory_order_relaxed);
+        return;
+    }
+    if (auto* stored = m_library.FindById(cancelId)) {
+        stored->installState = InstallState::Missing;
+        stored->installProgressPermille = 0;
+    }
+    SaveAll();
+    ApplyFilter();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+    RefreshDownloadStatusWindow();
 }
 
 void App::TickDownloadStatus() {
@@ -3223,6 +3481,9 @@ void App::OnRButtonDown(float x, float y) {
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_LAUNCH_OPTIONS, L"Set Launch Options…");
+    AppendMenuW(menu, MF_STRING, IDM_LAUNCH_HOOKS, L"Set Pre/Post-Launch Commands…");
+    if (hoveredGame->serverBacked)
+        AppendMenuW(menu, MF_STRING, IDM_SAVE_DIR, L"Set Cloud Save Folder…");
 
     // Collections submenu: toggle membership, or create a new collection.
     HMENU colMenu = CreatePopupMenu();
@@ -3280,6 +3541,10 @@ void App::OnRButtonDown(float x, float y) {
         MoveGame(idx);
     } else if (cmd == IDM_LAUNCH_OPTIONS) {
         SetLaunchOptions(idx);
+    } else if (cmd == IDM_LAUNCH_HOOKS) {
+        SetLaunchHooks(idx);
+    } else if (cmd == IDM_SAVE_DIR) {
+        SetCloudSaveDir(idx);
     } else if (cmd == IDM_PROPERTIES) {
         OpenProperties(idx);
     } else if (cmd == IDM_FAVORITE || cmd == IDM_HIDE_GAME) {
@@ -3447,6 +3712,53 @@ void App::SetLaunchOptions(int visibleIdx) {
     if (auto* stored = m_library.FindById(game.id))
         stored->launchOptions = opts;
     SaveAll();
+}
+
+void App::SetLaunchHooks(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const Game game = *m_visibleGames[visibleIdx];
+
+    std::wstring pre = game.preLaunchCmd;
+    if (!ShowTextPrompt(m_hwnd, L"Pre-Launch Command",
+            L"Shell command run just before " + game.title + L" starts.\n"
+            L"Runs hidden via cmd /C; leave blank for none.", pre))
+        return;
+    std::wstring post = game.postExitCmd;
+    if (!ShowTextPrompt(m_hwnd, L"Post-Exit Command",
+            L"Shell command run right after " + game.title + L" exits.\n"
+            L"Runs hidden via cmd /C; leave blank for none.", post))
+        return;
+
+    if (auto* stored = m_library.FindById(game.id)) {
+        stored->preLaunchCmd = pre;
+        stored->postExitCmd  = post;
+    }
+    SaveAll();
+}
+
+void App::SetCloudSaveDir(int visibleIdx) {
+    if (visibleIdx < 0 || visibleIdx >= (int)m_visibleGames.size()) return;
+    const Game game = *m_visibleGames[visibleIdx];
+
+    std::wstring dir = game.saveDir;
+    if (!ShowTextPrompt(m_hwnd, L"Cloud Save Folder",
+            L"Folder whose files are synced to the server for " + game.title +
+            L".\nSynced down before launch, up after exit. Leave blank to disable.",
+            dir))
+        return;
+    while (!dir.empty() && iswspace(dir.back())) dir.pop_back();
+    while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
+    if (!dir.empty() && !fs::is_directory(dir)) {
+        MessageBoxW(m_hwnd, (L"Folder not found:\n" + dir).c_str(),
+                    L"Cloud Save Folder", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    if (auto* stored = m_library.FindById(game.id))
+        stored->saveDir = dir;
+    SaveAll();
+    ShowToast(dir.empty() ? L"Cloud saves disabled" : L"Cloud saves enabled",
+              dir.empty() ? game.title : game.title + L" \x2192 " + dir);
 }
 
 void App::NewCollectionForGame(int visibleIdx) {

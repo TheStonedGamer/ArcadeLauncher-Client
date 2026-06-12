@@ -3,6 +3,16 @@
 #include "Config.h"
 #include "GameLibrary.h"
 
+// Process-wide controls for the (single) active background download. The UI
+// thread flips these; DownloadFile's read loop honors them between buffer
+// reads. Cancel leaves the .part file intact so a re-queue resumes.
+namespace DownloadControl {
+    inline std::atomic<bool>& Paused()    { static std::atomic<bool> v{ false }; return v; }
+    inline std::atomic<bool>& Cancelled() { static std::atomic<bool> v{ false }; return v; }
+    inline std::atomic<int>&  LimitKBps() { static std::atomic<int>  v{ 0 };     return v; } // 0 = unlimited
+    inline const wchar_t* kCancelledError = L"Download cancelled";
+}
+
 struct ServerFileEntry {
     std::wstring path;
     std::wstring url;
@@ -79,6 +89,23 @@ public:
     };
     bool FetchChangelogs(const std::wstring& gameId,
                          std::vector<ChangelogEntry>& out, std::wstring& error);
+
+    // ── Cloud saves ──────────────────────────────────────────────────────────
+    // Per-user save files stored server-side, keyed by raw server game id and
+    // a forward-slash relative path. mtime is local file mtime (epoch seconds).
+    struct SaveFileInfo {
+        std::wstring path;     // relative, forward slashes
+        int64_t      mtime = 0;
+        uint64_t     size = 0;
+    };
+    bool ListSaves(const std::wstring& serverGameId,
+                   std::vector<SaveFileInfo>& out, std::wstring& error);
+    bool DownloadSaveFile(const std::wstring& serverGameId,
+                          const std::wstring& relPath,
+                          std::string& bytes, std::wstring& error);
+    bool UploadSaveFile(const std::wstring& serverGameId,
+                        const std::wstring& relPath, int64_t mtime,
+                        const std::string& bytes, std::wstring& error);
 
     // ── Account self-service (#21 / #22) ────────────────────────────────────
     struct AccountInfo {

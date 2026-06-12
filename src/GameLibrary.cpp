@@ -80,6 +80,9 @@ void GameLibrary::MergeGames(std::vector<Game> scanned) {
             s.releaseDate     = old->releaseDate;
             s.igdbPlatformId  = old->igdbPlatformId;
             s.launchOptions   = old->launchOptions;
+            s.preLaunchCmd    = old->preLaunchCmd;
+            s.postExitCmd     = old->postExitCmd;
+            s.saveDir         = old->saveDir;
             s.collections     = old->collections;
             s.favorite        = old->favorite;
             s.hidden          = old->hidden;
@@ -302,6 +305,9 @@ void GameLibrary::Save(const std::wstring& path) const {
         out += JFieldN(L"releaseDate", (uint64_t)g.releaseDate) + L",";
         out += JFieldN(L"igdbPlatformId", (uint64_t)g.igdbPlatformId) + L",";
         out += JField(L"launchOptions", g.launchOptions) + L",";
+        out += JField(L"preLaunchCmd", g.preLaunchCmd) + L",";
+        out += JField(L"postExitCmd", g.postExitCmd) + L",";
+        out += JField(L"saveDir", g.saveDir) + L",";
         out += JFieldB(L"favorite", g.favorite) + L",";
         out += JFieldB(L"hidden", g.hidden) + L",";
         out += JField(L"developer", g.developer) + L",";
@@ -412,6 +418,9 @@ void GameLibrary::Load(const std::wstring& path) {
         g.releaseDate     = (int64_t)ReadJsonNum(obj, "releaseDate");
         g.igdbPlatformId  = (int)ReadJsonNum(obj, "igdbPlatformId");
         g.launchOptions   = ToWide(ReadJsonField(obj, "launchOptions"));
+        g.preLaunchCmd    = ToWide(ReadJsonField(obj, "preLaunchCmd"));
+        g.postExitCmd     = ToWide(ReadJsonField(obj, "postExitCmd"));
+        g.saveDir         = ToWide(ReadJsonField(obj, "saveDir"));
         g.developer       = ToWide(ReadJsonField(obj, "developer"));
         g.publisher       = ToWide(ReadJsonField(obj, "publisher"));
         g.franchise       = ToWide(ReadJsonField(obj, "franchise"));

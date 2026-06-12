@@ -111,6 +111,7 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"steamGridDbApiKey\":\"" + Escape(m_cfg.steamGridDbApiKey) + "\",\n";
     out += "  \"discordRichPresence\":" + B(m_cfg.discordRichPresence) + ",\n";
     out += "  \"discordClientId\":\"" + Escape(m_cfg.discordClientId) + "\",\n";
+    out += "  \"downloadLimitKBps\":" + std::to_string(m_cfg.downloadLimitKBps) + ",\n";
     out += "  \"igdbClientId\":\"" + Escape(m_cfg.igdbClientId) + "\",\n";
     out += "  \"igdbClientSecret\":\"" + Escape(m_cfg.igdbClientSecret) + "\",\n";
     out += "  \"igdbAccessToken\":\"" + Escape(m_cfg.igdbAccessToken) + "\",\n";
@@ -207,6 +208,8 @@ void Config::Load(const std::wstring& path) {
     if (json.find("\"discordRichPresence\"") != std::string::npos)
         m_cfg.discordRichPresence = ReadBool(json, "discordRichPresence");
     m_cfg.discordClientId    = ToWide(ReadField(json, "discordClientId"));
+    m_cfg.downloadLimitKBps  = ReadInt(json, "downloadLimitKBps");
+    if (m_cfg.downloadLimitKBps < 0) m_cfg.downloadLimitKBps = 0;
     m_cfg.igdbClientId       = ToWide(ReadField(json, "igdbClientId"));
     m_cfg.igdbClientSecret   = ToWide(ReadField(json, "igdbClientSecret"));
     m_cfg.igdbAccessToken    = ToWide(ReadField(json, "igdbAccessToken"));

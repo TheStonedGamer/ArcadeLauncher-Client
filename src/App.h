@@ -86,6 +86,9 @@ private:
     void UninstallGame(int visibleIdx);
     void MoveGame(int visibleIdx);              // relocate install between libraries
     void SetLaunchOptions(int visibleIdx);      // per-game custom launch args
+    void SetLaunchHooks(int visibleIdx);        // per-game pre/post-launch commands
+    void SetCloudSaveDir(int visibleIdx);       // per-game cloud-save folder
+    void SyncSavesDown(const Game& game);       // pull server-newer saves before launch
     void NewCollectionForGame(int visibleIdx);  // create + assign a collection
     void ToggleGameCollection(int visibleIdx, int collectionIdx);
     void RefreshArt(const Game& game);
@@ -166,6 +169,10 @@ private:
         std::wstring error;
     };
     std::wstring m_pendingLaunchId;  // --launch <id> from a shortcut, run at startup
+    std::wstring m_pendingPostExitCmd;  // post-exit hook of the running game
+    // Cloud-save upload after the running game exits (raw server id + folder).
+    std::wstring m_pendingSaveSyncGameId;
+    std::wstring m_pendingSaveSyncDir;
 
     // Off-thread box-art decode. WIC decoding is expensive; doing it on the UI
     // thread froze the launcher when many covers loaded at once. A single worker
@@ -195,6 +202,10 @@ private:
     HWND m_downloadSummary = nullptr;
     HWND m_downloadSpeed = nullptr;   // current / disk-write / peak readout
     HWND m_downloadGraph = nullptr;   // owner-drawn Steam-style speed graph
+    HWND m_downloadPauseBtn = nullptr;
+
+    static constexpr int IDC_DL_PAUSE  = 9001;
+    static constexpr int IDC_DL_CANCEL = 9002;
 
     // Throughput sampling for the download status window. All accessed on the
     // UI thread only (timer, progress messages, paint), so no extra locking.
@@ -208,6 +219,8 @@ private:
 public:
     // Driven by the download status window's 500ms timer + its graph child.
     void TickDownloadStatus();
+    // Pause/Resume + Cancel Selected buttons in the download status window.
+    void DownloadStatusCommand(int id);
     size_t SpeedHistorySize() const;
     std::vector<float> SpeedHistoryCopy() const;
 private:
@@ -221,6 +234,8 @@ private:
     // Tray state
     NOTIFYICONDATAW          m_nid{};
     std::vector<std::wstring> m_trayRecentIds;  // game IDs shown in last tray menu
+
+    static constexpr int  HOTKEY_SUMMON = 1;   // Ctrl+Alt+A global summon
 
     static constexpr UINT TIMER_ANIM   = 1;
     static constexpr UINT TIMER_SCROLL = 2;
@@ -257,6 +272,8 @@ private:
     static constexpr UINT IDM_PROPERTIES   = 5011;
     static constexpr UINT IDM_FAVORITE     = 5012;
     static constexpr UINT IDM_HIDE_GAME    = 5013;
+    static constexpr UINT IDM_LAUNCH_HOOKS = 5014;
+    static constexpr UINT IDM_SAVE_DIR     = 5015;
     // Collections submenu: "New collection…" then one id per existing collection.
     static constexpr UINT IDM_COLLECTION_NEW  = 5200;
     static constexpr UINT IDM_COLLECTION_BASE = 5201;  // + collection index
@@ -274,6 +291,7 @@ private:
     static constexpr UINT IDM_TOOL_XBOX    = 6010;
     static constexpr UINT IDM_TOOL_LIBRARY = 6011;
     static constexpr UINT IDM_TOOL_UPDATE  = 6012;
+    static constexpr UINT IDM_TOOL_SPEEDLIMIT = 6013;
 
     // Tray menu command IDs
     static constexpr UINT IDM_TRAY_SHOW    = 7001;

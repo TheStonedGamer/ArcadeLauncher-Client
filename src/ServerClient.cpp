@@ -1145,6 +1145,42 @@ bool ServerClient::FetchChangelogs(const std::wstring& gameId,
     return true;
 }
 
+bool ServerClient::ListSaves(const std::wstring& serverGameId,
+                             std::vector<SaveFileInfo>& out,
+                             std::wstring& error) {
+    out.clear();
+    std::string body;
+    if (!HttpGet(Url(L"/api/saves/" + PercentEncode(serverGameId)), body, error))
+        return false;
+    for (const auto& obj : ObjectsInArray(body, "files")) {
+        SaveFileInfo f;
+        f.path  = ToWide(JsonString(obj, "path"));
+        f.mtime = (int64_t)JsonNumber(obj, "mtime");
+        f.size  = (uint64_t)JsonNumber(obj, "size");
+        if (!f.path.empty()) out.push_back(std::move(f));
+    }
+    return true;
+}
+
+bool ServerClient::DownloadSaveFile(const std::wstring& serverGameId,
+                                    const std::wstring& relPath,
+                                    std::string& bytes, std::wstring& error) {
+    return HttpGet(Url(L"/api/saves/" + PercentEncode(serverGameId) +
+                       L"/file?path=" + PercentEncode(relPath)),
+                   bytes, error);
+}
+
+bool ServerClient::UploadSaveFile(const std::wstring& serverGameId,
+                                  const std::wstring& relPath, int64_t mtime,
+                                  const std::string& bytes, std::wstring& error) {
+    std::string body;
+    return HttpSendRaw(L"PUT",
+                       Url(L"/api/saves/" + PercentEncode(serverGameId) +
+                           L"/file?path=" + PercentEncode(relPath) +
+                           L"&mtime=" + std::to_wstring(mtime)),
+                       L"application/octet-stream", bytes, body, error);
+}
+
 bool ServerClient::DownloadFile(const std::wstring& url,
                                 const std::wstring& dest,
                                 uint64_t expectedSize,
@@ -1225,10 +1261,27 @@ bool ServerClient::DownloadFile(const std::wstring& url,
     std::ofstream out(part, std::ios::binary | std::ios::app);
     uint64_t downloaded = existing;
     std::vector<char> buffer(1024 * 1024);
+    // Throttle bookkeeping: bytes moved this session vs. wall time elapsed.
+    ULONGLONG throttleStart = GetTickCount64();
+    uint64_t sessionBytes = 0;
+    bool cancelled = false;
     for (;;) {
         DWORD avail = 0;
         if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
         while (avail > 0) {
+            if (DownloadControl::Cancelled().load(std::memory_order_relaxed)) {
+                cancelled = true;
+                avail = 0;
+                break;
+            }
+            while (DownloadControl::Paused().load(std::memory_order_relaxed) &&
+                   !DownloadControl::Cancelled().load(std::memory_order_relaxed)) {
+                Sleep(150);
+                // Reset the throttle window so the pause itself doesn't count
+                // as "time available" for a post-resume burst.
+                throttleStart = GetTickCount64();
+                sessionBytes = 0;
+            }
             DWORD toRead = std::min<DWORD>(avail, (DWORD)buffer.size());
             DWORD read = 0;
             if (!WinHttpReadData(req, buffer.data(), toRead, &read) || read == 0) {
@@ -1237,9 +1290,20 @@ bool ServerClient::DownloadFile(const std::wstring& url,
             }
             out.write(buffer.data(), read);
             downloaded += read;
+            sessionBytes += read;
             avail -= read;
             if (onFileProgress) onFileProgress(downloaded);
+
+            int limit = DownloadControl::LimitKBps().load(std::memory_order_relaxed);
+            if (limit > 0) {
+                // Sleep just enough that sessionBytes / elapsed stays at the cap.
+                double expectedMs = (double)sessionBytes / ((double)limit * 1024.0) * 1000.0;
+                double actualMs = (double)(GetTickCount64() - throttleStart);
+                if (expectedMs > actualMs)
+                    Sleep((DWORD)std::min(expectedMs - actualMs, 1000.0));
+            }
         }
+        if (cancelled) break;
     }
     bool writeOk = out.good();
     out.close();
@@ -1247,6 +1311,11 @@ bool ServerClient::DownloadFile(const std::wstring& url,
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(sess);
 
+    if (cancelled) {
+        // Keep the .part so a later retry resumes where it left off.
+        error = DownloadControl::kCancelledError;
+        return false;
+    }
     if (!writeOk) {
         // A write failure (disk full, etc.) only flips the stream's fail bit —
         // surface it plainly instead of letting it masquerade as a network

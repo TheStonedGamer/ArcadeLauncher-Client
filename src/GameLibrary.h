@@ -105,6 +105,17 @@ struct Game {
     // command line; "%command%" if present is replaced by the base target.
     std::wstring launchOptions;
 
+    // Optional shell commands run around the play session (Playnite-style):
+    // preLaunchCmd fires just before the game starts, postExitCmd just after
+    // it exits. Run hidden via cmd /C; failures are silently ignored.
+    std::wstring preLaunchCmd;
+    std::wstring postExitCmd;
+
+    // Cloud saves: local folder whose files are synced to the server before
+    // launch (server-newer pulled) and after exit (local-newer pushed). Empty
+    // means cloud saves are off for this game. Server-backed games only.
+    std::wstring saveDir;
+
     // Collections this game belongs to (names matching AppConfig::collections).
     std::vector<std::wstring> collections;
 

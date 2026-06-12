@@ -109,6 +109,10 @@ struct AppConfig {
     bool         discordRichPresence = true;
     std::wstring discordClientId;
 
+    // Background download speed cap in KB/s (0 = unlimited). Applied to the
+    // process-wide DownloadControl at startup and when changed in Tools.
+    int          downloadLimitKBps = 0;
+
     // User-defined collections (Steam-style). Games reference these by name.
     std::vector<std::wstring> collections;
 
