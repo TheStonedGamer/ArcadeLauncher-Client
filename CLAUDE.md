@@ -9,6 +9,16 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
 - **Pushing to `main` triggers GitHub Actions**, which auto-bumps `src/Version.h`
   and builds the MSI. Because Actions pushes a version-bump commit, local pushes
   are often rejected non-fast-forward — `git pull --rebase origin main` then push.
+- **Bump type comes from the commit message**: default is patch; `[minor]` in the
+  subject bumps minor and resets patch, `[major]` bumps major. Actions then tags
+  `client-vX.Y.Z` and publishes a GitHub release with the MSI attached. For a
+  coordinated release, push matching `[minor]`/`[major]` commits to BOTH repos.
+- **Version lockstep**: client and server must share the same **major.minor**
+  (patch floats). `ServerClient::CheckServerVersion` (called from
+  `EnsureAuthenticated`, the chokepoint for every server op) reads
+  `/api/health`'s `version` and refuses to connect on mismatch. Consequence:
+  after a minor/major bump, the production server must be redeployed before
+  clients update, or they are locked out.
 - Repo: `github.com/TheStonedGamer/ArcadeLauncher-Client`.
 - WiX `UpgradeCode` `DA9B3C2E-5F7A-4B8D-9C1E-0F2A3B4C5D6E` is **PERMANENT**.
 

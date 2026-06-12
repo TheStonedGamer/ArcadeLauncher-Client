@@ -403,11 +403,20 @@ src/Version.h
 
 ### Releasing a new version
 
-1. Edit `src/Version.h` — bump `ARCADE_VERSION_MAJOR/MINOR/PATCH`.
-2. Commit: `git commit -am "Bump version to 1.2.3"`
-3. Tag: `git tag v1.2.3`
-4. Push: `git push origin main v1.2.3`
-5. GitHub Actions builds the MSI and creates the release automatically.
+Versioning is automated — do **not** edit `Version.h` or tag by hand. Every
+push to `main` triggers GitHub Actions, which:
+
+1. Bumps `src/Version.h` based on the commit subject — patch by default,
+   `[minor]` bumps minor (resets patch), `[major]` bumps major.
+2. Commits the bump back to `main` (`[skip actions]`), so always
+   `git pull --rebase origin main` before pushing.
+3. Tags `client-vX.Y.Z`, builds the MSI, and publishes a GitHub release.
+
+**Version lockstep with the server**: the client refuses to connect unless the
+server's **major.minor** (from `/api/health`, enforced in
+`ServerClient::CheckServerVersion`) matches its own; patch floats freely. For a
+minor/major release, push matching `[minor]`/`[major]` commits to both repos and
+redeploy the server before clients update.
 
 The MSI filename is always `ArcadeLauncher-x64.msi` regardless of version; the version is embedded in the MSI metadata and the exe's VERSIONINFO.
 
