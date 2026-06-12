@@ -207,7 +207,12 @@ void Config::Load(const std::wstring& path) {
     // present and false (so configs predating the field keep the default).
     if (json.find("\"discordRichPresence\"") != std::string::npos)
         m_cfg.discordRichPresence = ReadBool(json, "discordRichPresence");
-    m_cfg.discordClientId    = ToWide(ReadField(json, "discordClientId"));
+    // Blank in an existing config means "never customized" — keep the built-in
+    // shared ArcadeLauncher application ID so presence works with no setup.
+    {
+        std::wstring id = ToWide(ReadField(json, "discordClientId"));
+        if (!id.empty()) m_cfg.discordClientId = id;
+    }
     m_cfg.downloadLimitKBps  = ReadInt(json, "downloadLimitKBps");
     if (m_cfg.downloadLimitKBps < 0) m_cfg.downloadLimitKBps = 0;
     m_cfg.igdbClientId       = ToWide(ReadField(json, "igdbClientId"));

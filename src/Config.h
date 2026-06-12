@@ -104,10 +104,12 @@ struct AppConfig {
     int64_t      igdbTokenExpiry = 0;
 
     // Discord Rich Presence: shows "Playing <title>" with an elapsed timer while
-    // a game runs. Empty client ID (or the toggle off) disables it. The ID is an
-    // Application ID created at https://discord.com/developers/applications.
+    // a game runs. The ID is a public Application ID from
+    // https://discord.com/developers/applications — the default is the shared
+    // "ArcadeLauncher" application, so presence works out of the box; set your
+    // own ID here to override the branding, or turn the toggle off to disable.
     bool         discordRichPresence = true;
-    std::wstring discordClientId;
+    std::wstring discordClientId = L"1515119921795960882";
 
     // Background download speed cap in KB/s (0 = unlimited). Applied to the
     // process-wide DownloadControl at startup and when changed in Tools.
