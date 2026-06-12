@@ -59,14 +59,7 @@ static void Worker(HWND hwnd, AppConfig cfg, std::wstring appDataDir) {
         if (!PostMessageW(hwnd, WM_APP_ASSETS_TOAST, 0, (LPARAM)t)) delete t;
     };
 
-    bool announced = false;
-    int  changed   = 0;
-    auto announce = [&]() {
-        if (!announced) {
-            announced = true;
-            toast(L"Emulator setup", L"Downloading missing emulator files…");
-        }
-    };
+    int changed = 0;
 
     // ── 1. Emulators ──────────────────────────────────────────────────────────
     // Mirrors the FirstLaunchSetup spec table; all are server-hosted (directUrl),
@@ -93,7 +86,6 @@ static void Worker(HWND hwnd, AppConfig cfg, std::wstring appDataDir) {
 
     for (auto& e : emus) {
         if (FileExists(*e.curPath)) continue;   // already installed
-        announce();
 
         EmulatorDownloadSpec spec;
         spec.urlPattern = L"server";            // tag stored as "server" (mirrors first-launch)
@@ -121,7 +113,6 @@ static void Worker(HWND hwnd, AppConfig cfg, std::wstring appDataDir) {
         if (!biosDir.empty()) {
             std::wstring dest = biosDir + L"\\scph1001.bin";
             if (!FileExists(dest)) {
-                announce();
                 namespace fs = std::filesystem;
                 std::error_code ec; fs::create_directories(biosDir, ec);
                 if (DownloadFile(EmulatorArchiveUrl(cfg, L"scph1001.bin"), dest))
@@ -141,7 +132,7 @@ static void Worker(HWND hwnd, AppConfig cfg, std::wstring appDataDir) {
         bool fwMissing = !FileExists(fwDir + L"\\bios.bin")
                       || !FileExists(fwDir + L"\\mcpx.bin")
                       || !FileExists(fwDir + L"\\hdd.qcow2");
-        if (fwMissing) { announce(); ++changed; }
+        if (fwMissing) ++changed;
         SetupXemuFirmware(EmulatorArchiveUrl(cfg, L"xemu-firmware/"), xemuDestDir);
     }
 
@@ -151,7 +142,6 @@ static void Worker(HWND hwnd, AppConfig cfg, std::wstring appDataDir) {
         std::wstring rpcs3Dir = DirOf(cfg.emulators.rpcs3Path);
         std::wstring flag = rpcs3Dir + L"\\dev_flash\\vsh\\etc\\version.txt";
         if (!rpcs3Dir.empty() && !FileExists(flag)) {
-            announce();
             std::wstring pup = appDataDir + L"\\emulators\\PS3UPDAT.PUP";
             if (DownloadFile(EmulatorArchiveUrl(cfg, L"PS3UPDAT.PUP"), pup)) {
                 std::wstring cmd = L"\"" + cfg.emulators.rpcs3Path +
