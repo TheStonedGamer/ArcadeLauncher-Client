@@ -126,6 +126,15 @@ struct Game {
     int64_t      releaseDate = 0;     // unix timestamp
     int          igdbPlatformId = 0;  // 0 = auto; >0 = IGDB platform override
 
+    // Screenshot / artwork URLs from the server catalog (IGDB). Rendered as a
+    // thumbnail strip in the detail panel; downloaded + decoded lazily.
+    std::vector<std::wstring> screenshots;
+
+    // Stable art-cache key for screenshot #i (reuses the cover-art decode cache).
+    static std::wstring ScreenshotKey(const std::wstring& id, int i) {
+        return id + L"#s" + std::to_wstring(i);
+    }
+
     std::wstring LaunchTarget() const {
         if (!launchUri.empty())    return launchUri;
         if (!emulatorPath.empty()) return emulatorPath;

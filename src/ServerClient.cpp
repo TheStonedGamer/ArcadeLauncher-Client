@@ -106,6 +106,29 @@ static std::vector<std::string> ObjectsInArray(const std::string& json, const st
     return out;
 }
 
+// Extract a flat array of strings: "key":["a","b",...]. Handles backslash escapes
+// for quotes; sufficient for IGDB image URLs (which contain no exotic escapes).
+static std::vector<std::string> StringsInArray(const std::string& json, const std::string& key) {
+    std::vector<std::string> out;
+    std::string search = "\"" + key + "\":[";
+    size_t p = json.find(search);
+    if (p == std::string::npos) return out;
+    p += search.size();
+    while (p < json.size()) {
+        if (json[p] == ']') break;
+        if (json[p] != '"') { ++p; continue; }
+        ++p; // past opening quote
+        std::string s;
+        while (p < json.size() && json[p] != '"') {
+            if (json[p] == '\\' && p + 1 < json.size()) { s += json[p + 1]; p += 2; }
+            else { s += json[p]; ++p; }
+        }
+        ++p; // past closing quote
+        if (!s.empty()) out.push_back(s);
+    }
+    return out;
+}
+
 static Platform ParsePlatform(const std::wstring& p) {
     if (p == L"Steam") return Platform::Steam;
     if (p == L"Epic") return Platform::Epic;
@@ -569,7 +592,8 @@ std::wstring ServerClient::Url(const std::wstring& path) const {
 bool ServerClient::HttpGet(const std::wstring& url,
                            std::string& body,
                            std::wstring& error,
-                           const std::wstring& rangeHeader) {
+                           const std::wstring& rangeHeader,
+                           bool allowReauth) {
     if (url.find(L"/api/login") == std::wstring::npos &&
         url.find(L"/api/auth/") == std::wstring::npos &&
         !EnsureAuthenticated(error))
@@ -626,6 +650,23 @@ bool ServerClient::HttpGet(const std::wstring& url,
     DWORD status = 0, statusSize = sizeof(status);
     WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
         nullptr, &status, &statusSize, nullptr);
+    // A stale/expired bearer token surfaces as 401. Rather than failing the
+    // operation (forcing an app restart or a manual re-login), transparently drop
+    // the token, re-authenticate with the stored credentials via challenge-
+    // response, and retry the request exactly once. Auth endpoints are excluded so
+    // a genuinely wrong password can't loop.
+    if (status == 401 && allowReauth && !m_cfg.authToken.empty() &&
+        url.find(L"/api/login") == std::wstring::npos &&
+        url.find(L"/api/auth/") == std::wstring::npos) {
+        WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+        m_cfg.authToken.clear();
+        std::wstring reErr;
+        if (!EnsureAuthenticated(reErr)) {
+            error = L"Session expired and re-authentication failed: " + reErr;
+            return false;
+        }
+        return HttpGet(url, body, error, rangeHeader, /*allowReauth=*/false);
+    }
     if (status < 200 || status >= 300) {
         WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
         error = L"Server returned HTTP " + std::to_wstring(status);
@@ -653,7 +694,8 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
                                 const std::wstring& formBody,
                                 std::string& body,
                                 std::wstring& error,
-                                bool withAuth) {
+                                bool withAuth,
+                                bool allowReauth) {
     if (withAuth && !EnsureAuthenticated(error)) return false;
     URL_COMPONENTSW uc{ sizeof(uc) };
     wchar_t host[256]{}, path[2048]{};
@@ -717,6 +759,17 @@ bool ServerClient::HttpPostForm(const std::wstring& url,
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(sess);
 
+    // Transparent re-auth on a stale token (see HttpGet for rationale). Only for
+    // authenticated POSTs — an unauthenticated login POST keeps its 401.
+    if (status == 401 && withAuth && allowReauth && !m_cfg.authToken.empty()) {
+        m_cfg.authToken.clear();
+        std::wstring reErr;
+        if (!EnsureAuthenticated(reErr)) {
+            error = L"Session expired and re-authentication failed: " + reErr;
+            return false;
+        }
+        return HttpPostForm(url, formBody, body, error, withAuth, /*allowReauth=*/false);
+    }
     if (status < 200 || status >= 300) {
         std::string serverMsg = JsonString(body, "error");
         error = serverMsg.empty()
@@ -997,6 +1050,8 @@ bool ServerClient::FetchCatalog(std::vector<Game>& games, std::wstring& error) {
         g.igdbRating = (float)JsonFloat(obj, "igdbRating");
         g.releaseDate = (int64_t)JsonNumber(obj, "releaseDate");
         g.serverVersion = ToWide(JsonString(obj, "version"));
+        for (const auto& url : StringsInArray(obj, "screenshots"))
+            g.screenshots.push_back(ToWide(url));
         g.installRoot = ResolveInstallFolder(m_cfg.installRoot, g.title, id);
         g.installState = fs::exists(g.installRoot) ? InstallState::Installed : InstallState::Missing;
         games.push_back(std::move(g));

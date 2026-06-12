@@ -111,6 +111,8 @@
     <ClCompile Include="src\MesenConfig.cpp" />
     <ClCompile Include="src\MetadataFetcher.cpp" />
     <ClCompile Include="src\ProcessMonitor.cpp" />
+    <ClCompile Include="src\DiscordPresence.cpp" />
+    <ClCompile Include="src\GamepadInput.cpp" />
     <ClCompile Include="src\Platform\SteamScanner.cpp" />
     <ClCompile Include="src\Platform\EpicScanner.cpp" />
     <ClCompile Include="src\Platform\GogScanner.cpp" />
@@ -157,6 +159,8 @@
     <ClInclude Include="src\RyujinxConfig.h" />
     <ClInclude Include="src\MesenConfig.h" />
     <ClInclude Include="src\Scanner.h" />
+    <ClInclude Include="src\DiscordPresence.h" />
+    <ClInclude Include="src\GamepadInput.h" />
     <ClInclude Include="src\MetadataFetcher.h" />
     <ClInclude Include="src\ProcessMonitor.h" />
     <ClInclude Include="src\IgdbClient.h" />

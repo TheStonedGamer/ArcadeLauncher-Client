@@ -109,6 +109,8 @@ void Config::Save(const std::wstring& path) const {
     out += "  \"windowWidth\":"  + std::to_string(m_cfg.windowWidth)  + ",\n";
     out += "  \"windowHeight\":" + std::to_string(m_cfg.windowHeight) + ",\n";
     out += "  \"steamGridDbApiKey\":\"" + Escape(m_cfg.steamGridDbApiKey) + "\",\n";
+    out += "  \"discordRichPresence\":" + B(m_cfg.discordRichPresence) + ",\n";
+    out += "  \"discordClientId\":\"" + Escape(m_cfg.discordClientId) + "\",\n";
     out += "  \"igdbClientId\":\"" + Escape(m_cfg.igdbClientId) + "\",\n";
     out += "  \"igdbClientSecret\":\"" + Escape(m_cfg.igdbClientSecret) + "\",\n";
     out += "  \"igdbAccessToken\":\"" + Escape(m_cfg.igdbAccessToken) + "\",\n";
@@ -200,6 +202,11 @@ void Config::Load(const std::wstring& path) {
     if (h > 0) m_cfg.windowHeight = h;
 
     m_cfg.steamGridDbApiKey  = ToWide(ReadField(json, "steamGridDbApiKey"));
+    // Default Rich Presence on, but only flip it off when the key is explicitly
+    // present and false (so configs predating the field keep the default).
+    if (json.find("\"discordRichPresence\"") != std::string::npos)
+        m_cfg.discordRichPresence = ReadBool(json, "discordRichPresence");
+    m_cfg.discordClientId    = ToWide(ReadField(json, "discordClientId"));
     m_cfg.igdbClientId       = ToWide(ReadField(json, "igdbClientId"));
     m_cfg.igdbClientSecret   = ToWide(ReadField(json, "igdbClientSecret"));
     m_cfg.igdbAccessToken    = ToWide(ReadField(json, "igdbAccessToken"));

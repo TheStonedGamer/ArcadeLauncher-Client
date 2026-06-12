@@ -844,28 +844,88 @@ void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
     m_fmtHeading->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     iy += 62;
 
-    auto fact = [&](const std::wstring& s, ID2D1Brush* brush) {
-        m_rt->DrawText(s.c_str(), (UINT32)s.size(), m_fmtDetail.Get(),
-                       D2D1::RectF(ix, iy, ix + iw, iy + 24), brush);
-        iy += 26;
+    // ── Metadata chips (cleaner than a stack of "Label: value" rows) ───────────
+    // Pill-shaped chips for the at-a-glance facts that apply to *every* platform,
+    // wrapping to new rows as needed. Dynamic per-session stats (playtime, last
+    // played, version) follow underneath as a compact key/value block.
+    const float chipH = 26.0f, chipPadX = 11.0f, chipGap = 8.0f;
+    float chipX = ix, chipY = iy;
+    bool anyChip = false;
+    auto chip = [&](const std::wstring& text, ID2D1Brush* textBrush, bool outline) {
+        if (text.empty()) return;
+        anyChip = true;
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(m_dwFactory->CreateTextLayout(text.c_str(), (UINT32)text.size(),
+                m_fmtDetail.Get(), 4000.0f, chipH, layout.GetAddressOf())))
+            return;
+        DWRITE_TEXT_METRICS tm{}; layout->GetMetrics(&tm);
+        float cw = tm.widthIncludingTrailingWhitespace + chipPadX * 2;
+        if (chipX > ix && chipX + cw > ix + iw) {   // wrap to next chip row
+            chipX = ix; chipY += chipH + chipGap;
+        }
+        D2D1_RECT_F r = D2D1::RectF(chipX, chipY, chipX + cw, chipY + chipH);
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(r, chipH / 2, chipH / 2), m_brushCard.Get());
+        if (outline)
+            m_rt->DrawRoundedRectangle(D2D1::RoundedRect(r, chipH / 2, chipH / 2), textBrush, 1.2f);
+        m_rt->DrawTextLayout(D2D1::Point2F(chipX + chipPadX, chipY + (chipH - tm.height) / 2.0f),
+                             layout.Get(), textBrush);
+        chipX += cw + chipGap;
     };
 
-    fact(L"Platform: " + PlatformName(game->platform), m_brushSubtext.Get());
+    chip(PlatformName(game->platform), m_brushSubtext.Get(), false);
 
-    // Version (server-backed games carry an authoritative content version)
-    if (!game->serverVersion.empty())
-        fact(L"Version: " + game->serverVersion, m_brushSubtext.Get());
-
-    if (game->serverBacked) {
-        std::wstring st = L"Status: ";
-        st += game->installState == InstallState::Installed ? L"Installed" :
-              game->installState == InstallState::UpdateAvailable ? L"Update available" :
-              game->installState == InstallState::Downloading ? L"Downloading" :
-              L"Not installed";
-        fact(st, m_brushSubtext.Get());
+    if (game->releaseDate > 0) {
+        SYSTEMTIME rst; FILETIME rft;
+        LONGLONG rll = (LONGLONG)(game->releaseDate) * 10000000LL + 116444736000000000LL;
+        rft.dwLowDateTime = (DWORD)(rll & 0xFFFFFFFF); rft.dwHighDateTime = (DWORD)(rll >> 32);
+        FileTimeToSystemTime(&rft, &rst);
+        chip(std::to_wstring(rst.wYear), m_brushSubtext.Get(), false);
     }
 
-    fact(L"Playtime: " + game->PlaytimeStr(), m_brushSubtext.Get());
+    if (!game->RatingStr().empty()) {
+        m_brushAccent->SetColor(game->RatingColor());
+        chip(L"\x2605 " + game->RatingStr(), m_brushAccent.Get(), true);   // ★ rating
+        m_brushAccent->SetColor(C_ACCENT);
+    }
+
+    if (game->serverBacked) {
+        const wchar_t* stxt =
+            game->installState == InstallState::Installed ? L"Installed" :
+            game->installState == InstallState::UpdateAvailable ? L"Update available" :
+            game->installState == InstallState::Downloading ? L"Downloading" :
+            L"Not installed";
+        bool good = game->installState == InstallState::Installed;
+        ID2D1Brush* b = good ? m_brushAccent.Get() : m_brushSubtext.Get();
+        chip(stxt, b, good);
+    }
+
+    // Genre list → one chip per genre (split on commas).
+    if (!game->genres.empty()) {
+        std::wstring g = game->genres;
+        size_t start = 0;
+        while (start < g.size()) {
+            size_t comma = g.find(L',', start);
+            std::wstring one = g.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+            size_t a = one.find_first_not_of(L" \t");
+            size_t z = one.find_last_not_of(L" \t");
+            if (a != std::wstring::npos) chip(one.substr(a, z - a + 1), m_brushSubtext.Get(), false);
+            if (comma == std::wstring::npos) break;
+            start = comma + 1;
+        }
+    }
+
+    iy = chipY + (anyChip ? chipH + 16.0f : 0.0f);
+
+    // Compact key/value stats block.
+    auto stat = [&](const std::wstring& label, const std::wstring& value) {
+        m_rt->DrawText(label.c_str(), (UINT32)label.size(), m_fmtDetail.Get(),
+                       D2D1::RectF(ix, iy, ix + 130, iy + 22), m_brushSubtext.Get());
+        m_rt->DrawText(value.c_str(), (UINT32)value.size(), m_fmtDetail.Get(),
+                       D2D1::RectF(ix + 130, iy, ix + iw, iy + 22), m_brushText.Get());
+        iy += 24;
+    };
+
+    stat(L"Playtime", game->PlaytimeStr());
 
     if (game->lastPlayed > 0) {
         SYSTEMTIME st; FILETIME ft;
@@ -873,26 +933,12 @@ void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
         ft.dwLowDateTime = (DWORD)(ll & 0xFFFFFFFF); ft.dwHighDateTime = (DWORD)(ll >> 32);
         FileTimeToSystemTime(&ft, &st);
         wchar_t dateBuf[64];
-        swprintf_s(dateBuf, L"Last played: %04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
-        fact(dateBuf, m_brushSubtext.Get());
+        swprintf_s(dateBuf, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+        stat(L"Last played", dateBuf);
     }
 
-    if (game->releaseDate > 0) {
-        SYSTEMTIME rst; FILETIME rft;
-        LONGLONG rll = (LONGLONG)(game->releaseDate) * 10000000LL + 116444736000000000LL;
-        rft.dwLowDateTime = (DWORD)(rll & 0xFFFFFFFF); rft.dwHighDateTime = (DWORD)(rll >> 32);
-        FileTimeToSystemTime(&rft, &rst);
-        fact(L"Released: " + std::to_wstring(rst.wYear), m_brushSubtext.Get());
-    }
-
-    if (!game->RatingStr().empty()) {
-        m_brushAccent->SetColor(game->RatingColor());
-        fact(L"Rating: " + game->RatingStr(), m_brushAccent.Get());
-        m_brushAccent->SetColor(C_ACCENT);
-    }
-
-    if (!game->genres.empty())
-        fact(L"Genres: " + game->genres, m_brushSubtext.Get());
+    if (!game->serverVersion.empty())
+        stat(L"Version", game->serverVersion);
 
     // ── Scrollable content pane: Summary + What's New (changelog) ──────────────
     float btnY = py + panelH - 70.0f;
@@ -910,6 +956,30 @@ void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
                            D2D1::RectF(ix, cy, ix + iw, cy + 24), m_brushText.Get());
             cy += 28.0f;
         };
+
+        // Screenshot / artwork strip (IGDB). Thumbnails are decoded into the art
+        // cache under Game::ScreenshotKey ids by App::EnsureScreenshots; any not
+        // yet downloaded simply render as an empty placeholder tile.
+        if (!game->screenshots.empty()) {
+            heading(L"Screenshots");
+            const float shotH = 92.0f, gap = 8.0f, shotW = shotH * (16.0f / 9.0f);
+            float sx = ix, sy = cy, rowBottom = cy + shotH;
+            int n = (int)game->screenshots.size();
+            if (n > 8) n = 8;
+            for (int i = 0; i < n; ++i) {
+                if (sx > ix && sx + shotW > ix + iw) { sx = ix; sy += shotH + gap; }
+                D2D1_RECT_F r = D2D1::RectF(sx, sy, sx + shotW, sy + shotH);
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(r, 6, 6), m_brushCard.Get());
+                if (ID2D1Bitmap* sb = GetArt(Game::ScreenshotKey(game->id, i))) {
+                    D2D1_RECT_F src = D2D1::RectF(0, 0, (float)sb->GetSize().width,
+                                                        (float)sb->GetSize().height);
+                    m_rt->DrawBitmap(sb, r, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+                }
+                sx += shotW + gap;
+                rowBottom = sy + shotH;
+            }
+            cy = rowBottom + 18.0f;
+        }
 
         if (!game->summary.empty()) {
             heading(L"Summary");

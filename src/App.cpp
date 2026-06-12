@@ -1005,6 +1005,17 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     SetTimer(m_hwnd, TIMER_SAVE, 30000,  nullptr); // autosave every 30s
     SetTimer(m_hwnd, TIMER_RESYNC, 600000, nullptr); // re-sync server catalog every 10 min
 
+    // Discord Rich Presence: connect (lazily) and show the idle state. No-op when
+    // disabled, no client ID configured, or Discord isn't running.
+    if (cfg.discordRichPresence && !cfg.discordClientId.empty()) {
+        m_discord.Start(cfg.discordClientId);
+        m_discord.SetIdle();
+    }
+
+    // Gamepad navigation: poll controllers on a background thread and post synthetic
+    // input to this window so a controller can drive the whole UI from the couch.
+    m_gamepad.Start(m_hwnd);
+
     // Launched from a game shortcut (`--launch <id>`): start it once the loop runs.
     if (!m_pendingLaunchId.empty())
         PostMessageW(m_hwnd, WM_USER + 8, 0,
@@ -1077,6 +1088,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_GAME_CLOSED:
         // A launched game just exited — restore the launcher to the front.
+        m_discord.SetIdle();
         ShowWindow_(true);
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
@@ -2425,6 +2437,49 @@ static std::wstring ApplyLaunchOptions(const std::wstring& baseArgs,
 
 void App::LaunchInstalledGame(Game launchGame) {
     bool ok = false;
+    std::wstring failReason;
+
+    // Pre-flight: catch the common "files moved/deleted/installer-required" cases
+    // before we hand off to ShellExecute, which otherwise fails silently. URI
+    // launches (Steam/Epic) are handled by their own launcher and can't be
+    // checked here.
+    auto missing = [](const std::wstring& p) {
+        return !p.empty() && !PathFileExistsW(p.c_str());
+    };
+    if (launchGame.launchUri.empty()) {
+        if (!launchGame.emulatorPath.empty() && missing(launchGame.emulatorPath)) {
+            failReason = L"The emulator could not be found:\n" + launchGame.emulatorPath +
+                         L"\n\nOpen Settings \x2192 Emulators to set its path, or re-download it.";
+        } else if (!launchGame.romPath.empty() && missing(launchGame.romPath)) {
+            failReason = L"The game file is missing:\n" + launchGame.romPath +
+                         L"\n\nThe files may have been moved or deleted. Try Validate / re-download.";
+        } else if (launchGame.emulatorPath.empty() && !launchGame.exePath.empty() &&
+                   missing(launchGame.exePath)) {
+            failReason = L"The game executable is missing:\n" + launchGame.exePath +
+                         L"\n\nThe files may have been moved or deleted. Try Validate / re-download.";
+        } else if (launchGame.emulatorPath.empty() && launchGame.exePath.empty()) {
+            failReason = L"This game has no executable configured.\n\n"
+                         L"For server games it may still need installing; otherwise set a "
+                         L"launch target in the game's Edit dialog.";
+        }
+    }
+    if (!failReason.empty()) {
+        // A server game whose installed files vanished should drop back to
+        // "Missing" so the card offers re-download instead of a dead Play button.
+        if (launchGame.serverBacked) {
+            if (auto* g = m_library.FindById(launchGame.id)) {
+                if (g->installState == InstallState::Installed) {
+                    g->installState = InstallState::Missing;
+                    SaveAll();
+                    ApplyFilter();
+                    InvalidateRect(m_hwnd, nullptr, FALSE);
+                }
+            }
+        }
+        MessageBoxW(m_hwnd, failReason.c_str(), L"Can't Launch Game",
+                    MB_OK | MB_ICONWARNING);
+        return;
+    }
 
     if (!launchGame.launchUri.empty()) {
         // URI launch (Steam, Epic).
@@ -2494,8 +2549,19 @@ void App::LaunchInstalledGame(Game launchGame) {
             });
     }
 
-    if (ok && m_config.Get().minimizeOnLaunch)
-        ShowWindow(m_hwnd, SW_HIDE);  // hide to tray when a game launches
+    if (ok) {
+        m_discord.SetPlaying(launchGame.title, PlatformName(launchGame.platform));
+        if (m_config.Get().minimizeOnLaunch)
+            ShowWindow(m_hwnd, SW_HIDE);  // hide to tray when a game launches
+    } else {
+        // The exe/URI existed but the OS refused to start it (bad association,
+        // blocked by AV/SmartScreen, elevation declined, corrupt binary…).
+        MessageBoxW(m_hwnd,
+            L"The game failed to start.\n\n"
+            L"Windows refused to launch it — it may be blocked by antivirus or "
+            L"SmartScreen, require administrator rights, or the file may be corrupt.",
+            L"Can't Launch Game", MB_OK | MB_ICONWARNING);
+    }
 }
 
 void App::DownloadGameInBackground(int visibleIdx) {
@@ -2867,6 +2933,41 @@ void App::OpenDetail(int visibleIdx) {
     m_renderState.detailIndex = visibleIdx;
     m_renderState.detailScroll = 0.0f;
     RequestChangelogs(*m_visibleGames[visibleIdx]);
+    EnsureScreenshots(*m_visibleGames[visibleIdx]);
+}
+
+// Download (if needed) and decode a game's IGDB screenshots into the shared art
+// cache under Game::ScreenshotKey ids. Decoding posts back to the render thread,
+// which repaints; until then the strip simply shows nothing.
+void App::EnsureScreenshots(const Game& game) {
+    if (game.screenshots.empty() || !m_fetcher) return;
+    std::wstring dir = GetAppDataPath() + L"\\screenshots";
+    CreateDirectoryW(dir.c_str(), nullptr);
+
+    int n = (int)game.screenshots.size();
+    if (n > 8) n = 8;   // cap the strip
+    for (int i = 0; i < n; ++i) {
+        std::wstring key = Game::ScreenshotKey(game.id, i);
+        std::wstring url = game.screenshots[i];
+        wchar_t fn[32];
+        swprintf_s(fn, L"%08x.jpg", (unsigned)std::hash<std::wstring>{}(url));
+        std::wstring path = dir + L"\\" + fn;
+
+        if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            QueueArtDecode(key, path);          // already cached on disk
+            continue;
+        }
+        if (!m_screenshotsRequested.insert(key).second)
+            continue;                            // a download is already in flight
+        MetadataFetcher* f = m_fetcher.get();
+        HWND hwnd = m_hwnd;
+        std::thread([this, f, url, path, key, hwnd]() {
+            if (f->DownloadImage(url, path)) {
+                QueueArtDecode(key, path);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }).detach();
+    }
 }
 
 void App::RequestChangelogs(const Game& game) {

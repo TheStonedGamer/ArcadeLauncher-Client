@@ -103,6 +103,12 @@ struct AppConfig {
     std::wstring igdbAccessToken;
     int64_t      igdbTokenExpiry = 0;
 
+    // Discord Rich Presence: shows "Playing <title>" with an elapsed timer while
+    // a game runs. Empty client ID (or the toggle off) disables it. The ID is an
+    // Application ID created at https://discord.com/developers/applications.
+    bool         discordRichPresence = true;
+    std::wstring discordClientId;
+
     // User-defined collections (Steam-style). Games reference these by name.
     std::vector<std::wstring> collections;
 

@@ -124,12 +124,14 @@ private:
     bool HttpGet(const std::wstring& url,
                  std::string& body,
                  std::wstring& error,
-                 const std::wstring& rangeHeader = L"");
+                 const std::wstring& rangeHeader = L"",
+                 bool allowReauth = true);
     bool HttpPostForm(const std::wstring& url,
                       const std::wstring& formBody,
                       std::string& body,
                       std::wstring& error,
-                      bool withAuth = false);
+                      bool withAuth = false,
+                      bool allowReauth = true);
     // Generic authenticated request with a raw (possibly binary) body and an
     // explicit verb/content-type. Used for avatar upload/delete.
     bool HttpSendRaw(const std::wstring& verb,

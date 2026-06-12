@@ -15,6 +15,12 @@ public:
     // Returns local cached path if it exists, else empty.
     std::wstring CachedPath(const std::wstring& gameId) const;
 
+    // Synchronously download an arbitrary image URL to `dest` (used for the
+    // detail-panel screenshot gallery). Safe to call from a worker thread.
+    bool DownloadImage(const std::wstring& url, const std::wstring& dest) {
+        return DownloadFile(url, dest);
+    }
+
     void Shutdown();
 
 private:

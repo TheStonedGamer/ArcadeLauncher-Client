@@ -13,6 +13,8 @@
 #include "GameEditDialog.h"
 #include "FirstLaunchSetup.h"
 #include "AppUpdater.h"
+#include "DiscordPresence.h"
+#include "GamepadInput.h"
 #include "RomDatabase.h"
 #include "ServerClient.h"
 
@@ -133,6 +135,8 @@ private:
     GameLibrary      m_library;
     Renderer         m_renderer;
     ProcessMonitor   m_monitor;
+    DiscordPresence  m_discord;
+    GamepadInput     m_gamepad;
     std::unique_ptr<MetadataFetcher>  m_fetcher;
 
     IgdbClient                        m_igdbClient;
@@ -170,6 +174,11 @@ private:
     void QueueArtDecode(const std::wstring& gameId, const std::wstring& path);
     void StartArtDecodeWorker();
     void StopArtDecodeWorker();
+
+    // Download + decode a game's IGDB screenshots into the art cache (under the
+    // synthetic Game::ScreenshotKey ids) so the detail panel can render a strip.
+    void EnsureScreenshots(const Game& game);
+    std::unordered_set<std::wstring> m_screenshotsRequested;
     std::thread                                          m_artThread;
     std::mutex                                           m_artQueueMutex;
     std::condition_variable                              m_artQueueCv;
