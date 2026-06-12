@@ -1052,6 +1052,9 @@ bool ServerClient::FetchCatalog(std::vector<Game>& games, std::wstring& error) {
         g.serverVersion = ToWide(JsonString(obj, "version"));
         for (const auto& url : StringsInArray(obj, "screenshots"))
             g.screenshots.push_back(ToWide(url));
+        g.developer = ToWide(JsonString(obj, "developer"));
+        g.publisher = ToWide(JsonString(obj, "publisher"));
+        g.franchise = ToWide(JsonString(obj, "franchise"));
         g.installRoot = ResolveInstallFolder(m_cfg.installRoot, g.title, id);
         g.installState = fs::exists(g.installRoot) ? InstallState::Installed : InstallState::Missing;
         games.push_back(std::move(g));

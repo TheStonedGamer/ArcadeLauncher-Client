@@ -255,6 +255,8 @@ private:
     static constexpr UINT IDM_MOVE_GAME    = 5009;
     static constexpr UINT IDM_LAUNCH_OPTIONS = 5010;
     static constexpr UINT IDM_PROPERTIES   = 5011;
+    static constexpr UINT IDM_FAVORITE     = 5012;
+    static constexpr UINT IDM_HIDE_GAME    = 5013;
     // Collections submenu: "New collection…" then one id per existing collection.
     static constexpr UINT IDM_COLLECTION_NEW  = 5200;
     static constexpr UINT IDM_COLLECTION_BASE = 5201;  // + collection index

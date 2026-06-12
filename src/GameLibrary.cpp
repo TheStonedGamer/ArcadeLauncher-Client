@@ -81,6 +81,11 @@ void GameLibrary::MergeGames(std::vector<Game> scanned) {
             s.igdbPlatformId  = old->igdbPlatformId;
             s.launchOptions   = old->launchOptions;
             s.collections     = old->collections;
+            s.favorite        = old->favorite;
+            s.hidden          = old->hidden;
+            if (s.developer.empty()) s.developer = old->developer;
+            if (s.publisher.empty()) s.publisher = old->publisher;
+            if (s.franchise.empty()) s.franchise = old->franchise;
 
             // Preserve local install / launch state for server-backed games.
             // FetchCatalog only knows the catalog (title, version, installRoot
@@ -149,12 +154,29 @@ std::vector<const Game*> GameLibrary::Search(const std::wstring& query) const {
     std::wstring lq = query;
     for (auto& c : lq) c = towlower(c);
 
+    auto contains = [&](std::wstring hay) {
+        for (auto& c : hay) c = towlower(c);
+        return hay.find(lq) != std::wstring::npos;
+    };
+
+    // Matches more than the title: genre, platform name, release year, and
+    // developer/publisher/franchise all hit too ("rpg", "wii", "2008", "capcom").
     std::vector<const Game*> out;
     for (auto& g : m_games) {
-        std::wstring lt = g.title;
-        for (auto& c : lt) c = towlower(c);
-        if (lt.find(lq) != std::wstring::npos)
-            out.push_back(&g);
+        bool hit = contains(g.title) ||
+                   (!g.genres.empty()    && contains(g.genres)) ||
+                   contains(PlatformName(g.platform)) ||
+                   (!g.developer.empty() && contains(g.developer)) ||
+                   (!g.publisher.empty() && contains(g.publisher)) ||
+                   (!g.franchise.empty() && contains(g.franchise));
+        if (!hit && g.releaseDate > 0 && lq.size() == 4) {
+            time_t t = (time_t)g.releaseDate;
+            struct tm tmv {};
+            if (gmtime_s(&tmv, &t) == 0 &&
+                std::to_wstring(tmv.tm_year + 1900) == lq)
+                hit = true;
+        }
+        if (hit) out.push_back(&g);
     }
     return out;
 }
@@ -280,6 +302,11 @@ void GameLibrary::Save(const std::wstring& path) const {
         out += JFieldN(L"releaseDate", (uint64_t)g.releaseDate) + L",";
         out += JFieldN(L"igdbPlatformId", (uint64_t)g.igdbPlatformId) + L",";
         out += JField(L"launchOptions", g.launchOptions) + L",";
+        out += JFieldB(L"favorite", g.favorite) + L",";
+        out += JFieldB(L"hidden", g.hidden) + L",";
+        out += JField(L"developer", g.developer) + L",";
+        out += JField(L"publisher", g.publisher) + L",";
+        out += JField(L"franchise", g.franchise) + L",";
         // Collections joined by newline (JEsc escapes \n; ReadJsonField reverses).
         std::wstring colJoined;
         for (size_t c = 0; c < g.collections.size(); ++c) {
@@ -385,6 +412,21 @@ void GameLibrary::Load(const std::wstring& path) {
         g.releaseDate     = (int64_t)ReadJsonNum(obj, "releaseDate");
         g.igdbPlatformId  = (int)ReadJsonNum(obj, "igdbPlatformId");
         g.launchOptions   = ToWide(ReadJsonField(obj, "launchOptions"));
+        g.developer       = ToWide(ReadJsonField(obj, "developer"));
+        g.publisher       = ToWide(ReadJsonField(obj, "publisher"));
+        g.franchise       = ToWide(ReadJsonField(obj, "franchise"));
+        {
+            auto readBool = [&](const char* key) {
+                std::string search = std::string("\"") + key + "\":";
+                size_t bp = obj.find(search);
+                if (bp == std::string::npos) return false;
+                bp += search.size();
+                while (bp < obj.size() && obj[bp] == ' ') ++bp;
+                return obj.substr(bp, 4) == "true";
+            };
+            g.favorite = readBool("favorite");
+            g.hidden   = readBool("hidden");
+        }
         {
             std::wstring col = ToWide(ReadJsonField(obj, "collections"));
             size_t cp = 0;

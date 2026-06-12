@@ -108,6 +108,11 @@ struct Game {
     // Collections this game belongs to (names matching AppConfig::collections).
     std::vector<std::wstring> collections;
 
+    // Steam-style favorite star and hide-from-library flags. Hidden games are
+    // excluded from every page except the dedicated Hidden sidebar entry.
+    bool favorite = false;
+    bool hidden   = false;
+
     // Stats
     uint64_t playtimeSeconds = 0;
     int64_t  lastPlayed = 0;
@@ -125,6 +130,11 @@ struct Game {
     float        igdbRating = 0.0f;   // 0-100, 0 = no rating
     int64_t      releaseDate = 0;     // unix timestamp
     int          igdbPlatformId = 0;  // 0 = auto; >0 = IGDB platform override
+
+    // Company / franchise metadata from the server catalog (IGDB).
+    std::wstring developer;
+    std::wstring publisher;
+    std::wstring franchise;
 
     // Screenshot / artwork URLs from the server catalog (IGDB). Rendered as a
     // thumbnail strip in the detail panel; downloaded + decoded lazily.

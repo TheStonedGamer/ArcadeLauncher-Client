@@ -330,6 +330,7 @@ void Renderer::DrawTopBar(const RenderState& state) {
 std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderState& s) {
     std::vector<SidebarEntry> v;
     v.push_back({ L"All Games", true,  Platform::Repacks, LibraryPage::All });
+    v.push_back({ L"Favorites", false, Platform::Repacks, LibraryPage::Favorites });
     v.push_back({ L"Installed", false, Platform::Repacks, LibraryPage::Installed });
     v.push_back({ L"Ready to Download", false, Platform::Repacks, LibraryPage::ReadyToDownload });
     // "Background Downloads" tab removed — the topbar Downloads button opens the
@@ -353,6 +354,10 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     if (s.showRepacks) v.push_back({ L"PC",  false, Platform::Repacks, LibraryPage::Platform });
     for (const auto& c : s.collections)
         v.push_back({ c, false, Platform::Repacks, LibraryPage::Collection, c });
+    // Only surface the Hidden tab when something is actually hidden, so the
+    // sidebar stays clean for users who never use the feature.
+    if (s.anyHidden)
+        v.push_back({ L"Hidden", false, Platform::Repacks, LibraryPage::Hidden });
     return v;
 }
 
@@ -939,6 +944,10 @@ void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
 
     if (!game->serverVersion.empty())
         stat(L"Version", game->serverVersion);
+
+    if (!game->developer.empty()) stat(L"Developer", game->developer);
+    if (!game->publisher.empty()) stat(L"Publisher", game->publisher);
+    if (!game->franchise.empty()) stat(L"Franchise", game->franchise);
 
     // ── Scrollable content pane: Summary + What's New (changelog) ──────────────
     float btnY = py + panelH - 70.0f;

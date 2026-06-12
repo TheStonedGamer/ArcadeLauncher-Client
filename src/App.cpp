@@ -3048,8 +3048,22 @@ void App::ApplyFilter() {
                     != g.collections.end())
                 m_visibleGames.push_back(&g);
         }
+    } else if (m_renderState.libraryPage == LibraryPage::Favorites) {
+        m_visibleGames.clear();
+        for (auto& g : m_library.All())
+            if (g.favorite) m_visibleGames.push_back(&g);
+    } else if (m_renderState.libraryPage == LibraryPage::Hidden) {
+        m_visibleGames.clear();
+        for (auto& g : m_library.All())
+            if (g.hidden) m_visibleGames.push_back(&g);
     } else {
         m_visibleGames = m_library.Filter(m_renderState.filterPlatform);
+    }
+
+    // Hidden games only ever appear on the dedicated Hidden page.
+    if (m_renderState.libraryPage != LibraryPage::Hidden) {
+        m_visibleGames.erase(std::remove_if(m_visibleGames.begin(), m_visibleGames.end(),
+            [](const Game* g) { return g->hidden; }), m_visibleGames.end());
     }
 
     // Apply the active sort mode. The (now hidden) download page keeps queue order.
@@ -3135,6 +3149,15 @@ void App::UpdateSidebarFlags() {
     m_renderState.showXbox    = true;
     m_renderState.showRepacks = true;
     m_renderState.collections = m_config.Get().collections;
+    m_renderState.anyHidden = false;
+    for (auto& g : m_library.All())
+        if (g.hidden) { m_renderState.anyHidden = true; break; }
+    // If the active page was Hidden and the last hidden game was unhidden,
+    // its sidebar entry vanishes — fall back to All Games.
+    if (!m_renderState.anyHidden && m_renderState.libraryPage == LibraryPage::Hidden) {
+        m_renderState.libraryPage = LibraryPage::All;
+        m_renderState.filterAll = true;
+    }
     int count = Renderer::GetSidebarEntryCount(m_renderState);
     if (m_renderState.sidebarFocusIdx >= count)
         m_renderState.sidebarFocusIdx = count - 1;
@@ -3215,6 +3238,12 @@ void App::OnRButtonDown(float x, float y) {
     }
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)colMenu, L"Collections");
 
+    AppendMenuW(menu, MF_STRING | (hoveredGame->favorite ? MF_CHECKED : 0),
+                IDM_FAVORITE, hoveredGame->favorite ? L"Remove from Favorites"
+                                                    : L"Add to Favorites");
+    AppendMenuW(menu, MF_STRING, IDM_HIDE_GAME,
+                hoveredGame->hidden ? L"Unhide This Game" : L"Hide This Game");
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EDIT_TITLE, L"Edit Title…");
     UINT matchFlags = MF_STRING | (m_metaManager ? 0 : MF_GRAYED);
@@ -3253,6 +3282,15 @@ void App::OnRButtonDown(float x, float y) {
         SetLaunchOptions(idx);
     } else if (cmd == IDM_PROPERTIES) {
         OpenProperties(idx);
+    } else if (cmd == IDM_FAVORITE || cmd == IDM_HIDE_GAME) {
+        if (auto* stored = m_library.FindById(hoveredGame->id)) {
+            if (cmd == IDM_FAVORITE) stored->favorite = !stored->favorite;
+            else                     stored->hidden   = !stored->hidden;
+        }
+        SaveAll();
+        UpdateSidebarFlags();
+        ApplyFilter();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
     } else if (cmd == IDM_COLLECTION_NEW) {
         NewCollectionForGame(idx);
     } else if (cmd >= (int)IDM_COLLECTION_BASE &&

@@ -6,7 +6,7 @@
 #include <unordered_set>
 
 enum class FocusArea { Grid, Sidebar, Search };
-enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection };
+enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection, Favorites, Hidden };
 
 // Grid ordering applied by App::ApplyFilter. Recent is the historical default
 // (last played, then title). Cycled via the topbar sort button.
@@ -68,6 +68,7 @@ struct RenderState {
     SortMode sortMode = SortMode::Recent;
     std::wstring filterCollection;             // active when libraryPage==Collection
     std::vector<std::wstring> collections;     // user collections shown in sidebar
+    bool anyHidden = false;                    // any games hidden -> show the Hidden tab
     FocusArea focusArea     = FocusArea::Grid;
     int sidebarFocusIdx     = 0;
     bool selectionMode      = false;
