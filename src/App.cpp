@@ -1510,6 +1510,20 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_APP_UPDATE_NONE:
+        // Result of a manual Tools → Check for Updates (no update was started).
+        if (wp == 1)
+            MessageBoxW(hwnd,
+                L"Couldn't check for updates right now.\n\n"
+                L"Check your internet connection and try again, or visit "
+                L"github.com/TheStonedGamer/ArcadeLauncher-Client/releases to update manually.",
+                L"Check for Updates", MB_OK | MB_ICONWARNING);
+        else
+            MessageBoxW(hwnd,
+                L"You're running the latest version of ArcadeLauncher.",
+                L"Check for Updates", MB_OK | MB_ICONINFORMATION);
+        return 0;
+
     case WM_APP_UPDATE_PROGRESS:
         if (g_updateDlg)
             g_updateDlg->SetProgress((uint64_t)(int)wp, 100, 0.0);
@@ -2091,6 +2105,8 @@ void App::ShowMenuBar() {
 
     AppendMenuW(hTools, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hTools, MF_STRING, IDM_TOOL_LIBRARY, L"Library Folders\x2026");
+    AppendMenuW(hTools, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hTools, MF_STRING, IDM_TOOL_UPDATE, L"Check for Updates\x2026");
 
     HMENU hMenuBar = CreatePopupMenu();
     AppendMenuW(hMenuBar, MF_POPUP, (UINT_PTR)hTools, L"Tools");
@@ -2126,6 +2142,11 @@ void App::ShowMenuBar() {
     case IDM_TOOL_LIBRARY:
         if (ShowLibraryFoldersDialog(m_hwnd, m_config.Get().server))
             SaveAll();
+        break;
+    case IDM_TOOL_UPDATE:
+        // Manual check: reports the result (up to date / failed / starts update)
+        // via WM_APP_UPDATE_NONE or WM_APP_UPDATE_FOUND.
+        CheckForAppUpdateAsync(m_hwnd, true);
         break;
     }
 }

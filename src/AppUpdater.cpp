@@ -248,17 +248,24 @@ static void RecordAttempt(const std::wstring& tag) {
 
 // ── Background workers ────────────────────────────────────────────────────────
 
-static void CheckWorker(HWND hwnd) {
+static void CheckWorker(HWND hwnd, bool manual) {
     std::string json = HttpGetStr(
         L"https://api.github.com/repos/TheStonedGamer/ArcadeLauncher-Client/releases/latest");
-    if (json.empty()) return;
+    if (json.empty()) {
+        if (manual) PostMessageW(hwnd, WM_APP_UPDATE_NONE, 1 /*check failed*/, 0);
+        return;
+    }
 
     std::wstring tag = ToWide(JsonStr(json, "tag_name"));
-    if (tag.empty() || !IsNewerThanCurrent(tag)) return;
+    if (tag.empty() || !IsNewerThanCurrent(tag)) {
+        if (manual) PostMessageW(hwnd, WM_APP_UPDATE_NONE, 0 /*up to date*/, 0);
+        return;
+    }
 
     // Loop breaker: if we already tried (and apparently failed to apply) this same
-    // release very recently, don't keep relaunching into the updater.
-    if (RecentlyAttempted(tag)) return;
+    // release very recently, don't keep relaunching into the updater. A manual
+    // check is an explicit user request, so it bypasses the cooldown.
+    if (!manual && RecentlyAttempted(tag)) return;
 
     // Construct the predictable MSI asset URL
     std::wstring msiUrl =
@@ -330,8 +337,8 @@ static void DownloadWorker(HWND hwnd, std::wstring tag, std::wstring msiUrl) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-void CheckForAppUpdateAsync(HWND hwnd) {
-    std::thread(CheckWorker, hwnd).detach();
+void CheckForAppUpdateAsync(HWND hwnd, bool manual) {
+    std::thread(CheckWorker, hwnd, manual).detach();
 }
 
 void DownloadAndInstallAsync(HWND hwnd, std::wstring tag, std::wstring msiUrl) {

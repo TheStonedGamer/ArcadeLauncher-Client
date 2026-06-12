@@ -262,6 +262,7 @@ private:
     static constexpr UINT IDM_TOOL_XBOX360 = 6009;
     static constexpr UINT IDM_TOOL_XBOX    = 6010;
     static constexpr UINT IDM_TOOL_LIBRARY = 6011;
+    static constexpr UINT IDM_TOOL_UPDATE  = 6012;
 
     // Tray menu command IDs
     static constexpr UINT IDM_TRAY_SHOW    = 7001;
