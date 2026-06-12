@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ServerClient.h"
 #include "ArchiveExtractor.h"
+#include "Version.h"
 #include <wincrypt.h>
 #include <thread>
 #include <chrono>
@@ -1002,7 +1003,39 @@ bool ServerClient::TotpDisable(const std::wstring& password, const std::wstring&
     return HttpPostForm(Url(L"/api/account/totp/disable"), form, body, error, true);
 }
 
+bool ServerClient::CheckServerVersion(std::wstring& error) {
+    if (m_versionState == 1) return true;
+    if (m_versionState == -1) { error = m_versionError; return false; }
+
+    // Mark in-progress as "ok" first: the health GET below re-enters
+    // EnsureAuthenticated via HttpGet, and this breaks the recursion.
+    m_versionState = 1;
+
+    std::string body;
+    std::wstring hErr;
+    if (!HttpGet(Url(L"/api/health"), body, hErr)) {
+        // Unreachable server: don't fail here — let the actual operation
+        // surface its own (more specific) network error.
+        m_versionState = 0;
+        return true;
+    }
+    std::wstring ver = ToWide(JsonString(body, "version"));
+    int major = -1, minor = -1;
+    swscanf_s(ver.c_str(), L"%d.%d", &major, &minor);
+    if (major == ARCADE_VERSION_MAJOR && minor == ARCADE_VERSION_MINOR)
+        return true;
+
+    m_versionState = -1;
+    m_versionError = L"Server version " + (ver.empty() ? L"(unknown)" : ver) +
+        L" does not match client version " ARCADE_VERSION_WSTR
+        L".\nUpdate the older side — client and server must be on the same "
+        L"major.minor release.";
+    error = m_versionError;
+    return false;
+}
+
 bool ServerClient::EnsureAuthenticated(std::wstring& error) {
+    if (!CheckServerVersion(error)) return false;
     if (!m_cfg.authToken.empty()) return true;
     if (m_cfg.username.empty() || m_cfg.password.empty()) return true;
 

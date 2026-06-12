@@ -168,6 +168,12 @@ private:
                      std::string& body,
                      std::wstring& error);
     bool EnsureAuthenticated(std::wstring& error);
+    // Major.minor of client and server must match (patch floats freely — it
+    // auto-bumps every commit). Checked once per instance via /api/health;
+    // mismatch blocks every server operation. 0 = unchecked, 1 = ok, -1 = bad.
+    bool CheckServerVersion(std::wstring& error);
+    int  m_versionState = 0;
+    std::wstring m_versionError;
     bool TryChallengeResponse(std::wstring& error);
     bool DownloadFile(const std::wstring& url,
                       const std::wstring& dest,
