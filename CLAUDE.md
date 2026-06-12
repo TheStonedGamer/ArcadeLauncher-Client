@@ -10,7 +10,10 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
   and builds the MSI. Because Actions pushes a version-bump commit, local pushes
   are often rejected non-fast-forward — `git pull --rebase origin main` then push.
 - **Bump type comes from the commit message**: default is patch; `[minor]` in the
-  subject bumps minor and resets patch, `[major]` bumps major. Actions then tags
+  subject bumps minor and resets patch, `[major]` bumps major. **Rule: use
+  `[minor]` for any change that breaks client↔server compatibility** (API
+  endpoint shape, auth flow, manifest/catalog format); compatible changes stay
+  patch. Actions then tags
   `client-vX.Y.Z` and publishes a GitHub release with the MSI attached. For a
   coordinated release, push matching `[minor]`/`[major]` commits to BOTH repos.
 - **Version lockstep**: client and server must share the same **major.minor**
