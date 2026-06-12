@@ -6,8 +6,8 @@
 // so this is the single source of truth for the version number.
 
 #define ARCADE_VERSION_MAJOR  1
-#define ARCADE_VERSION_MINOR  1
-#define ARCADE_VERSION_PATCH  46
+#define ARCADE_VERSION_MINOR  2
+#define ARCADE_VERSION_PATCH  0
 #define ARCADE_VERSION_BUILD  0
 
 // Helpers — derived, do not edit.
