@@ -1075,6 +1075,7 @@ bool ServerClient::FetchCatalog(std::vector<Game>& games, std::wstring& error) {
         g.serverGameId = id;
         g.title = ToWide(JsonString(obj, "title"));
         g.platform = ParsePlatform(ToWide(JsonString(obj, "platform")));
+        g.contentPath = ToWide(JsonString(obj, "contentPath"));
         g.coverArtUrl = ToWide(JsonString(obj, "coverArtUrl"));
         g.igdbId = (int64_t)JsonNumber(obj, "igdbId");
         g.igdbMatched = g.igdbId > 0;

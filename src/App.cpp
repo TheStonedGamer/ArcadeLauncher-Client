@@ -3321,6 +3321,45 @@ void App::ApplyFilter() {
             [](const Game* g) { return g->hidden; }), m_visibleGames.end());
     }
 
+    // Collapse ROM dump variants (same cleaned title + platform) into a single
+    // representative tile. The full variant list is stashed in m_variantGroups so
+    // the grid can badge it "N versions" and the user can pick which dump to play.
+    // Only server-backed entries with a content path participate; everything else
+    // gets a unique key so manual/local games are never merged by coincidence.
+    m_variantGroups.clear();
+    for (auto& g : m_library.AllMutable()) g.variantCount = 0;  // reset transient badges
+    if (m_groupVariants) {
+        auto keyOf = [](const Game* g) -> std::wstring {
+            if (g->serverBacked && !g->contentPath.empty()) return g->VariantKey();
+            return L"#" + g->id;  // unique → never groups
+        };
+        std::unordered_map<std::wstring, std::vector<const Game*>> groups;
+        std::vector<std::wstring> order;  // preserve first-seen order
+        for (auto* g : m_visibleGames) {
+            std::wstring k = keyOf(g);
+            auto& v = groups[k];
+            if (v.empty()) order.push_back(k);
+            v.push_back(g);
+        }
+        std::vector<const Game*> collapsed;
+        collapsed.reserve(m_visibleGames.size());
+        for (auto& k : order) {
+            auto& v = groups[k];
+            if (v.size() == 1) { collapsed.push_back(v.front()); continue; }
+            std::sort(v.begin(), v.end(), [](const Game* a, const Game* b) {
+                int sa = a->VariantScore(), sb = b->VariantScore();
+                if (sa != sb) return sa < sb;
+                return a->contentPath < b->contentPath;  // stable, best-first
+            });
+            const Game* rep = v.front();
+            collapsed.push_back(rep);
+            m_variantGroups[rep->id] = v;
+            if (Game* mut = m_library.FindById(rep->id))
+                mut->variantCount = (int)v.size();
+        }
+        m_visibleGames.swap(collapsed);
+    }
+
     // Apply the active sort mode. The (now hidden) download page keeps queue order.
     if (m_renderState.libraryPage != LibraryPage::BackgroundDownloads) {
         auto byTitle = [](const Game* a, const Game* b) {
@@ -3460,6 +3499,23 @@ void App::OnRButtonDown(float x, float y) {
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, IDM_LAUNCH, L"Launch");
+
+    // Grouped ROM-dump tile: offer a submenu to play a specific dump. The list
+    // is best-pick-first (same order as m_variantGroups), labelled by VariantLabel.
+    const std::vector<const Game*>* variants = VariantGroupFor(hoveredGame->id);
+    if (variants && variants->size() > 1) {
+        HMENU vMenu = CreatePopupMenu();
+        for (size_t i = 0; i < variants->size() && i < 64; ++i) {
+            const Game* v = (*variants)[i];
+            std::wstring label = v->VariantLabel();
+            if (label.empty()) label = L"Base";
+            if (v->serverBacked && v->installState == InstallState::Installed)
+                label += L"  \x2713";  // installed check
+            AppendMenuW(vMenu, MF_STRING, IDM_VARIANT_BASE + (UINT)i, label.c_str());
+        }
+        AppendMenuW(menu, MF_POPUP, (UINT_PTR)vMenu, L"Play Version");
+    }
+
     if (canDownload)
         AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_GAME, L"Download in Background");
     AppendMenuW(menu, MF_STRING, IDM_DOWNLOAD_STATUS, L"Download Queue...");
@@ -3553,6 +3609,11 @@ void App::OnRButtonDown(float x, float y) {
         UpdateSidebarFlags();
         ApplyFilter();
         InvalidateRect(m_hwnd, nullptr, FALSE);
+    } else if (variants && cmd >= (int)IDM_VARIANT_BASE &&
+               cmd < (int)IDM_VARIANT_BASE + (int)variants->size()) {
+        // Play a specific ROM dump from the grouped tile.
+        const Game* chosen = (*variants)[cmd - IDM_VARIANT_BASE];
+        if (chosen) LaunchGame(*chosen);
     } else if (cmd == IDM_COLLECTION_NEW) {
         NewCollectionForGame(idx);
     } else if (cmd >= (int)IDM_COLLECTION_BASE &&

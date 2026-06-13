@@ -656,6 +656,22 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
     DrawPlatformBadge(game.platform,
                       D2D1::Point2F(rect.right - 14, rect.top + 14));
 
+    // ROM-variant count badge: this tile represents N dumps of one game.
+    if (game.variantCount > 1) {
+        std::wstring vt = std::to_wstring(game.variantCount) + L" versions";
+        float w = 16.0f + vt.size() * 6.5f;
+        D2D1_RECT_F vp = D2D1::RectF(rect.right - 8 - w, rect.top + 30,
+                                     rect.right - 8, rect.top + 49);
+        m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.68f));
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(vp, 4, 4), m_brushOverlay.Get());
+        m_brushOverlay->SetColor(C_OVERLAY);
+        m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.85f));
+        m_rt->DrawRoundedRectangle(D2D1::RoundedRect(vp, 4, 4), m_brushAccent.Get(), 1.0f);
+        m_brushAccent->SetColor(C_ACCENT);
+        D2D1_RECT_F vtxt = D2D1::RectF(vp.left + 5, vp.top + 1, vp.right, vp.bottom);
+        m_rt->DrawText(vt.c_str(), (UINT32)vt.size(), m_fmtDetail.Get(), vtxt, m_brushWhite.Get());
+    }
+
     if (game.serverBacked) {
         std::wstring state = game.installState == InstallState::Installed ? L"Installed" :
                              game.installState == InstallState::UpdateAvailable ? L"Update" :

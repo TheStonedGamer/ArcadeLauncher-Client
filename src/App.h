@@ -153,6 +153,21 @@ private:
     RenderState      m_renderState;
     std::vector<const Game*> m_visibleGames;
 
+    // ROM dump variant grouping. When enabled, ApplyFilter collapses games that
+    // share a Game::VariantKey (same cleaned title + platform — e.g. multiple
+    // dumps of one NES game) down to a single representative in m_visibleGames.
+    // m_variantGroups maps the representative's id to every variant in its group
+    // (including itself, best-pick first) so the UI can show a "N versions" badge
+    // and offer a picker. A group of size 1 is never stored.
+    bool m_groupVariants = true;
+    std::unordered_map<std::wstring, std::vector<const Game*>> m_variantGroups;
+    // Returns the variant list for a representative id, or nullptr if it isn't a
+    // grouped tile.
+    const std::vector<const Game*>* VariantGroupFor(const std::wstring& repId) const {
+        auto it = m_variantGroups.find(repId);
+        return it == m_variantGroups.end() ? nullptr : &it->second;
+    }
+
     struct DownloadJob {
         Game game;
         std::wstring gameId;
@@ -277,6 +292,8 @@ private:
     // Collections submenu: "New collection…" then one id per existing collection.
     static constexpr UINT IDM_COLLECTION_NEW  = 5200;
     static constexpr UINT IDM_COLLECTION_BASE = 5201;  // + collection index
+    // "Play version" submenu for grouped ROM-dump tiles: one id per variant.
+    static constexpr UINT IDM_VARIANT_BASE    = 5300;  // + variant index
 
     // Tools menu command IDs
     static constexpr UINT IDM_TOOL_DOLPHIN = 6001;

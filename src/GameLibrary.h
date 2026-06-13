@@ -93,9 +93,19 @@ struct Game {
     bool         serverBacked = false;
     std::wstring serverGameId;
     std::wstring serverVersion;
+    // Path of the game's content relative to the library root, as reported by
+    // the server catalog (e.g. "games/Nintendo/NES/Crystalis (U) [a1].nes").
+    // Used to label ROM dump variants that share a cleaned display title so the
+    // grid can group them under one tile with a version picker.
+    std::wstring contentPath;
     std::wstring installRoot;
     InstallState installState = InstallState::Local;
     int          installProgressPermille = 0;
+
+    // Transient (UI-only, never serialized): when this game is the representative
+    // of a collapsed ROM-variant group, the number of dumps in that group. 0/1
+    // means it's a standalone tile. Set by App::ApplyFilter each rebuild.
+    int          variantCount = 0;
 
     // Art
     std::wstring coverArtPath;
@@ -181,6 +191,74 @@ struct Game {
         if (igdbRating >= 50.0f) return D2D1::ColorF(0xD29922);  // yellow
         return D2D1::ColorF(0xF85149);                            // red
     }
+
+    // ── ROM dump variant grouping ─────────────────────────────────────────────
+    // Different dumps of the same game (Crystalis (U), [a1], [a2], (Prototype),
+    // SMB3 (PRG 1) [a2], …) clean down to an identical display title. These
+    // helpers let the grid collapse them under one tile and offer a picker.
+
+    // The filename leaf of contentPath without extension; falls back to title.
+    std::wstring VariantFileStem() const {
+        std::wstring s = contentPath;
+        size_t slash = s.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) s = s.substr(slash + 1);
+        size_t dot = s.find_last_of(L'.');
+        if (dot != std::wstring::npos && dot > 0) s = s.substr(0, dot);
+        return s.empty() ? title : s;
+    }
+
+    // Games sharing a VariantKey are dumps of the same logical game. The cleaned
+    // title is already identical across dumps, so platform+title suffices.
+    std::wstring VariantKey() const {
+        std::wstring t = title;
+        for (auto& ch : t) ch = (wchar_t)towlower(ch);
+        return std::to_wstring((int)platform) + L"|" + t;
+    }
+
+    // Short human label distinguishing one dump from its siblings, derived from
+    // the tags in the filename, e.g. "Verified", "Alt 1", "Prototype", "PRG 1",
+    // "Eng patch". Empty for a plain base dump.
+    std::wstring VariantLabel() const {
+        std::wstring stem = VariantFileStem();
+        std::wstring low = stem;
+        for (auto& ch : low) ch = (wchar_t)towlower(ch);
+        std::vector<std::wstring> parts;
+        auto has = [&](const wchar_t* s) { return low.find(s) != std::wstring::npos; };
+        if (has(L"[!]"))                       parts.push_back(L"Verified");
+        if (has(L"prototype") || has(L"proto")) parts.push_back(L"Prototype");
+        if (has(L"prg 1") || has(L"prg1"))     parts.push_back(L"PRG 1");
+        if (has(L"trad-en") || has(L"t-en") || has(L"[t+en") || has(L"[tr en"))
+                                               parts.push_back(L"Eng patch");
+        // Alt-dump index [a1]/[a2]/…
+        size_t ap = low.find(L"[a");
+        if (ap != std::wstring::npos && ap + 2 < low.size() && iswdigit(low[ap + 2]))
+            parts.push_back(std::wstring(L"Alt ") + (wchar_t)low[ap + 2]);
+        if (has(L"[b"))                        parts.push_back(L"Bad dump");
+        if (has(L"[h"))                        parts.push_back(L"Hack");
+        if (has(L"[p"))                        parts.push_back(L"Pirate");
+        std::wstring out;
+        for (auto& p : parts) { if (!out.empty()) out += L", "; out += p; }
+        return out;
+    }
+
+    // Lower score = better default pick for the grouped tile. Prefers verified
+    // good dumps and clean base dumps; demotes alternates, prototypes, bad/hack
+    // dumps. Installed copies win outright so a grouped tile reflects what's on
+    // disk.
+    int VariantScore() const {
+        int s = 100;
+        if (serverBacked && installState == InstallState::Installed) s -= 1000;
+        std::wstring low = VariantFileStem();
+        for (auto& ch : low) ch = (wchar_t)towlower(ch);
+        auto has = [&](const wchar_t* x) { return low.find(x) != std::wstring::npos; };
+        if (has(L"[!]")) s -= 50;
+        if (has(L"[a")) s += 15;
+        if (has(L"prototype") || has(L"proto")) s += 40;
+        if (has(L"[b")) s += 60;
+        if (has(L"[h") || has(L"[p") || has(L"[t")) s += 30;
+        if (has(L"(u)") || has(L"(usa)")) s -= 5;   // mild US-region preference
+        return s;
+    }
 };
 
 class GameLibrary {
@@ -192,6 +270,7 @@ public:
     void MergeGames(std::vector<Game> scanned);
 
     const std::vector<Game>& All() const { return m_games; }
+    std::vector<Game>& AllMutable() { return m_games; }
     std::vector<const Game*> Filter(Platform p) const;
     std::vector<const Game*> Search(const std::wstring& query) const;
     Game* FindById(const std::wstring& id);
