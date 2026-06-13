@@ -1,0 +1,117 @@
+#pragma once
+// SocialManager.h - orchestrates the social subsystem (per social.md §Required
+// Architecture). Subsumes the named roles from the spec into one cohesive,
+// thread-safe owner to avoid a web of cross-referencing singletons:
+//   * GatewayConnectionManager / WebSocketClient -> persistent WSS + reconnect
+//   * PresenceManager  -> presence state + rich (InGame) presence push
+//   * FriendManager    -> friend list / requests / block via REST + gateway diffs
+//   * ChatManager / ConversationManager / MessageStore -> DMs, history, unread
+//   * TypingStateManager -> typing indicators
+//   * VoiceSignalingManager -> voice signaling state machine + frame relay
+//
+// Threading model: the WebSocket worker thread delivers gateway frames into
+// HandleGatewayFrame under m_mtx; REST calls run on detached worker threads so
+// the UI thread never blocks. After any state mutation we fire m_onChanged so
+// the host can PostMessage a repaint. All public accessors copy under the lock.
+
+#include "SocialTypes.h"
+#include "WebSocketClient.h"
+#include <functional>
+#include <mutex>
+#include <atomic>
+#include <string>
+#include <vector>
+#include <map>
+
+// Posted to the main window whenever social state changes so it can repaint.
+static constexpr UINT WM_APP_SOCIAL_CHANGED = WM_USER + 114;
+
+namespace social {
+
+class SocialManager {
+public:
+    SocialManager() = default;
+    ~SocialManager();
+
+    // baseUrl is the http(s):// origin (same as ServerClient's). token is the
+    // launcher bearer token. Kicks an initial friends fetch and opens the
+    // gateway; safe to call again to restart with new credentials.
+    void Start(const std::wstring& baseUrl, const std::wstring& token);
+    void Stop();
+
+    bool IsRunning() const { return m_running.load(); }
+    GatewayState Gateway() const { return m_gateway.load(); }
+    uint64_t SelfId() const { return m_selfId.load(); }
+
+    // Host registers a handler invoked (possibly off the UI thread) whenever
+    // social state changes; it should marshal a repaint to the UI thread.
+    void SetChangeHandler(std::function<void()> cb) { m_onChanged = std::move(cb); }
+
+    // ── Friends ──────────────────────────────────────────────────────────────
+    void RefreshFriends();                              // REST GET, async
+    void SendFriendRequest(const std::wstring& username);
+    void RespondRequest(uint64_t userId, const std::string& action); // accept|decline|cancel|remove
+    void BlockUser(uint64_t userId, bool block);
+    std::vector<FriendInfo> GetFriends() const;
+
+    // ── Presence ─────────────────────────────────────────────────────────────
+    void SetPresence(PresenceState state);
+    void SetInGame(const std::wstring& gameId, const std::wstring& gameTitle);
+    void ClearInGame();                                 // back to Online
+
+    // ── Chat ─────────────────────────────────────────────────────────────────
+    void OpenConversation(uint64_t peerId);             // loads history, clears unread
+    void SendChat(uint64_t peerId, const std::wstring& text);
+    void NotifyTyping(uint64_t peerId);                 // throttled by caller
+    Conversation GetConversation(uint64_t peerId) const;
+    int  TotalUnread() const;
+
+    // ── Voice signaling (state machine + frame relay; media is scaffolded) ────
+    VoiceState Voice() const { return m_voiceState.load(); }
+    uint64_t   VoicePeer() const { return m_voicePeer.load(); }
+    void StartVoiceCall(uint64_t peerId);
+    void AcceptVoiceCall(uint64_t peerId);
+    void EndVoiceCall();
+
+private:
+    // Gateway lifecycle
+    void OpenGateway();
+    void HandleGatewayFrame(const std::string& utf8);
+    void OnGatewaySocketState(bool connected);
+    void ScheduleReconnect();
+    bool SendGatewayJson(const std::string& json);
+
+    // REST helpers (own WinHTTP, simple JSON in/out). Run on worker threads.
+    bool HttpGet(const std::wstring& path, std::string& body);
+    bool HttpPostJson(const std::wstring& path, const std::string& json, std::string& body);
+    std::wstring WsUrl() const;   // derives ws(s)://.../ws/social?token=...
+
+    void FireChanged();
+    FriendInfo* FindFriendLocked(uint64_t id);          // call under m_mtx
+    Conversation& ConvLocked(uint64_t peerId);          // call under m_mtx
+    void SendVoiceSignal(uint64_t peerId, const std::string& kind);
+
+    std::wstring m_baseUrl;
+    std::wstring m_token;
+    std::atomic<uint64_t> m_selfId{ 0 };
+
+    WebSocketClient m_ws;
+    std::atomic<bool>          m_running{ false };
+    std::atomic<GatewayState>  m_gateway{ GatewayState::Disconnected };
+    std::atomic<int>           m_backoffMs{ 1000 };
+    std::atomic<int>           m_reconnectGen{ 0 };     // invalidates stale timers
+
+    mutable std::mutex m_mtx;
+    std::vector<FriendInfo>                m_friends;     // guarded
+    std::map<uint64_t, Conversation>       m_convos;      // guarded
+    PresenceState                          m_presence = PresenceState::Online;
+    std::wstring                           m_curGameId;
+    std::wstring                           m_curGameTitle;
+
+    std::atomic<VoiceState> m_voiceState{ VoiceState::Idle };
+    std::atomic<uint64_t>   m_voicePeer{ 0 };
+
+    std::function<void()> m_onChanged;
+};
+
+} // namespace social

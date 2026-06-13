@@ -1014,6 +1014,25 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
         m_discord.SetIdle();
     }
 
+    // Social subsystem: ensure a server token, then open the real-time gateway
+    // (WSS) for presence, friends and direct messages. Runs off the UI thread;
+    // state changes post a repaint. No-op unless a server library is configured.
+    if (m_config.Get().server.enabled && !m_config.Get().server.baseUrl.empty()) {
+        m_social.SetChangeHandler([this]() {
+            PostMessageW(m_hwnd, WM_APP_SOCIAL_CHANGED, 0, 0);
+        });
+        std::thread([this]() {
+            ServerConfig sc = m_config.Get().server;
+            ServerClient client(sc);
+            std::wstring err;
+            client.Authenticate(err); // populates token if not already cached
+            std::wstring token = !client.AuthToken().empty() ? client.AuthToken()
+                                                             : sc.authToken;
+            if (!token.empty())
+                m_social.Start(sc.baseUrl, token);
+        }).detach();
+    }
+
     // Gamepad navigation: poll controllers on a background thread and post synthetic
     // input to this window so a controller can drive the whole UI from the couch.
     m_gamepad.Start(m_hwnd);
@@ -1086,6 +1105,12 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
 
+    case WM_APP_SOCIAL_CHANGED:
+        // Social state (presence/friends/chat) changed on a worker thread —
+        // repaint so the sidebar/badges reflect it.
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+
     case WM_ROMDB_READY:
     case WM_IGDBSYNC_DONE: {
         // ROM database finished downloading — load it and rescan so titles
@@ -1109,6 +1134,7 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             m_pendingSaveSyncDir.clear();
         }
         m_discord.SetIdle();
+        m_social.ClearInGame(); // back to Online presence when the game exits
         ShowWindow_(true);
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
@@ -1615,6 +1641,7 @@ void App::OnDestroy() {
     RemoveTrayIcon();
     if (m_metaManager) m_metaManager->Shutdown();
     m_fetcher->Shutdown();
+    m_social.Stop(); // close the gateway + join the WS worker thread
     SaveAll();
 }
 
@@ -2757,6 +2784,8 @@ void App::LaunchInstalledGame(Game launchGame) {
             m_pendingSaveSyncDir    = launchGame.saveDir;
         }
         m_discord.SetPlaying(launchGame.title, PlatformName(launchGame.platform));
+        // Rich presence to friends: transition to In-Game with this title.
+        m_social.SetInGame(launchGame.serverGameId, launchGame.title);
         if (m_config.Get().minimizeOnLaunch)
             ShowWindow_(false);  // hide to tray, remembering placement to restore on exit
     } else {

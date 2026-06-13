@@ -127,6 +127,8 @@
     <ClCompile Include="src\RomDatabase.cpp" />
     <ClCompile Include="src\IgdbSync.cpp" />
     <ClCompile Include="src\ServerClient.cpp" />
+    <ClCompile Include="src\Social\WebSocketClient.cpp" />
+    <ClCompile Include="src\Social\SocialManager.cpp" />
     <ClCompile Include="src\sqlite\sqlite3.c">
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -183,6 +185,10 @@
     <ClInclude Include="src\Platform\GogScanner.h" />
     <ClInclude Include="src\IgdbPlatforms.h" />
     <ClInclude Include="src\ServerClient.h" />
+    <ClInclude Include="src\Social\SocialJson.h" />
+    <ClInclude Include="src\Social\SocialTypes.h" />
+    <ClInclude Include="src\Social\WebSocketClient.h" />
+    <ClInclude Include="src\Social\SocialManager.h" />
     <ClInclude Include="src\Version.h" />
   </ItemGroup>
 

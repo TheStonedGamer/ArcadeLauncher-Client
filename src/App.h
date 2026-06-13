@@ -17,6 +17,7 @@
 #include "GamepadInput.h"
 #include "RomDatabase.h"
 #include "ServerClient.h"
+#include "Social/SocialManager.h"
 
 class App {
 public:
@@ -145,6 +146,7 @@ private:
     ProcessMonitor   m_monitor;
     DiscordPresence  m_discord;
     GamepadInput     m_gamepad;
+    social::SocialManager m_social;
     std::unique_ptr<MetadataFetcher>  m_fetcher;
 
     IgdbClient                        m_igdbClient;
