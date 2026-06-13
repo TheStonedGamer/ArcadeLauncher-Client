@@ -137,6 +137,12 @@ public:
     int HitTestGrid(float x, float y, const RenderState& state,
                     size_t gameCount) const;
 
+    // Returns the game index whose hover-only "⋯" overflow button contains the
+    // point, or -1. Only succeeds for the currently hovered card (the button is
+    // only drawn there). Geometry mirrors DrawCard.
+    int HitTestCardMenuButton(float x, float y, const RenderState& state,
+                              size_t gameCount) const;
+
     // Sidebar hit test: returns platform or filterAll flag.
     bool HitTestSidebar(float x, float y, const RenderState& state,
                         Platform& outPlatform, bool& outAll,

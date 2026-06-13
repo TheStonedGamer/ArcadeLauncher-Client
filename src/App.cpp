@@ -1781,6 +1781,14 @@ void App::OnLButtonDown(float x, float y) {
         return;
     }
 
+    // Hover-only "⋯" overflow button: open the same menu as a right-click.
+    int menuIdx = m_renderer.HitTestCardMenuButton(x, y, m_renderState, m_visibleGames.size());
+    if (menuIdx >= 0) {
+        m_renderState.focusArea = FocusArea::Grid;
+        OnRButtonDown(x, y);
+        return;
+    }
+
     int idx = m_renderer.HitTestGrid(x, y, m_renderState, m_visibleGames.size());
     if (idx >= 0) {
         m_renderState.focusArea = FocusArea::Grid;

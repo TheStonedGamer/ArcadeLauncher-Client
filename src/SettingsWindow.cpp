@@ -69,6 +69,13 @@ static HWND SmallLabel(HWND p, const wchar_t* t, int x, int y, int w) {
     ApplyFont(hw);
     return hw;
 }
+// Word-wrapping multi-line static for measured explanatory copy (caller sizes h).
+static HWND WrapLabel(HWND p, const wchar_t* t, int x, int y, int w, int h) {
+    HWND hw = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE | SS_LEFT,
+                              x, y, w, h, p, nullptr, nullptr, nullptr);
+    ApplyFont(hw);
+    return hw;
+}
 static HWND Edit(HWND p, int id, int x, int y, int w, DWORD extra = 0) {
     HWND hw = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                               WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | extra,
@@ -707,6 +714,22 @@ void SettingsWindow::BuildGeneralPage() {
     AddPC(Check(m_hwnd, L"Enable Windows Defender Exclusions for PC Game Folders  (requires admin)",
                 ID_P_CHK4, K_CX + 12, y + 86, K_CW - 24));
     y += 120;
+
+    // ── Security disclosure for the Defender exclusion toggle above ─────────────
+    // A measured, balanced explanation of exactly what the toggle changes at the
+    // OS level — what it speeds up, and the coverage it trades away — so the
+    // choice is informed rather than blind.
+    AddPC(Group(m_hwnd, L" \x26A0 What the Defender exclusion does ", K_CX, y, K_CW, 116));
+    AddPC(WrapLabel(m_hwnd,
+        L"Enabling this adds your PC game folders to Windows Defender's exclusion "
+        L"list, so its real-time engine stops scanning files inside them. That "
+        L"removes false-positive quarantines of game binaries and significantly "
+        L"speeds up extraction and installation of multi-gigabyte repacks.\r\n"
+        L"In exchange, Defender no longer monitors those folders for malware. Enable "
+        L"this only if you trust the source of every package and binary you install "
+        L"there. Changing it prompts for administrator (UAC) approval.",
+        K_CX + 12, y + 22, K_CW - 24, 86));
+    y += 124;
 
     // Server connection (URL, credentials, bearer token) is configured at
     // sign-in via the account dialog, not here — the General page only exposes

@@ -707,6 +707,23 @@ void Renderer::DrawCard(const Game& game, D2D1_RECT_F rect,
                        game.installState == InstallState::Installed ? m_brushAccent.Get() : m_brushWhite.Get());
     }
 
+    // Hover-only "⋯" overflow button (lower-right). Clicking it opens the same
+    // context menu as a right-click. Hidden in selection mode, where the corner
+    // checkbox owns the interaction. Geometry mirrored in HitTestCardMenuButton.
+    if (hovered && !selectionMode) {
+        D2D1_POINT_2F bc = D2D1::Point2F(rect.right - 16.0f, rect.bottom - 16.0f);
+        D2D1_ELLIPSE be = D2D1::Ellipse(bc, 14.0f, 14.0f);
+        m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.80f));
+        m_rt->FillEllipse(be, m_brushOverlay.Get());
+        m_brushOverlay->SetColor(C_OVERLAY);
+        m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.9f));
+        m_rt->DrawEllipse(be, m_brushAccent.Get(), 1.2f);
+        m_brushAccent->SetColor(C_ACCENT);
+        for (int k = -1; k <= 1; ++k)
+            m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(bc.x + k * 5.0f, bc.y), 1.8f, 1.8f),
+                              m_brushWhite.Get());
+    }
+
     // Selected border
     if (selectionMode) {
         D2D1_RECT_F box = D2D1::RectF(rect.left + 10.0f, rect.top + 10.0f,
@@ -1253,6 +1270,20 @@ int Renderer::HitTestGrid(float x, float y, const RenderState& state,
     if (localX > m_tileW || localY > m_tileH) return -1;
     int idx = row * m_cols + col;
     return (idx < (int)gameCount) ? idx : -1;
+}
+
+int Renderer::HitTestCardMenuButton(float x, float y, const RenderState& state,
+                                     size_t gameCount) const {
+    int idx = HitTestGrid(x, y, state, gameCount);
+    if (idx < 0 || idx != state.hoveredIndex || state.selectionMode) return -1;
+    int col = idx % m_cols, row = idx / m_cols;
+    float startX = m_sidebarW + m_tileGap;
+    float startY = m_topbarH + m_tileGap - state.scrollOffset;
+    float rRight  = startX + col * (m_tileW + m_tileGap) + m_tileW;
+    float lift    = (idx == state.selectedIndex) ? 2.0f : 4.0f;  // hovered cards lift
+    float rBottom = startY + row * (m_tileH + m_tileGap + 22.0f) + m_tileH - lift;
+    float cx = rRight - 16.0f, cy = rBottom - 16.0f, r = 15.0f;
+    return (fabsf(x - cx) <= r && fabsf(y - cy) <= r) ? idx : -1;
 }
 
 bool Renderer::HitTestSidebar(float x, float y, const RenderState& state,
