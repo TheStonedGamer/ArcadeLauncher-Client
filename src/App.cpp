@@ -953,21 +953,19 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
     std::wstring artDir = GetAppDataPath() + L"\\art";
     m_fetcher = std::make_unique<MetadataFetcher>(artDir, m_config.Get().steamGridDbApiKey);
 
-    // If the Repacks/FitGirl icon isn't cached yet, download it in the background.
-    // Once the file is on disk, post WM_USER+3 so the render thread can create
-    // the D2D bitmap (D2D is single-threaded; bitmap creation must stay on this thread).
+    // If console favicons aren't cached yet, download them in the background.
+    // Once the files are on disk, post WM_USER+3 so the render thread can create
+    // the D2D bitmaps (D2D is single-threaded; bitmap creation must stay on this thread).
+    // (PC Games uses a natively-drawn tile — no asset download.)
     {
         std::wstring appDir  = GetAppDataPath();
-        bool needRepacks     = GetFileAttributesW((appDir + L"\\repacks_icon.png").c_str()) == INVALID_FILE_ATTRIBUTES;
         bool needConsole     = GetFileAttributesW((appDir + L"\\icon_ps.ico").c_str())       == INVALID_FILE_ATTRIBUTES
                             || GetFileAttributesW((appDir + L"\\icon_xbox.ico").c_str())     == INVALID_FILE_ATTRIBUTES;
-        if (needRepacks || needConsole) {
-            std::thread([this, needRepacks, needConsole]() {
+        if (needConsole) {
+            std::thread([this]() {
                 std::wstring dir = GetAppDataPath();
-                bool any = false;
-                if (needRepacks)  any |= !PlatformIcons::DownloadRepacksIcon(dir).empty();
-                if (needConsole)  any |=  PlatformIcons::DownloadConsoleIcons(dir);
-                if (any) PostMessageW(m_hwnd, WM_USER + 3, 0, 0);
+                if (PlatformIcons::DownloadConsoleIcons(dir))
+                    PostMessageW(m_hwnd, WM_USER + 3, 0, 0);
             }).detach();
         }
     }
@@ -1402,9 +1400,8 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_USER + 3:
-        // Background thread finished downloading platform icons.
+        // Background thread finished downloading console icons.
         // Create D2D bitmaps here on the render thread (D2D is single-threaded).
-        m_platformIcons.TryDownloadAndLoadRepacks(m_renderer.GetRT(), m_renderer.GetWIC());
         m_platformIcons.TryLoadConsoleIcons(m_renderer.GetRT(), m_renderer.GetWIC());
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;

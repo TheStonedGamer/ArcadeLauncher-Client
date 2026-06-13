@@ -127,23 +127,11 @@ std::wstring PlatformIcons::FindRyujinxExe(const std::wstring& cfg) {
     return {};
 }
 
-// ── FitGirl / Repacks icon ────────────────────────────────────────────────────
-
-std::wstring PlatformIcons::DownloadRepacksIcon(const std::wstring& appDataDir) {
-    std::wstring dest = appDataDir + L"\\repacks_icon.png";
-    if (FileExists(dest)) return dest;
-
-    // Try a few FitGirl URLs in order
-    static const wchar_t* urls[] = {
-        L"https://fitgirl-repacks.site/wp-content/uploads/2016/04/cropped-fgicon.png",
-        L"https://fitgirl-repacks.site/favicon.ico",
-        nullptr
-    };
-    for (auto** url = urls; *url; ++url) {
-        if (HttpDownload(*url, dest)) return dest;
-    }
-    return {};
-}
+// ── PC Games (Repacks) icon ───────────────────────────────────────────────────
+// The PC Games platform is rendered with a neutral, natively-drawn vector tile
+// (see CreateGeneratedIcon → Platform::Repacks). There is deliberately no branded
+// third-party asset download here: the launcher must not pull marks from, or make
+// network requests to, any specific repack site.
 
 bool PlatformIcons::HttpDownload(const std::wstring& url, const std::wstring& dest) {
     URL_COMPONENTSW uc{}; uc.dwStructSize = sizeof(uc);
@@ -276,13 +264,9 @@ void PlatformIcons::Load(const EmulatorConfig& emuCfg,
         if (bmp) m_icons[(int)l.p] = std::move(bmp);
     }
 
-    // Repacks: load from cache (non-blocking; async download via TryDownloadAndLoadRepacks)
+    // PC Games (Repacks) intentionally has no cached/branded bitmap — it falls
+    // through to the natively-drawn CreateGeneratedIcon tile below.
     std::wstring appDir = GetAppDataPath();
-    std::wstring repacksPath = appDir + L"\\repacks_icon.png";
-    if (FileExists(repacksPath)) {
-        auto bmp = LoadFromFile(repacksPath, rt, wic);
-        if (bmp) m_icons[(int)Platform::Repacks] = std::move(bmp);
-    }
 
     // Console platforms: if exe extraction didn't produce an icon, fall back to
     // the cached favicon (downloaded asynchronously via DownloadConsoleIcons).
@@ -350,17 +334,6 @@ void PlatformIcons::TryLoadConsoleIcons(ID2D1RenderTarget* rt, IWICImagingFactor
     }
 }
 
-bool PlatformIcons::TryDownloadAndLoadRepacks(ID2D1RenderTarget* rt,
-                                               IWICImagingFactory* wic) {
-    std::wstring appDir = GetAppDataPath();
-    CreateDirectoryW(appDir.c_str(), nullptr);
-    std::wstring iconPath = DownloadRepacksIcon(appDir);
-    if (iconPath.empty()) return false;
-    auto bmp = LoadFromFile(iconPath, rt, wic);
-    if (!bmp) return false;
-    m_icons[(int)Platform::Repacks] = std::move(bmp);
-    return true;
-}
 
 ID2D1Bitmap* PlatformIcons::Get(Platform p) const {
     auto it = m_icons.find((int)p);

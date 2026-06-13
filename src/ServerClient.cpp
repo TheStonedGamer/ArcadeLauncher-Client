@@ -1089,6 +1089,15 @@ bool ServerClient::FetchCatalog(std::vector<Game>& games, std::wstring& error) {
         g.publisher = ToWide(JsonString(obj, "publisher"));
         g.franchise = ToWide(JsonString(obj, "franchise"));
         g.installRoot = ResolveInstallFolder(m_cfg.installRoot, g.title, id);
+        // Defensive title fallback: a catalog row should always render a human
+        // name even when the server's title field arrived empty (bad scan, missing
+        // sidecar). Derive it from the install folder's leaf, else the server id.
+        if (g.title.empty()) {
+            std::wstring leaf = g.installRoot;
+            size_t slash = leaf.find_last_of(L"\\/");
+            if (slash != std::wstring::npos) leaf = leaf.substr(slash + 1);
+            g.title = leaf.empty() ? (L"Game " + id) : leaf;
+        }
         g.installState = fs::exists(g.installRoot) ? InstallState::Installed : InstallState::Missing;
         games.push_back(std::move(g));
     }

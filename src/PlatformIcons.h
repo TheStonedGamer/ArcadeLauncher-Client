@@ -23,17 +23,9 @@ public:
     static std::wstring FindDolphinExe(const std::wstring& configuredPath);
     static std::wstring FindRyujinxExe(const std::wstring& configuredPath);
 
-    // Download and cache the FitGirl/Repacks icon to appDataDir.
-    // Returns path to the cached file, or empty on failure.
-    static std::wstring DownloadRepacksIcon(const std::wstring& appDataDir);
-
     // Download PS1/PS2/Xbox/Xbox360 favicons to appDataDir if not cached yet.
     // Returns true if at least one icon was downloaded.
     static bool DownloadConsoleIcons(const std::wstring& appDataDir);
-
-    // Called from the render thread after a background download completes.
-    // Returns true if the bitmap was loaded and stored.
-    bool TryDownloadAndLoadRepacks(ID2D1RenderTarget* rt, IWICImagingFactory* wic);
 
     // (Re-)load cached console icon files; call on the render thread.
     void TryLoadConsoleIcons(ID2D1RenderTarget* rt, IWICImagingFactory* wic);
