@@ -6,7 +6,7 @@
 #include <unordered_set>
 
 enum class FocusArea { Grid, Sidebar, Search };
-enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection, Favorites, Hidden };
+enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection, Favorites, RecentlyPlayed, Hidden };
 
 // Grid ordering applied by App::ApplyFilter. Recent is the historical default
 // (last played, then title). Cycled via the topbar sort button.

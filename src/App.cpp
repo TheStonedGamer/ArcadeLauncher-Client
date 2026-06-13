@@ -3307,6 +3307,18 @@ void App::ApplyFilter() {
         m_visibleGames.clear();
         for (auto& g : m_library.All())
             if (g.favorite) m_visibleGames.push_back(&g);
+    } else if (m_renderState.libraryPage == LibraryPage::RecentlyPlayed) {
+        // Anything launched at least once, most-recent first. Ordered here and
+        // exempted from the generic sort pass so the page always reads as a
+        // recency timeline regardless of the active sort mode.
+        m_visibleGames.clear();
+        for (auto& g : m_library.All())
+            if (g.lastPlayed > 0) m_visibleGames.push_back(&g);
+        std::sort(m_visibleGames.begin(), m_visibleGames.end(),
+            [](const Game* a, const Game* b) {
+                if (a->lastPlayed != b->lastPlayed) return a->lastPlayed > b->lastPlayed;
+                return a->title < b->title;
+            });
     } else if (m_renderState.libraryPage == LibraryPage::Hidden) {
         m_visibleGames.clear();
         for (auto& g : m_library.All())
@@ -3360,8 +3372,10 @@ void App::ApplyFilter() {
         m_visibleGames.swap(collapsed);
     }
 
-    // Apply the active sort mode. The (now hidden) download page keeps queue order.
-    if (m_renderState.libraryPage != LibraryPage::BackgroundDownloads) {
+    // Apply the active sort mode. The (now hidden) download page keeps queue
+    // order, and Recently Played keeps its own recency ordering.
+    if (m_renderState.libraryPage != LibraryPage::BackgroundDownloads &&
+        m_renderState.libraryPage != LibraryPage::RecentlyPlayed) {
         auto byTitle = [](const Game* a, const Game* b) {
             if (a->title != b->title) return a->title < b->title;
             return a->id < b->id;

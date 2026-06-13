@@ -331,6 +331,7 @@ std::vector<Renderer::SidebarEntry> Renderer::BuildSidebarEntries(const RenderSt
     std::vector<SidebarEntry> v;
     v.push_back({ L"All Games", true,  Platform::Repacks, LibraryPage::All });
     v.push_back({ L"Favorites", false, Platform::Repacks, LibraryPage::Favorites });
+    v.push_back({ L"Recently Played", false, Platform::Repacks, LibraryPage::RecentlyPlayed });
     v.push_back({ L"Installed", false, Platform::Repacks, LibraryPage::Installed });
     v.push_back({ L"Ready to Download", false, Platform::Repacks, LibraryPage::ReadyToDownload });
     // "Background Downloads" tab removed — the topbar Downloads button opens the
@@ -834,6 +835,60 @@ void Renderer::DrawDetailPanel(const Game* game, RenderState& state) {
     float py = (h - panelH) / 2;
     D2D1_RECT_F panel = D2D1::RectF(px, py, px + panelW, py + panelH);
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(panel, 12, 12), m_brushSidebar.Get());
+
+    // ── Hero banner (Steam-style) ──────────────────────────────────────────────
+    // Use the first screenshot, falling back to box art, as a wide cover-cropped
+    // backdrop across the panel header. Clipped to the panel's rounded corners via
+    // a geometry layer and heavily darkened (solid scrim + bottom fade into the
+    // panel colour) so the white title/chips drawn afterwards stay legible.
+    ID2D1Bitmap* hero = nullptr;
+    if (!game->screenshots.empty()) hero = GetArt(Game::ScreenshotKey(game->id, 0));
+    if (!hero) hero = GetArt(game->id);
+    if (hero) {
+        const float heroH = std::min(190.0f, panelH * 0.4f);
+        D2D1_RECT_F heroBand = D2D1::RectF(px, py, px + panelW, py + heroH);
+
+        ComPtr<ID2D1RoundedRectangleGeometry> clipGeo;
+        m_factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(panel, 12, 12),
+                                                  clipGeo.GetAddressOf());
+        if (clipGeo) {
+            m_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), clipGeo.Get()),
+                            nullptr);
+
+            // Cover-crop the source to the band's aspect ratio (no stretching).
+            float bw = (float)hero->GetSize().width, bh = (float)hero->GetSize().height;
+            float bandAR = (heroBand.right - heroBand.left) / heroH;
+            float srcW = bw, srcH = bw / bandAR;
+            if (srcH > bh) { srcH = bh; srcW = bh * bandAR; }
+            float sx0 = (bw - srcW) / 2.0f, sy0 = (bh - srcH) * 0.30f;  // bias toward top
+            D2D1_RECT_F src = D2D1::RectF(sx0, sy0, sx0 + srcW, sy0 + srcH);
+            m_rt->DrawBitmap(hero, heroBand, 1.0f,
+                             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, src);
+
+            // Darkening scrim so foreground text reads cleanly.
+            m_brushOverlay->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f));
+            m_rt->FillRectangle(heroBand, m_brushOverlay.Get());
+            m_brushOverlay->SetColor(C_OVERLAY);
+
+            // Bottom fade into the panel colour for a seamless blend.
+            ComPtr<ID2D1GradientStopCollection> stops;
+            D2D1_GRADIENT_STOP gs[2] = {
+                { 0.0f, D2D1::ColorF(C_SIDEBAR.r, C_SIDEBAR.g, C_SIDEBAR.b, 0.0f) },
+                { 1.0f, D2D1::ColorF(C_SIDEBAR.r, C_SIDEBAR.g, C_SIDEBAR.b, 1.0f) },
+            };
+            if (SUCCEEDED(m_rt->CreateGradientStopCollection(gs, 2, stops.GetAddressOf()))) {
+                ComPtr<ID2D1LinearGradientBrush> fade;
+                if (SUCCEEDED(m_rt->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(
+                            D2D1::Point2F(px, heroBand.bottom - heroH * 0.55f),
+                            D2D1::Point2F(px, heroBand.bottom)),
+                        stops.Get(), fade.GetAddressOf())))
+                    m_rt->FillRectangle(heroBand, fade.Get());
+            }
+            m_rt->PopLayer();
+        }
+    }
+
     m_rt->DrawRoundedRectangle(D2D1::RoundedRect(panel, 12, 12), m_brushCard.Get(), 1.5f);
 
     // Art on left
