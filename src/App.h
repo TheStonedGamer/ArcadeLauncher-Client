@@ -45,6 +45,13 @@ private:
     void OnDestroy();
     void OnSize(UINT w, UINT h);
     void OnPaint();
+    void SyncSocialRenderState();
+    // Friends panel: handle a click on a friend row (opens an action context
+    // menu) and the Add-Friend (+) button. Returns true if the panel consumed
+    // the click.
+    bool HandleFriendsPanelClick(float x, float y);
+    void ShowFriendContextMenu(uint64_t accountId);
+    void PromptAddFriend();
     void OnTimer(UINT timerId);
     void OnMouseMove(float x, float y);
     void OnLButtonDown(float x, float y);

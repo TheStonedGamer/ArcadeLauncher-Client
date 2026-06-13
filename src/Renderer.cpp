@@ -132,7 +132,7 @@ void Renderer::Resize(UINT w, UINT h) {
     // Right-aligned topbar action buttons. The profile button occupies the
     // far-right slot; everything else is shifted left one slot (46px each) to
     // make room for it.
-    float actionsLeft = (float)w - 240.0f;
+    float actionsLeft = (float)w - 286.0f;
     float searchLeft = std::max(m_sidebarW + 168.0f, (float)w * 0.34f);
     float searchRight = std::min(actionsLeft - 12.0f, (float)w * 0.66f);
     if (searchRight - searchLeft < 180.0f) {
@@ -145,6 +145,8 @@ void Renderer::Resize(UINT w, UINT h) {
     m_selectModeBtnRect = D2D1::RectF((float)w - 142.0f, 16.0f, (float)w - 104.0f, 48.0f);
     m_downloadsBtnRect  = D2D1::RectF((float)w - 188.0f, 16.0f, (float)w - 150.0f, 48.0f);
     m_sortBtnRect       = D2D1::RectF((float)w - 234.0f, 16.0f, (float)w - 196.0f, 48.0f);
+    m_friendsBtnRect    = D2D1::RectF((float)w - 280.0f, 16.0f, (float)w - 242.0f, 48.0f);
+    m_friendsPanelW = std::clamp((float)w * 0.26f, 280.0f, 340.0f);
     m_launchBtnRect = {}; // set during detail panel draw
 }
 
@@ -165,6 +167,9 @@ void Renderer::Render(const std::vector<const Game*>& games, RenderState& state)
         DrawDetailPanel(games[state.detailIndex], state);
     else
         DrawGrid(games, state);
+
+    if (state.showFriendsPanel)
+        DrawFriendsPanel(state);
 
     m_rt->EndDraw();
 }
@@ -288,6 +293,32 @@ void Renderer::DrawTopBar(const RenderState& state) {
     m_rt->DrawText(sortGlyph, 1, m_fmtIcon.Get(),
                    D2D1::RectF(so.left, so.top, so.right, so.bottom),
                    sortActive ? m_brushAccent.Get() : m_brushSubtext.Get());
+
+    // Friends button (Segoe MDL2 Assets U+E902 "People"). Highlighted while the
+    // panel is open; carries a badge for pending requests + unread DMs.
+    auto& fr = m_friendsBtnRect;
+    bool friendsActive = state.showFriendsPanel;
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(fr, 6, 6),
+                               friendsActive ? m_brushCardHover.Get() : m_brushCard.Get());
+    if (friendsActive) {
+        m_rt->DrawRoundedRectangle(D2D1::RoundedRect(fr, 6, 6), m_brushAccent.Get(), 1.5f);
+    }
+    m_rt->DrawText(L"\xE902", 1, m_fmtIcon.Get(),
+                   D2D1::RectF(fr.left, fr.top, fr.right, fr.bottom),
+                   friendsActive ? m_brushAccent.Get() : m_brushSubtext.Get());
+    int frBadge = state.pendingRequests + state.socialUnread;
+    if (frBadge > 0) {
+        std::wstring count = std::to_wstring(frBadge);
+        D2D1_RECT_F badge = D2D1::RectF(fr.right - 10.0f, fr.top - 4.0f,
+                                         fr.right + 10.0f, fr.top + 16.0f);
+        m_brushAccent->SetColor(D2D1::ColorF(0xE5534B)); // red attention badge
+        m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F((badge.left + badge.right) * 0.5f,
+                                                       (badge.top + badge.bottom) * 0.5f),
+                                        10.0f, 10.0f), m_brushAccent.Get());
+        m_brushAccent->SetColor(C_ACCENT);
+        m_rt->DrawText(count.c_str(), (UINT32)count.size(), m_fmtCardSub.Get(),
+                       badge, m_brushWhite.Get());
+    }
 
     auto& sb = m_settingsBtnRect;
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(sb, 6, 6), m_brushCard.Get());
@@ -1349,6 +1380,198 @@ bool Renderer::HitTestSortBtn(float x, float y) const {
 bool Renderer::HitTestProfileBtn(float x, float y) const {
     return x >= m_profileBtnRect.left && x <= m_profileBtnRect.right &&
            y >= m_profileBtnRect.top  && y <= m_profileBtnRect.bottom;
+}
+
+bool Renderer::HitTestFriendsBtn(float x, float y) const {
+    return x >= m_friendsBtnRect.left && x <= m_friendsBtnRect.right &&
+           y >= m_friendsBtnRect.top  && y <= m_friendsBtnRect.bottom;
+}
+
+// ── Friends panel ─────────────────────────────────────────────────────────────
+
+// Presence dot colors, indexed by the int presence code in FriendRowView.
+static D2D1_COLOR_F PresenceColor(int p) {
+    switch (p) {
+        case 5: return D2D1::ColorF(0x57AB5A); // InGame  - green (rich)
+        case 1: return D2D1::ColorF(0x58A6FF); // Online  - blue
+        case 2: return D2D1::ColorF(0xD29922); // Away    - amber
+        case 3: return D2D1::ColorF(0xE5534B); // Busy    - red
+        default: return D2D1::ColorF(0x6E7681); // Offline/Invisible - grey
+    }
+}
+
+bool Renderer::PointInFriendsPanel(float x, float y) const {
+    return x >= m_friendsPanelRect.left && x <= m_friendsPanelRect.right &&
+           y >= m_friendsPanelRect.top  && y <= m_friendsPanelRect.bottom;
+}
+
+float Renderer::MaxFriendsScroll(const RenderState& s) const {
+    float viewH = (float)m_height - m_topbarH;
+    return std::max(0.0f, m_friendsContentH - viewH);
+}
+
+Renderer::FriendsHit Renderer::HitTestFriendsPanel(float x, float y) const {
+    FriendsHit hit;
+    if (x >= m_friendsAddBtnRect.left && x <= m_friendsAddBtnRect.right &&
+        y >= m_friendsAddBtnRect.top  && y <= m_friendsAddBtnRect.bottom) {
+        hit.kind = FriendsHit::AddFriend;
+        return hit;
+    }
+    for (const auto& rr : m_friendRowRects) {
+        const D2D1_RECT_F& r = rr.first;
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            hit.kind = FriendsHit::Row;
+            hit.accountId = rr.second;
+            return hit;
+        }
+    }
+    return hit;
+}
+
+void Renderer::DrawFriendsPanel(RenderState& state) {
+    float w = (float)m_width;
+    float panelL = w - m_friendsPanelW;
+    D2D1_RECT_F panel = D2D1::RectF(panelL, m_topbarH, w, (float)m_height);
+    m_friendsPanelRect = panel;
+
+    // Backing + left edge separator.
+    m_rt->FillRectangle(panel, m_brushSidebar.Get());
+    m_rt->DrawLine(D2D1::Point2F(panelL, m_topbarH), D2D1::Point2F(panelL, (float)m_height),
+                   m_brushCard.Get(), 1.0f);
+
+    // Header: title + gateway status dot + Add Friend (+) button.
+    float pad = 14.0f;
+    D2D1_RECT_F hdr = D2D1::RectF(panelL + pad, m_topbarH + 12.0f, w - pad, m_topbarH + 40.0f);
+    m_rt->DrawText(L"Friends", 7, m_fmtHeading.Get(), hdr, m_brushText.Get());
+
+    // Gateway status dot (green connected, amber connecting/reconnecting, grey off)
+    D2D1_COLOR_F gw = state.gatewayState == 2 ? D2D1::ColorF(0x57AB5A)
+                     : (state.gatewayState == 1 || state.gatewayState == 3)
+                           ? D2D1::ColorF(0xD29922)
+                           : D2D1::ColorF(0x6E7681);
+    m_brushWhite->SetColor(gw);
+    m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(panelL + 78.0f, m_topbarH + 25.0f), 4.0f, 4.0f),
+                      m_brushWhite.Get());
+    m_brushWhite->SetColor(C_WHITE);
+
+    // Add Friend button (top-right of header).
+    m_friendsAddBtnRect = D2D1::RectF(w - pad - 30.0f, m_topbarH + 10.0f, w - pad, m_topbarH + 40.0f);
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_friendsAddBtnRect, 6, 6), m_brushCard.Get());
+    m_rt->DrawText(L"\xE710", 1, m_fmtIcon.Get(), m_friendsAddBtnRect, m_brushAccent.Get()); // Add (+)
+
+    // Scrollable list region.
+    float listTop = m_topbarH + 50.0f;
+    m_rt->PushAxisAlignedClip(D2D1::RectF(panelL, listTop, w, (float)m_height),
+                              D2D1_ANTIALIAS_MODE_ALIASED);
+
+    m_friendRowRects.clear();
+
+    // Bucket friends into Steam-like groups. Pending received first (actionable),
+    // then In-Game, Online, Away/Busy, Offline, then sent requests + blocked.
+    auto bucket = [](const FriendRowView& f) -> int {
+        if (f.relation == 2) return 0;           // RequestReceived
+        if (f.relation == 1) return 6;           // RequestSent
+        if (f.relation == 4) return 7;           // Blocked
+        switch (f.presence) {                     // Accepted -> by presence
+            case 5: return 1;                     // InGame
+            case 1: return 2;                     // Online
+            case 2: case 3: return 3;             // Away/Busy
+            default: return 5;                    // Offline/Invisible
+        }
+    };
+    const wchar_t* groupNames[8] = {
+        L"PENDING REQUESTS", L"IN-GAME", L"ONLINE", L"AWAY", L"",
+        L"OFFLINE", L"REQUEST SENT", L"BLOCKED"
+    };
+
+    float y = listTop + 6.0f - state.friendsScroll;
+    int hoveredId = state.hoveredFriendId;
+
+    for (int g = 0; g < 8; ++g) {
+        if (groupNames[g][0] == L'\0') continue;
+        // Collect this group's members.
+        std::vector<const FriendRowView*> rows;
+        for (const auto& f : state.friends)
+            if (bucket(f) == g) rows.push_back(&f);
+        if (rows.empty()) continue;
+
+        // Group header.
+        D2D1_RECT_F gh = D2D1::RectF(panelL + pad, y, w - pad, y + 20.0f);
+        std::wstring hdrTxt = std::wstring(groupNames[g]) + L"  (" + std::to_wstring(rows.size()) + L")";
+        m_rt->DrawText(hdrTxt.c_str(), (UINT32)hdrTxt.size(), m_fmtSmall.Get(), gh, m_brushSubtext.Get());
+        y += 24.0f;
+
+        for (const FriendRowView* fp : rows) {
+            const FriendRowView& f = *fp;
+            float rowH = 44.0f;
+            D2D1_RECT_F row = D2D1::RectF(panelL + 6.0f, y, w - 6.0f, y + rowH);
+            bool hovered = ((int64_t)f.accountId == (int64_t)hoveredId);
+            if (hovered) {
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(row, 6, 6), m_brushCardHover.Get());
+            }
+            m_friendRowRects.push_back({ row, f.accountId });
+
+            // Avatar placeholder circle with first initial + presence dot.
+            float cx = panelL + 26.0f, cy = y + rowH * 0.5f;
+            m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 15.0f, 15.0f), m_brushCard.Get());
+            if (!f.username.empty()) {
+                std::wstring initial(1, towupper(f.username[0]));
+                D2D1_RECT_F ir = D2D1::RectF(cx - 15, cy - 11, cx + 15, cy + 11);
+                m_rt->DrawText(initial.c_str(), 1, m_fmtCard.Get(), ir, m_brushSubtext.Get());
+            }
+            // Presence dot (bottom-right of avatar).
+            m_brushWhite->SetColor(PresenceColor(f.presence));
+            m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx + 11.0f, cy + 11.0f), 5.0f, 5.0f),
+                              m_brushSidebar.Get());
+            m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx + 11.0f, cy + 11.0f), 3.5f, 3.5f),
+                              m_brushWhite.Get());
+            m_brushWhite->SetColor(C_WHITE);
+
+            // Username (top) + status/game (bottom).
+            float tx = panelL + 50.0f;
+            D2D1_RECT_F nameR = D2D1::RectF(tx, y + 5.0f, w - 30.0f, y + 24.0f);
+            m_rt->DrawText(f.username.c_str(), (UINT32)f.username.size(),
+                           m_fmtCard.Get(), nameR, m_brushText.Get());
+
+            std::wstring sub;
+            if (f.relation == 2)      sub = L"wants to be friends";
+            else if (f.relation == 1) sub = L"request sent";
+            else if (f.relation == 4) sub = L"blocked";
+            else if (f.presence == 5) sub = f.gameTitle.empty() ? L"In-Game" : f.gameTitle;
+            else if (f.presence == 1) sub = L"Online";
+            else if (f.presence == 2) sub = L"Away";
+            else if (f.presence == 3) sub = L"Busy";
+            else                       sub = L"Offline";
+            D2D1_RECT_F subR = D2D1::RectF(tx, y + 23.0f, w - 30.0f, y + 42.0f);
+            ID2D1Brush* subBrush = (f.presence == 5) ? m_brushAccent.Get() : m_brushSubtext.Get();
+            if (f.presence == 5) m_brushAccent->SetColor(D2D1::ColorF(0x57AB5A));
+            m_rt->DrawText(sub.c_str(), (UINT32)sub.size(), m_fmtCardSub.Get(), subR, subBrush);
+            if (f.presence == 5) m_brushAccent->SetColor(C_ACCENT);
+
+            // Unread badge on the right.
+            if (f.unread > 0) {
+                std::wstring n = std::to_wstring(f.unread);
+                D2D1_POINT_2F bc = D2D1::Point2F(w - 24.0f, cy);
+                m_brushAccent->SetColor(D2D1::ColorF(0xE5534B));
+                m_rt->FillEllipse(D2D1::Ellipse(bc, 9.0f, 9.0f), m_brushAccent.Get());
+                m_brushAccent->SetColor(C_ACCENT);
+                D2D1_RECT_F br = D2D1::RectF(bc.x - 9, bc.y - 9, bc.x + 9, bc.y + 9);
+                m_rt->DrawText(n.c_str(), (UINT32)n.size(), m_fmtCardSub.Get(), br, m_brushWhite.Get());
+            }
+            y += rowH + 2.0f;
+        }
+        y += 8.0f;
+    }
+
+    // Empty state.
+    if (state.friends.empty()) {
+        D2D1_RECT_F er = D2D1::RectF(panelL + pad, listTop + 30.0f, w - pad, listTop + 90.0f);
+        m_rt->DrawText(L"No friends yet.\nUse + to add someone by username.",
+                       41, m_fmtSummary.Get(), er, m_brushSubtext.Get());
+    }
+
+    m_rt->PopAxisAlignedClip();
+    m_friendsContentH = (y + state.friendsScroll) - listTop;
 }
 
 void Renderer::ClearAvatar() { m_avatar.Reset(); }

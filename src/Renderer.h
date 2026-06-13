@@ -45,6 +45,19 @@ struct ChangelogView {
     int64_t      createdAt = 0;
 };
 
+// Lightweight, render-only view of a friend. App fills these from SocialManager
+// each frame so the Renderer stays free of Social/ServerClient dependencies.
+// presence/relation are ints mirroring social::PresenceState / FriendStatus to
+// avoid pulling those headers into the renderer.
+struct FriendRowView {
+    uint64_t     accountId = 0;
+    std::wstring username;
+    int          presence = 0;   // 0 Offline,1 Online,2 Away,3 Busy,4 Invisible,5 InGame
+    int          relation = 0;   // 0 None,1 RequestSent,2 RequestReceived,3 Accepted,4 Blocked
+    std::wstring gameTitle;
+    int          unread = 0;
+};
+
 struct RenderState {
     int   hoveredIndex  = -1;
     int   selectedIndex = -1;
@@ -98,6 +111,15 @@ struct RenderState {
     // Number of active (running or queued) background downloads, shown as a
     // badge on the Downloads topbar button.
     int activeDownloadCount = 0;
+
+    // ── Social (friends panel) view state ────────────────────────────────────
+    bool showFriendsPanel = false;
+    int  gatewayState     = 0;   // 0 disconnected,1 connecting,2 connected,3 reconnecting
+    int  socialUnread     = 0;   // total unread DMs (topbar badge)
+    int  pendingRequests  = 0;   // incoming friend requests (topbar badge)
+    float friendsScroll   = 0.0f;
+    int  hoveredFriendId  = -1;  // accountId under the cursor, or -1
+    std::vector<FriendRowView> friends;
 };
 
 class Renderer {
@@ -154,6 +176,15 @@ public:
     bool HitTestDownloadsBtn(float x, float y) const;
     bool HitTestSortBtn(float x, float y) const;
     bool HitTestProfileBtn(float x, float y) const;
+    bool HitTestFriendsBtn(float x, float y) const;
+
+    // Friends panel hit testing. Returns what was clicked; for a friend row,
+    // outAccountId is set. Geometry comes from rects cached during the last draw.
+    struct FriendsHit { enum Kind { None, Row, AddFriend } kind = None; uint64_t accountId = 0; };
+    FriendsHit HitTestFriendsPanel(float x, float y) const;
+    bool       PointInFriendsPanel(float x, float y) const;
+    float      FriendsPanelWidth() const { return m_friendsPanelW; }
+    float      MaxFriendsScroll(const RenderState& s) const;
     bool HitTestEmptyStateBtn(float x, float y) const;
 
     // Profile picture (server account avatar) shown in the topbar profile button.
@@ -188,6 +219,7 @@ private:
     void DrawCard(const Game& game, D2D1_RECT_F rect, bool hovered, bool selected,
                   bool selectionMode, bool multiSelected);
     void DrawDetailPanel(const Game* game, RenderState& state);
+    void DrawFriendsPanel(RenderState& state);
     // Draws a word-wrapped block at (x,y) constrained to width w and returns its
     // rendered height. Pass draw=false to measure without drawing.
     float DrawWrapped(const std::wstring& text, IDWriteTextFormat* fmt,
@@ -260,7 +292,16 @@ private:
     D2D1_RECT_F m_selectModeBtnRect{};
     D2D1_RECT_F m_downloadsBtnRect{};
     D2D1_RECT_F m_sortBtnRect{};
+    D2D1_RECT_F m_friendsBtnRect{};
     D2D1_RECT_F m_profileBtnRect{};
+
+    // Friends panel layout/state. Row rects are cached during draw so hit-testing
+    // doesn't re-derive grouped layout. Mutated only on the render thread.
+    float m_friendsPanelW = 300.0f;
+    D2D1_RECT_F m_friendsPanelRect{};
+    D2D1_RECT_F m_friendsAddBtnRect{};
+    std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendRowRects;
+    float m_friendsContentH = 0.0f;   // total content height for scroll clamping
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
 
     // Current user's profile picture (circular avatar). Null = show person glyph.

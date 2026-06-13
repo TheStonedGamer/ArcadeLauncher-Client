@@ -1660,6 +1660,108 @@ void App::OnSize(UINT w, UINT h) {
     }
 }
 
+bool App::HandleFriendsPanelClick(float x, float y) {
+    auto hit = m_renderer.HitTestFriendsPanel(x, y);
+    if (hit.kind == Renderer::FriendsHit::AddFriend) {
+        PromptAddFriend();
+        return true;
+    }
+    if (hit.kind == Renderer::FriendsHit::Row) {
+        ShowFriendContextMenu(hit.accountId);
+        return true;
+    }
+    return false;
+}
+
+void App::PromptAddFriend() {
+    std::wstring name;
+    if (!ShowTextPrompt(m_hwnd, L"Add Friend",
+                        L"Enter the username to send a friend request:", name))
+        return;
+    // Trim surrounding whitespace.
+    size_t a = name.find_first_not_of(L" \t");
+    size_t b = name.find_last_not_of(L" \t");
+    if (a == std::wstring::npos) return;
+    name = name.substr(a, b - a + 1);
+    if (!name.empty() && m_social.IsRunning())
+        m_social.SendFriendRequest(name);
+}
+
+void App::ShowFriendContextMenu(uint64_t accountId) {
+    // Find the friend's current relation to build the right menu.
+    int relation = 0; std::wstring uname;
+    for (const auto& f : m_renderState.friends)
+        if (f.accountId == accountId) { relation = f.relation; uname = f.username; break; }
+
+    enum { ID_MSG = 0x9101, ID_ACCEPT, ID_DECLINE, ID_CANCEL, ID_REMOVE, ID_BLOCK, ID_UNBLOCK };
+    HMENU menu = CreatePopupMenu();
+    if (relation == 2) { // RequestReceived
+        AppendMenuW(menu, MF_STRING, ID_ACCEPT, L"Accept Friend Request");
+        AppendMenuW(menu, MF_STRING, ID_DECLINE, L"Decline");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, ID_BLOCK, L"Block");
+    } else if (relation == 1) { // RequestSent
+        AppendMenuW(menu, MF_STRING, ID_CANCEL, L"Cancel Request");
+    } else if (relation == 4) { // Blocked
+        AppendMenuW(menu, MF_STRING, ID_UNBLOCK, L"Unblock");
+    } else { // Accepted
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_MSG, L"Message…  (coming soon)");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, ID_REMOVE, L"Remove Friend");
+        AppendMenuW(menu, MF_STRING, ID_BLOCK, L"Block");
+    }
+
+    POINT pt; GetCursorPos(&pt);
+    int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+                             pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(menu);
+    if (!m_social.IsRunning()) return;
+    switch (cmd) {
+        case ID_ACCEPT:  m_social.RespondRequest(accountId, "accept");  break;
+        case ID_DECLINE: m_social.RespondRequest(accountId, "decline"); break;
+        case ID_CANCEL:  m_social.RespondRequest(accountId, "cancel");  break;
+        case ID_REMOVE:  m_social.RespondRequest(accountId, "remove");  break;
+        case ID_BLOCK:   m_social.BlockUser(accountId, true);           break;
+        case ID_UNBLOCK: m_social.BlockUser(accountId, false);          break;
+        default: break;
+    }
+}
+
+// Copy a snapshot of SocialManager state into RenderState (render-only view).
+// Maps the social enums to the ints the dependency-free Renderer expects.
+void App::SyncSocialRenderState() {
+    if (!m_social.IsRunning()) {
+        m_renderState.friends.clear();
+        m_renderState.gatewayState = 0;
+        m_renderState.socialUnread = 0;
+        m_renderState.pendingRequests = 0;
+        return;
+    }
+    switch (m_social.Gateway()) {
+        case social::GatewayState::Connected:    m_renderState.gatewayState = 2; break;
+        case social::GatewayState::Connecting:   m_renderState.gatewayState = 1; break;
+        case social::GatewayState::Reconnecting: m_renderState.gatewayState = 3; break;
+        default:                                  m_renderState.gatewayState = 0; break;
+    }
+    auto friends = m_social.GetFriends();
+    int pending = 0;
+    m_renderState.friends.clear();
+    m_renderState.friends.reserve(friends.size());
+    for (const auto& f : friends) {
+        FriendRowView v;
+        v.accountId = f.accountId;
+        v.username  = f.username;
+        v.presence  = static_cast<int>(f.presence);
+        v.relation  = static_cast<int>(f.relationStatus);
+        v.gameTitle = f.currentGameTitle;
+        v.unread    = m_social.GetConversation(f.accountId).unread;
+        if (f.relationStatus == social::FriendStatus::RequestReceived) ++pending;
+        m_renderState.friends.push_back(std::move(v));
+    }
+    m_renderState.pendingRequests = pending;
+    m_renderState.socialUnread = m_social.TotalUnread();
+}
+
 void App::OnPaint() {
     m_renderState.metaScanning = m_metaManager && m_metaManager->IsRunning();
     {
@@ -1669,6 +1771,7 @@ void App::OnPaint() {
             if (!job.complete && !job.failed) ++active;
         m_renderState.activeDownloadCount = active;
     }
+    SyncSocialRenderState();
     m_renderer.Render(m_visibleGames, m_renderState);
 }
 
@@ -1714,11 +1817,34 @@ void App::OnMouseMove(float x, float y) {
             m_renderer.HitTestGrid(x, y, m_renderState, m_visibleGames.size());
     }
 
-    if (m_renderState.hoveredIndex != prev)
+    // Friends panel row hover.
+    int prevFriend = m_renderState.hoveredFriendId;
+    int newFriend = -1;
+    if (m_renderState.showFriendsPanel && m_renderer.PointInFriendsPanel(x, y)) {
+        auto hit = m_renderer.HitTestFriendsPanel(x, y);
+        if (hit.kind == Renderer::FriendsHit::Row) newFriend = (int)hit.accountId;
+    }
+    m_renderState.hoveredFriendId = newFriend;
+
+    if (m_renderState.hoveredIndex != prev || newFriend != prevFriend)
         InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void App::OnLButtonDown(float x, float y) {
+    // Friends button toggles the panel (works in grid or detail view).
+    if (m_renderer.HitTestFriendsBtn(x, y)) {
+        m_renderState.showFriendsPanel = !m_renderState.showFriendsPanel;
+        if (m_renderState.showFriendsPanel && m_social.IsRunning())
+            m_social.RefreshFriends();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+    // When the panel is open, it overlays the right edge — consume clicks there.
+    if (m_renderState.showFriendsPanel && m_renderer.PointInFriendsPanel(x, y)) {
+        HandleFriendsPanelClick(x, y);
+        return;
+    }
+
     if (m_renderState.detailOpen) {
         if (m_renderer.HitTestLaunchBtn(x, y)) {
             if (m_renderState.detailIndex >= 0 &&
@@ -2136,6 +2262,16 @@ void App::OnKeyDown(WPARAM vk) {
 }
 
 void App::OnScroll(float delta) {
+    // Friends panel scroll takes priority while the cursor is over it.
+    if (m_renderState.showFriendsPanel &&
+        m_renderer.PointInFriendsPanel(m_lastMouseX, m_lastMouseY)) {
+        float maxF = m_renderer.MaxFriendsScroll(m_renderState);
+        m_renderState.friendsScroll =
+            std::clamp(m_renderState.friendsScroll - delta * 0.4f, 0.0f, maxF);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
     if (m_renderState.detailOpen) {
         // Scroll the dashboard's right content pane (summary + changelogs). The
         // renderer clamps detailScroll to the real content height each draw.
