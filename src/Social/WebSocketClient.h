@@ -17,6 +17,7 @@ namespace social {
 class WebSocketClient {
 public:
     using MessageCallback = std::function<void(const std::string& utf8)>;
+    using BinaryCallback  = std::function<void(const void* data, size_t len)>;
     using StateCallback   = std::function<void(bool connected)>;
 
     WebSocketClient() = default;
@@ -31,8 +32,16 @@ public:
     // onState. Safe to call once; use Close() then Connect() to reconnect.
     void Connect(const std::wstring& url, MessageCallback onMessage, StateCallback onState);
 
+    // Optional binary frame sink (voice audio). Set before Connect; fires on the
+    // worker thread. Separate from the text MessageCallback so control/chat JSON
+    // and audio stay on distinct paths.
+    void SetBinaryHandler(BinaryCallback onBinary) { m_onBinary = std::move(onBinary); }
+
     // Queue a UTF-8 text frame. Returns false if not currently connected.
     bool SendText(const std::string& utf8);
+
+    // Queue a binary frame (voice audio). Returns false if not connected.
+    bool SendBinary(const void* data, size_t len);
 
     bool IsConnected() const { return m_connected.load(); }
 
@@ -42,6 +51,7 @@ public:
 private:
     void Run(std::wstring url, MessageCallback onMessage, StateCallback onState);
 
+    BinaryCallback       m_onBinary;
     std::thread          m_worker;
     std::atomic<bool>    m_connected{ false };
     std::atomic<bool>    m_stop{ false };

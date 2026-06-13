@@ -16,6 +16,7 @@
 
 #include "SocialTypes.h"
 #include "WebSocketClient.h"
+#include "VoiceEngine.h"
 #include <functional>
 #include <mutex>
 #include <atomic>
@@ -72,6 +73,8 @@ public:
     void StartVoiceCall(uint64_t peerId);
     void AcceptVoiceCall(uint64_t peerId);
     void EndVoiceCall();
+    void SetVoiceMuted(bool muted) { m_voice.SetMuted(muted); }
+    bool IsVoiceMuted() const { return m_voice.IsMuted(); }
 
 private:
     // Gateway lifecycle
@@ -90,6 +93,12 @@ private:
     FriendInfo* FindFriendLocked(uint64_t id);          // call under m_mtx
     Conversation& ConvLocked(uint64_t peerId);          // call under m_mtx
     void SendVoiceSignal(uint64_t peerId, const std::string& kind);
+
+    // Voice media: start/stop the WASAPI engine and relay PCM frames over the
+    // gateway's binary path, prefixed with the destination account id.
+    void StartVoiceMedia();
+    void StopVoiceMedia();
+    void HandleAudioFrame(const void* data, size_t len);  // inbound binary frame
 
     std::wstring m_baseUrl;
     std::wstring m_token;
@@ -110,6 +119,7 @@ private:
 
     std::atomic<VoiceState> m_voiceState{ VoiceState::Idle };
     std::atomic<uint64_t>   m_voicePeer{ 0 };
+    VoiceEngine             m_voice;
 
     std::function<void()> m_onChanged;
 };

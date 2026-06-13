@@ -1693,7 +1693,7 @@ void App::ShowFriendContextMenu(uint64_t accountId) {
     for (const auto& f : m_renderState.friends)
         if (f.accountId == accountId) { relation = f.relation; uname = f.username; break; }
 
-    enum { ID_MSG = 0x9101, ID_ACCEPT, ID_DECLINE, ID_CANCEL, ID_REMOVE, ID_BLOCK, ID_UNBLOCK };
+    enum { ID_MSG = 0x9101, ID_ACCEPT, ID_DECLINE, ID_CANCEL, ID_REMOVE, ID_BLOCK, ID_UNBLOCK, ID_CALL };
     HMENU menu = CreatePopupMenu();
     if (relation == 2) { // RequestReceived
         AppendMenuW(menu, MF_STRING, ID_ACCEPT, L"Accept Friend Request");
@@ -1705,7 +1705,8 @@ void App::ShowFriendContextMenu(uint64_t accountId) {
     } else if (relation == 4) { // Blocked
         AppendMenuW(menu, MF_STRING, ID_UNBLOCK, L"Unblock");
     } else { // Accepted
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, ID_MSG, L"Message…  (coming soon)");
+        AppendMenuW(menu, MF_STRING, ID_MSG, L"Message…");
+        AppendMenuW(menu, MF_STRING, ID_CALL, L"Voice Call");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, ID_REMOVE, L"Remove Friend");
         AppendMenuW(menu, MF_STRING, ID_BLOCK, L"Block");
@@ -1717,6 +1718,9 @@ void App::ShowFriendContextMenu(uint64_t accountId) {
     DestroyMenu(menu);
     if (!m_social.IsRunning()) return;
     switch (cmd) {
+        case ID_MSG:     OpenChat(accountId, uname);                    break;
+        case ID_CALL:    OpenChat(accountId, uname);
+                         m_social.StartVoiceCall(accountId);            break;
         case ID_ACCEPT:  m_social.RespondRequest(accountId, "accept");  break;
         case ID_DECLINE: m_social.RespondRequest(accountId, "decline"); break;
         case ID_CANCEL:  m_social.RespondRequest(accountId, "cancel");  break;
@@ -1725,6 +1729,91 @@ void App::ShowFriendContextMenu(uint64_t accountId) {
         case ID_UNBLOCK: m_social.BlockUser(accountId, false);          break;
         default: break;
     }
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+// ── Chat window ───────────────────────────────────────────────────────────────
+
+void App::OpenChat(uint64_t peerId, const std::wstring& name) {
+    m_renderState.chatOpen = true;
+    m_renderState.chatPeerId = peerId;
+    m_renderState.chatPeerName = name;
+    m_renderState.chatInput.clear();
+    m_renderState.chatScroll = 0.0f;
+    m_renderState.focusArea = FocusArea::Grid;  // release search focus
+    if (m_social.IsRunning()) m_social.OpenConversation(peerId);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::CloseChat() {
+    m_renderState.chatOpen = false;
+    m_renderState.chatPeerId = 0;
+    m_renderState.chatInput.clear();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::ChatSendCurrent() {
+    auto& s = m_renderState;
+    if (!s.chatOpen || s.chatPeerId == 0) return;
+    // Trim trailing whitespace.
+    std::wstring text = s.chatInput;
+    while (!text.empty() && (text.back() == L' ' || text.back() == L'\t')) text.pop_back();
+    if (text.empty()) return;
+    if (m_social.IsRunning()) m_social.SendChat(s.chatPeerId, text);
+    s.chatInput.clear();
+    s.chatScroll = 0.0f;  // jump to latest
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+bool App::HandleChatClick(float x, float y) {
+    if (!m_renderState.chatOpen) return false;
+    auto hit = m_renderer.HitTestChatWindow(x, y);
+    using CH = Renderer::ChatHit;
+    uint64_t peer = m_renderState.chatPeerId;
+    switch (hit.kind) {
+        case CH::Close:   CloseChat(); return true;
+        case CH::Send:    ChatSendCurrent(); return true;
+        case CH::Input:   return true;  // focus stays on chat; consume
+        case CH::Call:    m_social.StartVoiceCall(peer); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        case CH::Accept:  m_social.AcceptVoiceCall(peer); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        case CH::Decline:
+        case CH::EndCall: m_social.EndVoiceCall(); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        case CH::Mute:    m_social.SetVoiceMuted(!m_social.IsVoiceMuted());
+                          InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        default: break;
+    }
+    // Click inside the window frame but not on a control: consume (keeps open).
+    if (m_renderer.PointInChatWindow(x, y)) return true;
+    // Click on the dimmed backdrop closes the window.
+    CloseChat();
+    return true;
+}
+
+bool App::ChatInputChar(wchar_t ch) {
+    if (!m_renderState.chatOpen) return false;
+    auto& s = m_renderState;
+    if (ch == L'\r' || ch == L'\n') {        // Enter sends
+        ChatSendCurrent();
+        return true;
+    }
+    if (ch == L'\b') {                        // Backspace
+        if (!s.chatInput.empty()) s.chatInput.pop_back();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return true;
+    }
+    if (ch == L'\x1B') return true;           // Esc handled in OnKeyDown
+    if (ch >= 32) {
+        s.chatInput += ch;
+        // Throttle typing notifications to one every ~3s.
+        uint64_t nowMs = (uint64_t)GetTickCount64();
+        if (m_social.IsRunning() && nowMs - m_lastTypingSentMs > 3000) {
+            m_social.NotifyTyping(s.chatPeerId);
+            m_lastTypingSentMs = nowMs;
+        }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return true;
+    }
+    return true;
 }
 
 // Copy a snapshot of SocialManager state into RenderState (render-only view).
@@ -1760,6 +1849,38 @@ void App::SyncSocialRenderState() {
     }
     m_renderState.pendingRequests = pending;
     m_renderState.socialUnread = m_social.TotalUnread();
+
+    // Voice call state (for the chat window's call controls).
+    m_renderState.voiceState = static_cast<int>(m_social.Voice());
+    m_renderState.voicePeer  = m_social.VoicePeer();
+    m_renderState.voiceMuted = m_social.IsVoiceMuted();
+
+    // Chat window snapshot for the open conversation.
+    if (m_renderState.chatOpen && m_renderState.chatPeerId) {
+        auto conv = m_social.GetConversation(m_renderState.chatPeerId);
+        uint64_t self = m_social.SelfId();
+        m_renderState.chatMessages.clear();
+        m_renderState.chatMessages.reserve(conv.messages.size());
+        for (const auto& m : conv.messages) {
+            RenderState::ChatMsgView mv;
+            mv.mine    = (m.senderId == self);
+            mv.text    = m.messageText;
+            mv.ts      = m.timestamp;
+            mv.pending = m.pending;
+            m_renderState.chatMessages.push_back(std::move(mv));
+        }
+        m_renderState.chatPeerTyping = conv.peerTyping;
+        // Keep the peer's presence/name fresh from the friends list.
+        for (const auto& f : m_renderState.friends)
+            if (f.accountId == m_renderState.chatPeerId) {
+                m_renderState.chatPeerPresence = f.presence;
+                if (!f.username.empty()) m_renderState.chatPeerName = f.username;
+                break;
+            }
+    } else {
+        m_renderState.chatMessages.clear();
+        m_renderState.chatPeerTyping = false;
+    }
 }
 
 void App::OnPaint() {
@@ -1831,6 +1952,13 @@ void App::OnMouseMove(float x, float y) {
 }
 
 void App::OnLButtonDown(float x, float y) {
+    // The chat window is modal-ish: while open it captures all clicks (the
+    // window itself and the dimmed backdrop, which closes it).
+    if (m_renderState.chatOpen) {
+        HandleChatClick(x, y);
+        return;
+    }
+
     // Friends button toggles the panel (works in grid or detail view).
     if (m_renderer.HitTestFriendsBtn(x, y)) {
         m_renderState.showFriendsPanel = !m_renderState.showFriendsPanel;
@@ -1982,6 +2110,8 @@ void App::OnLButtonUp(float x, float y) {
 }
 
 void App::OnChar(wchar_t ch) {
+    // The chat window, when open, owns text input.
+    if (m_renderState.chatOpen) { ChatInputChar(ch); return; }
     if (m_renderState.focusArea != FocusArea::Search) return;
     if (ch == L'\b') {
         if (!m_renderState.searchQuery.empty())
@@ -1998,6 +2128,15 @@ void App::OnChar(wchar_t ch) {
 void App::OnKeyDown(WPARAM vk) {
     bool shift = (GetKeyState(VK_SHIFT)   & 0x8000) != 0;
     bool ctrl  = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+    // ── Chat window — eats keys while open ────────────────────────────────────
+    if (m_renderState.chatOpen) {
+        if (vk == VK_ESCAPE) { CloseChat(); return; }
+        if (vk == VK_RETURN) { ChatSendCurrent(); return; }
+        // Other printable keys arrive via WM_CHAR/OnChar; swallow nav keys so
+        // they don't drive the grid behind the window.
+        if (vk == VK_TAB || (vk >= VK_PRIOR && vk <= VK_DOWN)) return;
+    }
 
     // ── Detail panel — eats all keys while open ───────────────────────────────
     if (m_renderState.detailOpen) {
@@ -2262,6 +2401,16 @@ void App::OnKeyDown(WPARAM vk) {
 }
 
 void App::OnScroll(float delta) {
+    // Chat window scroll takes priority while it's open and hovered.
+    if (m_renderState.chatOpen && m_renderer.PointInChatWindow(m_lastMouseX, m_lastMouseY)) {
+        float maxC = m_renderer.MaxChatScroll(m_renderState);
+        // Scroll up (delta>0) reveals older messages.
+        m_renderState.chatScroll =
+            std::clamp(m_renderState.chatScroll + delta * 0.4f, 0.0f, maxC);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
     // Friends panel scroll takes priority while the cursor is over it.
     if (m_renderState.showFriendsPanel &&
         m_renderer.PointInFriendsPanel(m_lastMouseX, m_lastMouseY)) {

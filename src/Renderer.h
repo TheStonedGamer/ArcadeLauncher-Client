@@ -120,6 +120,29 @@ struct RenderState {
     float friendsScroll   = 0.0f;
     int  hoveredFriendId  = -1;  // accountId under the cursor, or -1
     std::vector<FriendRowView> friends;
+
+    // ── Direct-message chat window ────────────────────────────────────────────
+    // A single floating conversation window. App fills it each frame from the
+    // SocialManager conversation for chatPeerId while chatOpen is true.
+    struct ChatMsgView {
+        bool         mine = false;
+        std::wstring text;
+        int64_t      ts = 0;        // epoch seconds
+        bool         pending = false;
+    };
+    bool         chatOpen = false;
+    uint64_t     chatPeerId = 0;
+    std::wstring chatPeerName;
+    int          chatPeerPresence = 0;  // mirrors PresenceState int
+    std::wstring chatInput;             // current compose-box text
+    float        chatScroll = 0.0f;     // message list scroll (px from bottom-anchored top)
+    bool         chatPeerTyping = false;
+    std::vector<ChatMsgView> chatMessages;
+
+    // Voice call state surfaced to the chat window's call controls.
+    int      voiceState = 0;   // 0 idle,1 connecting,2 negotiating(ringing),3 connected,...
+    uint64_t voicePeer  = 0;
+    bool     voiceMuted = false;
 };
 
 class Renderer {
@@ -187,6 +210,15 @@ public:
     float      MaxFriendsScroll(const RenderState& s) const;
     bool HitTestEmptyStateBtn(float x, float y) const;
 
+    // Chat window hit testing. Geometry comes from rects cached during the last
+    // DrawChatWindow. Kind tells App which control was clicked.
+    struct ChatHit {
+        enum Kind { None, Close, Input, Send, Call, Mute, EndCall, Accept, Decline } kind = None;
+    };
+    ChatHit HitTestChatWindow(float x, float y) const;
+    bool    PointInChatWindow(float x, float y) const;
+    float   MaxChatScroll(const RenderState& s) const;
+
     // Profile picture (server account avatar) shown in the topbar profile button.
     // Decoded from in-memory image bytes on the render-target thread. Pass empty
     // to clear (falls back to a generic person glyph).
@@ -220,6 +252,7 @@ private:
                   bool selectionMode, bool multiSelected);
     void DrawDetailPanel(const Game* game, RenderState& state);
     void DrawFriendsPanel(RenderState& state);
+    void DrawChatWindow(RenderState& state);
     // Draws a word-wrapped block at (x,y) constrained to width w and returns its
     // rendered height. Pass draw=false to measure without drawing.
     float DrawWrapped(const std::wstring& text, IDWriteTextFormat* fmt,
@@ -303,6 +336,18 @@ private:
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendRowRects;
     float m_friendsContentH = 0.0f;   // total content height for scroll clamping
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
+
+    // Chat window layout rects (cached during DrawChatWindow for hit-testing).
+    D2D1_RECT_F m_chatRect{};
+    D2D1_RECT_F m_chatCloseRect{};
+    D2D1_RECT_F m_chatInputRect{};
+    D2D1_RECT_F m_chatSendRect{};
+    D2D1_RECT_F m_chatCallRect{};
+    D2D1_RECT_F m_chatMuteRect{};
+    D2D1_RECT_F m_chatEndRect{};
+    D2D1_RECT_F m_chatAcceptRect{};
+    D2D1_RECT_F m_chatDeclineRect{};
+    float m_chatContentH = 0.0f;
 
     // Current user's profile picture (circular avatar). Null = show person glyph.
     ComPtr<ID2D1Bitmap> m_avatar;

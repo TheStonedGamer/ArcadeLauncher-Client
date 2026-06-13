@@ -27,6 +27,17 @@ bool WebSocketClient::SendText(const std::string& utf8) {
     return rc == NO_ERROR;
 }
 
+bool WebSocketClient::SendBinary(const void* data, size_t len) {
+    std::lock_guard<std::mutex> lk(m_handleMtx);
+    if (!m_hWebSocket || !m_connected.load()) return false;
+    DWORD rc = WinHttpWebSocketSend(
+        (HINTERNET)m_hWebSocket,
+        WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE,
+        (PVOID)data,
+        (DWORD)len);
+    return rc == NO_ERROR;
+}
+
 void WebSocketClient::Close() {
     m_stop.store(true);
     {
@@ -107,6 +118,7 @@ void WebSocketClient::Run(std::wstring url, MessageCallback onMessage, StateCall
     // Receive loop. Reassembles fragmented UTF-8 messages, dispatches each
     // complete text frame. WinHTTP handles control ping/pong transparently.
     std::string accum;
+    std::vector<char> binAccum;
     std::vector<char> buf(8192);
     while (!m_stop.load()) {
         DWORD read = 0;
@@ -121,8 +133,16 @@ void WebSocketClient::Run(std::wstring url, MessageCallback onMessage, StateCall
                 if (onMessage && !accum.empty()) onMessage(accum);
                 accum.clear();
             }
+        } else if (type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE ||
+                   type == WINHTTP_WEB_SOCKET_BINARY_FRAGMENT_BUFFER_TYPE) {
+            // Voice audio: [u64 LE sender-id][payload]. Reassemble fragments.
+            binAccum.insert(binAccum.end(), buf.data(), buf.data() + read);
+            if (type == WINHTTP_WEB_SOCKET_BINARY_MESSAGE_BUFFER_TYPE) {
+                if (m_onBinary && !binAccum.empty())
+                    m_onBinary(binAccum.data(), binAccum.size());
+                binAccum.clear();
+            }
         }
-        // Binary frames are unused by the gateway; ignored.
     }
 
     m_connected.store(false);

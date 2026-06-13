@@ -5,6 +5,7 @@
 #include <thread>
 #include <chrono>
 #include <sstream>
+#include <cstring>
 
 #pragma comment(lib, "winhttp.lib")
 
@@ -58,6 +59,7 @@ void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token
 void SocialManager::Stop() {
     m_running.store(false);
     m_reconnectGen.fetch_add(1);
+    StopVoiceMedia();
     m_ws.Close();
     m_gateway.store(GatewayState::Disconnected);
     m_voiceState.store(VoiceState::Idle);
@@ -94,6 +96,7 @@ void SocialManager::OpenGateway() {
     m_gateway.store(GatewayState::Connecting);
     FireChanged();
     std::wstring url = WsUrl();
+    m_ws.SetBinaryHandler([this](const void* data, size_t len) { HandleAudioFrame(data, len); });
     m_ws.Connect(url,
         [this](const std::string& msg) { HandleGatewayFrame(msg); },
         [this](bool connected) { OnGatewaySocketState(connected); });
@@ -225,10 +228,12 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         } else if (kind == "accept") {
             if (m_voicePeer.load() == from) {
                 m_voiceState.store(VoiceState::Connected);
+                StartVoiceMedia();
                 FireChanged();
             }
         } else if (kind == "end") {
             if (m_voicePeer.load() == from) {
+                StopVoiceMedia();
                 m_voiceState.store(VoiceState::Idle);
                 m_voicePeer.store(0);
                 FireChanged();
@@ -530,15 +535,51 @@ void SocialManager::AcceptVoiceCall(uint64_t peerId) {
     if (m_voicePeer.load() != peerId) return;
     m_voiceState.store(VoiceState::Connected);
     SendVoiceSignal(peerId, "accept");
+    StartVoiceMedia();
     FireChanged();
 }
 
 void SocialManager::EndVoiceCall() {
     uint64_t peer = m_voicePeer.load();
     if (peer) SendVoiceSignal(peer, "end");
+    StopVoiceMedia();
     m_voiceState.store(VoiceState::Idle);
     m_voicePeer.store(0);
     FireChanged();
+}
+
+// ── Voice media (WASAPI capture/render + PCM relay) ──────────────────────────
+
+void SocialManager::StartVoiceMedia() {
+    if (m_voice.IsRunning()) return;
+    m_voice.Start([this](const int16_t* samples, size_t count) {
+        uint64_t peer = m_voicePeer.load();
+        if (!peer) return;
+        // Frame = [u64 LE peer id][raw S16 PCM]. The server swaps the header to
+        // our id before forwarding, so the recipient learns who is speaking.
+        std::vector<uint8_t> frame;
+        frame.resize(8 + count * sizeof(int16_t));
+        std::memcpy(frame.data(), &peer, 8);
+        std::memcpy(frame.data() + 8, samples, count * sizeof(int16_t));
+        m_ws.SendBinary(frame.data(), frame.size());
+    });
+}
+
+void SocialManager::StopVoiceMedia() {
+    m_voice.Stop();
+}
+
+void SocialManager::HandleAudioFrame(const void* data, size_t len) {
+    if (len < 8) return;
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    uint64_t from = 0;
+    std::memcpy(&from, p, 8);
+    // Only render audio from the peer we're actually in a call with.
+    if (from != m_voicePeer.load() || m_voiceState.load() != VoiceState::Connected) return;
+    size_t pcmBytes = len - 8;
+    size_t count = pcmBytes / sizeof(int16_t);
+    if (count == 0) return;
+    m_voice.PushPlayback(reinterpret_cast<const int16_t*>(p + 8), count);
 }
 
 } // namespace social

@@ -129,6 +129,7 @@
     <ClCompile Include="src\ServerClient.cpp" />
     <ClCompile Include="src\Social\WebSocketClient.cpp" />
     <ClCompile Include="src\Social\SocialManager.cpp" />
+    <ClCompile Include="src\Social\VoiceEngine.cpp" />
     <ClCompile Include="src\sqlite\sqlite3.c">
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
@@ -189,6 +190,7 @@
     <ClInclude Include="src\Social\SocialTypes.h" />
     <ClInclude Include="src\Social\WebSocketClient.h" />
     <ClInclude Include="src\Social\SocialManager.h" />
+    <ClInclude Include="src\Social\VoiceEngine.h" />
     <ClInclude Include="src\Version.h" />
   </ItemGroup>
 

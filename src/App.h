@@ -52,6 +52,14 @@ private:
     bool HandleFriendsPanelClick(float x, float y);
     void ShowFriendContextMenu(uint64_t accountId);
     void PromptAddFriend();
+    // Direct-message chat window. OpenChat loads history + focuses the compose
+    // box; HandleChatClick routes the chat window's controls; ChatInputChar
+    // feeds typed characters into the compose box while the window is open.
+    void OpenChat(uint64_t peerId, const std::wstring& name);
+    void CloseChat();
+    bool HandleChatClick(float x, float y);
+    bool ChatInputChar(wchar_t ch);     // returns true if consumed
+    void ChatSendCurrent();
     void OnTimer(UINT timerId);
     void OnMouseMove(float x, float y);
     void OnLButtonDown(float x, float y);
@@ -154,6 +162,7 @@ private:
     DiscordPresence  m_discord;
     GamepadInput     m_gamepad;
     social::SocialManager m_social;
+    uint64_t m_lastTypingSentMs = 0;   // throttles outbound typing notifications
     std::unique_ptr<MetadataFetcher>  m_fetcher;
 
     IgdbClient                        m_igdbClient;

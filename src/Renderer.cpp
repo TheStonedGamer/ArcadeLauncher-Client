@@ -171,6 +171,9 @@ void Renderer::Render(const std::vector<const Game*>& games, RenderState& state)
     if (state.showFriendsPanel)
         DrawFriendsPanel(state);
 
+    if (state.chatOpen)
+        DrawChatWindow(state);
+
     m_rt->EndDraw();
 }
 
@@ -1572,6 +1575,232 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
 
     m_rt->PopAxisAlignedClip();
     m_friendsContentH = (y + state.friendsScroll) - listTop;
+}
+
+// ── Direct-message chat window ────────────────────────────────────────────────
+
+float Renderer::MaxChatScroll(const RenderState& s) const {
+    // listView height is derived in DrawChatWindow; recompute the same geometry.
+    float winH = std::min(600.0f, (float)m_height - 100.0f);
+    float listH = winH - 48.0f - 56.0f;   // minus header + input bar
+    return std::max(0.0f, m_chatContentH - listH);
+}
+
+bool Renderer::PointInChatWindow(float x, float y) const {
+    return x >= m_chatRect.left && x <= m_chatRect.right &&
+           y >= m_chatRect.top  && y <= m_chatRect.bottom;
+}
+
+Renderer::ChatHit Renderer::HitTestChatWindow(float x, float y) const {
+    auto in = [&](const D2D1_RECT_F& r) {
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    ChatHit h;
+    if (in(m_chatCloseRect))   { h.kind = ChatHit::Close;   return h; }
+    if (in(m_chatAcceptRect))  { h.kind = ChatHit::Accept;  return h; }
+    if (in(m_chatDeclineRect)) { h.kind = ChatHit::Decline; return h; }
+    if (in(m_chatEndRect))     { h.kind = ChatHit::EndCall; return h; }
+    if (in(m_chatMuteRect))    { h.kind = ChatHit::Mute;    return h; }
+    if (in(m_chatCallRect))    { h.kind = ChatHit::Call;    return h; }
+    if (in(m_chatSendRect))    { h.kind = ChatHit::Send;    return h; }
+    if (in(m_chatInputRect))   { h.kind = ChatHit::Input;   return h; }
+    return h;
+}
+
+void Renderer::DrawChatWindow(RenderState& state) {
+    float winW = std::min(480.0f, (float)m_width - 60.0f);
+    float winH = std::min(600.0f, (float)m_height - 100.0f);
+    float left = ((float)m_width - winW) * 0.5f;
+    float top  = m_topbarH + ((float)m_height - m_topbarH - winH) * 0.5f;
+    D2D1_RECT_F win = D2D1::RectF(left, top, left + winW, top + winH);
+    m_chatRect = win;
+
+    // Dim the rest of the screen so the conversation reads as a focused surface.
+    m_rt->FillRectangle(D2D1::RectF(0, m_topbarH, (float)m_width, (float)m_height),
+                        m_brushOverlay.Get());
+
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(win, 10, 10), m_brushSidebar.Get());
+    m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.35f));
+    m_rt->DrawRoundedRectangle(D2D1::RoundedRect(win, 10, 10), m_brushAccent.Get(), 1.0f);
+    m_brushAccent->SetColor(C_ACCENT);
+
+    // ── Header ────────────────────────────────────────────────────────────────
+    float hdrH = 48.0f;
+    D2D1_RECT_F hdr = D2D1::RectF(left, top, left + winW, top + hdrH);
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, top, left + winW, top + hdrH + 8),
+                                                 10, 10), m_brushCard.Get());
+
+    // Peer avatar initial + presence dot.
+    float cx = left + 28.0f, cy = top + hdrH * 0.5f;
+    m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 15.0f, 15.0f), m_brushSidebar.Get());
+    if (!state.chatPeerName.empty()) {
+        std::wstring initial(1, towupper(state.chatPeerName[0]));
+        D2D1_RECT_F ir = D2D1::RectF(cx - 15, cy - 11, cx + 15, cy + 11);
+        m_rt->DrawText(initial.c_str(), 1, m_fmtCard.Get(), ir, m_brushSubtext.Get());
+    }
+    m_brushWhite->SetColor(PresenceColor(state.chatPeerPresence));
+    m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx + 11.0f, cy + 11.0f), 5.0f, 5.0f), m_brushCard.Get());
+    m_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx + 11.0f, cy + 11.0f), 3.5f, 3.5f), m_brushWhite.Get());
+    m_brushWhite->SetColor(C_WHITE);
+
+    D2D1_RECT_F nameR = D2D1::RectF(left + 50.0f, top + 7.0f, left + winW - 90.0f, top + 27.0f);
+    m_rt->DrawText(state.chatPeerName.c_str(), (UINT32)state.chatPeerName.size(),
+                   m_fmtCard.Get(), nameR, m_brushText.Get());
+    const wchar_t* psub = state.chatPeerPresence == 5 ? L"In-Game"
+                        : state.chatPeerPresence == 1 ? L"Online"
+                        : state.chatPeerPresence == 2 ? L"Away"
+                        : state.chatPeerPresence == 3 ? L"Busy" : L"Offline";
+    D2D1_RECT_F psubR = D2D1::RectF(left + 50.0f, top + 25.0f, left + winW - 90.0f, top + 44.0f);
+    m_rt->DrawText(psub, (UINT32)wcslen(psub), m_fmtCardSub.Get(), psubR, m_brushSubtext.Get());
+
+    // Call + close buttons.
+    bool callActive = (state.voicePeer == state.chatPeerId) && state.voiceState != 0;
+    m_chatCallRect  = D2D1::RectF(left + winW - 78.0f, top + 10.0f, left + winW - 48.0f, top + 38.0f);
+    m_chatCloseRect = D2D1::RectF(left + winW - 40.0f, top + 10.0f, left + winW - 10.0f, top + 38.0f);
+    if (!callActive) {
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatCallRect, 6, 6), m_brushSidebar.Get());
+        m_rt->DrawText(L"\xE717", 1, m_fmtIcon.Get(), m_chatCallRect, m_brushAccent.Get()); // phone
+    } else {
+        m_chatCallRect = D2D1::RectF(0, 0, 0, 0); // hidden while in-call (controls in strip)
+    }
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatCloseRect, 6, 6), m_brushSidebar.Get());
+    m_rt->DrawText(L"\xE711", 1, m_fmtIcon.Get(), m_chatCloseRect, m_brushSubtext.Get()); // close
+
+    float listTop = top + hdrH + 8.0f;
+
+    // ── In-call / incoming strip ────────────────────────────────────────────────
+    m_chatMuteRect = m_chatEndRect = m_chatAcceptRect = m_chatDeclineRect = D2D1::RectF(0, 0, 0, 0);
+    if (callActive) {
+        float stripH = 40.0f;
+        D2D1_RECT_F strip = D2D1::RectF(left + 8, listTop, left + winW - 8, listTop + stripH);
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(strip, 6, 6), m_brushCard.Get());
+        bool incoming = state.voiceState == 2;  // Negotiating == ringing (callee side)
+        const wchar_t* label = incoming ? L"Incoming voice call…"
+                             : state.voiceState == 3 ? L"●  Voice connected"
+                             : L"Calling…";
+        D2D1_RECT_F lr = D2D1::RectF(left + 20, listTop + 10, left + winW - 160, listTop + 32);
+        if (state.voiceState == 3) m_brushAccent->SetColor(D2D1::ColorF(0x57AB5A));
+        m_rt->DrawText(label, (UINT32)wcslen(label), m_fmtCard.Get(), lr,
+                       state.voiceState == 3 ? m_brushAccent.Get() : m_brushText.Get());
+        if (state.voiceState == 3) m_brushAccent->SetColor(C_ACCENT);
+
+        if (incoming) {
+            m_chatAcceptRect  = D2D1::RectF(left + winW - 150, listTop + 6, left + winW - 84, listTop + 34);
+            m_chatDeclineRect = D2D1::RectF(left + winW - 78,  listTop + 6, left + winW - 14, listTop + 34);
+            m_brushAccent->SetColor(D2D1::ColorF(0x2EA043));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatAcceptRect, 6, 6), m_brushAccent.Get());
+            m_brushAccent->SetColor(C_ACCENT);
+            m_rt->DrawText(L"Accept", 6, m_fmtCardSub.Get(), m_chatAcceptRect, m_brushWhite.Get());
+            m_brushAccent->SetColor(D2D1::ColorF(0xDA3633));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatDeclineRect, 6, 6), m_brushAccent.Get());
+            m_brushAccent->SetColor(C_ACCENT);
+            m_rt->DrawText(L"Decline", 7, m_fmtCardSub.Get(), m_chatDeclineRect, m_brushWhite.Get());
+        } else {
+            m_chatMuteRect = D2D1::RectF(left + winW - 150, listTop + 6, left + winW - 84, listTop + 34);
+            m_chatEndRect  = D2D1::RectF(left + winW - 78,  listTop + 6, left + winW - 14, listTop + 34);
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatMuteRect, 6, 6), m_brushSidebar.Get());
+            m_rt->DrawText(state.voiceMuted ? L"Unmute" : L"Mute",
+                           state.voiceMuted ? 6 : 4, m_fmtCardSub.Get(), m_chatMuteRect,
+                           state.voiceMuted ? m_brushAccent.Get() : m_brushText.Get());
+            m_brushAccent->SetColor(D2D1::ColorF(0xDA3633));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatEndRect, 6, 6), m_brushAccent.Get());
+            m_brushAccent->SetColor(C_ACCENT);
+            m_rt->DrawText(L"End", 3, m_fmtCardSub.Get(), m_chatEndRect, m_brushWhite.Get());
+        }
+        listTop += stripH + 6.0f;
+    }
+
+    // ── Message list ────────────────────────────────────────────────────────────
+    float inputH = 48.0f;
+    float listBottom = top + winH - inputH;
+    m_rt->PushAxisAlignedClip(D2D1::RectF(left, listTop, left + winW, listBottom),
+                              D2D1_ANTIALIAS_MODE_ALIASED);
+
+    float bubbleMax = winW * 0.66f;
+    float pad = 12.0f;
+    // First measure total content height for bottom anchoring.
+    float total = 6.0f;
+    std::vector<float> heights;
+    heights.reserve(state.chatMessages.size());
+    for (const auto& m : state.chatMessages) {
+        float h = DrawWrapped(m.text, m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
+        h = std::max(h, 18.0f) + 14.0f;   // bubble padding
+        heights.push_back(h);
+        total += h + 6.0f;
+    }
+    if (state.chatPeerTyping) total += 22.0f;
+    m_chatContentH = total;
+
+    float listViewH = listBottom - listTop;
+    // Anchor to bottom: start so the last message sits just above the input.
+    float startY = listTop + std::min(0.0f, listViewH - total) + 6.0f + state.chatScroll;
+    float y = startY;
+    for (size_t i = 0; i < state.chatMessages.size(); ++i) {
+        const auto& m = state.chatMessages[i];
+        float h = heights[i];
+        float bw = bubbleMax;
+        D2D1_RECT_F bub;
+        if (m.mine)
+            bub = D2D1::RectF(left + winW - pad - bw, y, left + winW - pad, y + h);
+        else
+            bub = D2D1::RectF(left + pad, y, left + pad + bw, y + h);
+        // Only draw if visible.
+        if (y + h >= listTop && y <= listBottom) {
+            if (m.mine) {
+                m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b,
+                                                     m.pending ? 0.45f : 0.85f));
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushAccent.Get());
+                m_brushAccent->SetColor(C_ACCENT);
+                DrawWrapped(m.text, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
+                            m_brushWhite.Get(), true);
+            } else {
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushCard.Get());
+                DrawWrapped(m.text, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
+                            m_brushText.Get(), true);
+            }
+        }
+        y += h + 6.0f;
+    }
+    if (state.chatPeerTyping) {
+        D2D1_RECT_F tr = D2D1::RectF(left + pad, y, left + winW - pad, y + 20.0f);
+        std::wstring t = state.chatPeerName + L" is typing…";
+        m_rt->DrawText(t.c_str(), (UINT32)t.size(), m_fmtCardSub.Get(), tr, m_brushSubtext.Get());
+    }
+    m_rt->PopAxisAlignedClip();
+
+    // Empty conversation hint.
+    if (state.chatMessages.empty() && !state.chatPeerTyping) {
+        D2D1_RECT_F er = D2D1::RectF(left + pad, listTop + 16, left + winW - pad, listTop + 60);
+        std::wstring hint = L"Say hi to " + state.chatPeerName + L".";
+        m_rt->DrawText(hint.c_str(), (UINT32)hint.size(), m_fmtSummary.Get(), er, m_brushSubtext.Get());
+    }
+
+    // ── Input bar ───────────────────────────────────────────────────────────────
+    float ib = top + winH - inputH;
+    m_chatSendRect  = D2D1::RectF(left + winW - 70.0f, ib + 8.0f, left + winW - 10.0f, ib + inputH - 8.0f);
+    m_chatInputRect = D2D1::RectF(left + 10.0f, ib + 8.0f, m_chatSendRect.left - 8.0f, ib + inputH - 8.0f);
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatInputRect, 6, 6), m_brushCard.Get());
+    m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+    m_rt->DrawRoundedRectangle(D2D1::RoundedRect(m_chatInputRect, 6, 6), m_brushAccent.Get(), 1.0f);
+    m_brushAccent->SetColor(C_ACCENT);
+
+    D2D1_RECT_F tr = D2D1::RectF(m_chatInputRect.left + 10, m_chatInputRect.top,
+                                 m_chatInputRect.right - 8, m_chatInputRect.bottom);
+    bool blink = ((GetTickCount64() / 500) % 2) == 0;
+    std::wstring shown = state.chatInput;
+    if (shown.empty()) {
+        m_rt->DrawText(L"Type a message…", 15, m_fmtSearch.Get(), tr, m_brushSubtext.Get());
+    } else {
+        if (blink) shown += L"|";
+        m_rt->DrawText(shown.c_str(), (UINT32)shown.size(), m_fmtSearch.Get(), tr, m_brushText.Get());
+    }
+
+    bool canSend = !state.chatInput.empty();
+    m_brushAccent->SetColor(canSend ? C_ACCENT
+                                    : D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.35f));
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatSendRect, 6, 6), m_brushAccent.Get());
+    m_brushAccent->SetColor(C_ACCENT);
+    m_rt->DrawText(L"Send", 4, m_fmtCardSub.Get(), m_chatSendRect, m_brushWhite.Get());
 }
 
 void Renderer::ClearAvatar() { m_avatar.Reset(); }
