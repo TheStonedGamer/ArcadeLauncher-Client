@@ -2750,7 +2750,7 @@ void App::LaunchInstalledGame(Game launchGame) {
         }
         m_discord.SetPlaying(launchGame.title, PlatformName(launchGame.platform));
         if (m_config.Get().minimizeOnLaunch)
-            ShowWindow(m_hwnd, SW_HIDE);  // hide to tray when a game launches
+            ShowWindow_(false);  // hide to tray, remembering placement to restore on exit
     } else {
         // The exe/URI existed but the OS refused to start it (bad association,
         // blocked by AV/SmartScreen, elevation declined, corrupt binary…).
@@ -4308,9 +4308,21 @@ void App::ShowToast(const std::wstring& title, const std::wstring& message) {
 void App::ShowWindow_(bool show) {
     if (show) {
         ShowWindow(m_hwnd, SW_SHOW);
-        ShowWindow(m_hwnd, SW_RESTORE);
+        // Restore to the pre-hide state: if the window was maximized when we hid
+        // it, bring it back maximized rather than forcing a normal-sized restore.
+        if (m_hiddenPlacementValid && m_hiddenPlacement.showCmd == SW_SHOWMAXIMIZED)
+            ShowWindow(m_hwnd, SW_MAXIMIZE);
+        else
+            ShowWindow(m_hwnd, SW_RESTORE);
+        m_hiddenPlacementValid = false;
         SetForegroundWindow(m_hwnd);
+        // Belt-and-braces against the foreground-lock race: nudge it up front.
+        BringWindowToTop(m_hwnd);
+        SetFocus(m_hwnd);
     } else {
+        // Remember whether we were maximized so the matching restore can honor it.
+        m_hiddenPlacement.length = sizeof(m_hiddenPlacement);
+        m_hiddenPlacementValid = (GetWindowPlacement(m_hwnd, &m_hiddenPlacement) != FALSE);
         ShowWindow(m_hwnd, SW_HIDE);
     }
 }

@@ -76,6 +76,21 @@ void GamepadInput::Worker() {
             continue;
         }
 
+        // Focus gate: only drive the launcher while it is the foreground window.
+        // When a launched game is running (launcher hidden/background) or any
+        // other app is focused, controller input belongs to that app — synthesising
+        // key presses into our hidden window would scroll an unseen grid and could
+        // leak through as stray nav. Re-read the live state each poll but suppress
+        // posting; reset edge/repeat state so regaining focus starts clean and the
+        // currently-held buttons aren't replayed as fresh presses.
+        if (GetForegroundWindow() != m_hwnd) {
+            prevButtons = state.Gamepad.wButtons;  // adopt current buttons as baseline
+            haveController = false;                 // ignore held state on refocus
+            heldDir = NavKey::None;
+            Sleep(64);
+            continue;
+        }
+
         WORD btn = state.Gamepad.wButtons;
         SHORT lx = state.Gamepad.sThumbLX, ly = state.Gamepad.sThumbLY;
         const SHORT DZ = 16000;   // generous deadzone for discrete nav

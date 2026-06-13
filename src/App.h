@@ -133,6 +133,11 @@ private:
     HINSTANCE        m_hInst = nullptr;
     bool             m_fullscreen = false;
     WINDOWPLACEMENT  m_savedPlacement{};
+    // Placement captured just before the window is hidden (game launch / tray),
+    // so a later restore can re-maximize a window that was maximized rather than
+    // forcing it down to a normal-sized SW_RESTORE. Valid only while m_hiddenPlacementValid.
+    WINDOWPLACEMENT  m_hiddenPlacement{};
+    bool             m_hiddenPlacementValid = false;
 
     Config           m_config;
     GameLibrary      m_library;
