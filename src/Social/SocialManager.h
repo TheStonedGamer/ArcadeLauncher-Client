@@ -102,6 +102,8 @@ private:
     void HandleGatewayFrame(const std::string& utf8);
     void OnGatewaySocketState(bool connected);
     void ScheduleReconnect();
+    void StartHeartbeat();            // app-level ping loop keeps the WS receive alive
+    void StopHeartbeat();
     void ReconcileAfterReconnect();   // re-pull friends + missed messages on resume
     bool SendGatewayJson(const std::string& json);
 
@@ -140,6 +142,7 @@ private:
     std::atomic<int>           m_backoffMs{ 1000 };
     std::atomic<int>           m_reconnectGen{ 0 };     // invalidates stale timers
     std::atomic<bool>          m_everConnected{ false }; // first connect vs a resume
+    std::atomic<int>           m_heartbeatGen{ 0 };       // invalidates the stale ping loop
 
     mutable std::mutex m_mtx;
     std::vector<FriendInfo>                m_friends;     // guarded

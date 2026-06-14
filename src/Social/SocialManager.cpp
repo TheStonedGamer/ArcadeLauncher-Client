@@ -64,6 +64,7 @@ void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token
 void SocialManager::Stop() {
     m_running.store(false);
     m_reconnectGen.fetch_add(1);
+    StopHeartbeat();
     StopVoiceMedia();
     m_ws.Close();
     m_gateway.store(GatewayState::Disconnected);
@@ -124,12 +125,37 @@ void SocialManager::OnGatewaySocketState(bool connected) {
         // changed while we were offline: friend list/presence + missed messages.
         if (m_everConnected.exchange(true))
             ReconcileAfterReconnect();
+        // Start the application-level heartbeat so the WS receive loop keeps
+        // getting data frames (server "pong") and never hits its idle timeout.
+        StartHeartbeat();
         FireChanged();
     } else {
+        StopHeartbeat();
         m_gateway.store(GatewayState::Disconnected);
         FireChanged();
         if (m_running.load()) ScheduleReconnect();
     }
+}
+
+void SocialManager::StartHeartbeat() {
+    int gen = m_heartbeatGen.fetch_add(1) + 1;
+    std::thread([this, gen]() {
+        // Ping every 20s. The server replies with a data-frame {"type":"pong"}
+        // (social_api.rs), which wakes WinHttpWebSocketReceive and resets its
+        // 45s receive timeout. Without this, an idle gateway would time out and
+        // drop into a perpetual reconnect loop.
+        while (m_running.load() && m_heartbeatGen.load() == gen) {
+            for (int i = 0; i < 20 && m_running.load() &&
+                            m_heartbeatGen.load() == gen; ++i)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (!m_running.load() || m_heartbeatGen.load() != gen) break;
+            if (!SendGatewayJson("{\"type\":\"ping\"}")) break; // socket gone
+        }
+    }).detach();
+}
+
+void SocialManager::StopHeartbeat() {
+    m_heartbeatGen.fetch_add(1); // invalidate any running ping loop
 }
 
 void SocialManager::ReconcileAfterReconnect() {

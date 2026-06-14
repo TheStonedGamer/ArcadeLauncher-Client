@@ -81,6 +81,17 @@ void WebSocketClient::Run(std::wstring url, MessageCallback onMessage, StateCall
         WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) { fail(); return; }
 
+    // WinHttpWebSocketReceive inherits the session receive timeout (default 30s).
+    // On an idle gateway the only traffic is the server's protocol-level keepalive
+    // Ping, which WinHTTP answers internally and does NOT surface as a received
+    // message - so the receive call would otherwise time out and tear the socket
+    // down. We rely on an application-level ping/pong (SocialManager heartbeat ->
+    // server data "pong") to wake this loop; set the receive timeout to 45s, well
+    // above the 20s heartbeat, so a single missed pong doesn't trigger a reconnect
+    // while still detecting a genuinely dead connection within two intervals.
+    WinHttpSetTimeouts(session, 0 /*resolve*/, 20000 /*connect*/,
+                       20000 /*send*/, 45000 /*receive*/);
+
     HINTERNET connect = WinHttpConnect(session, host, uc.nPort, 0);
     if (!connect) { WinHttpCloseHandle(session); fail(); return; }
 
