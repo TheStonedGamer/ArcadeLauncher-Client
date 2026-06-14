@@ -1824,6 +1824,7 @@ void App::OpenChat(uint64_t peerId, const std::wstring& name) {
     m_renderState.chatPeerId = peerId;
     m_renderState.chatPeerName = name;
     m_renderState.chatInput.clear();
+    m_renderState.chatEditingMsgId = 0;
     m_renderState.chatScroll = 0.0f;
     m_renderState.focusArea = FocusArea::Grid;  // release search focus
     if (m_social.IsRunning()) { m_social.OpenConversation(peerId); m_social.MarkInteracted(peerId); }
@@ -1834,6 +1835,7 @@ void App::CloseChat() {
     m_renderState.chatOpen = false;
     m_renderState.chatPeerId = 0;
     m_renderState.chatInput.clear();
+    m_renderState.chatEditingMsgId = 0;
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -1844,10 +1846,56 @@ void App::ChatSendCurrent() {
     std::wstring text = s.chatInput;
     while (!text.empty() && (text.back() == L' ' || text.back() == L'\t')) text.pop_back();
     if (text.empty()) return;
-    if (m_social.IsRunning()) m_social.SendChat(s.chatPeerId, text);
+    if (m_social.IsRunning()) {
+        if (s.chatEditingMsgId)          // editing an existing message in place
+            m_social.EditMessage(s.chatPeerId, s.chatEditingMsgId, text);
+        else
+            m_social.SendChat(s.chatPeerId, text);
+    }
+    s.chatEditingMsgId = 0;
     s.chatInput.clear();
     s.chatScroll = 0.0f;  // jump to latest
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::ChatBeginEdit(uint64_t msgId) {
+    auto& s = m_renderState;
+    for (const auto& m : s.chatMessages) {
+        if (m.msgId == msgId && m.mine && !m.deleted) {
+            s.chatEditingMsgId = msgId;
+            s.chatInput = m.text;   // prefill with the current text
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
+        }
+    }
+}
+
+void App::ChatCancelEdit() {
+    auto& s = m_renderState;
+    if (!s.chatEditingMsgId) return;
+    s.chatEditingMsgId = 0;
+    s.chatInput.clear();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void App::ChatCopyMessage(uint64_t msgId) {
+    for (const auto& m : m_renderState.chatMessages) {
+        if (m.msgId == msgId) {
+            if (!m.text.empty() && OpenClipboard(m_hwnd)) {
+                EmptyClipboard();
+                size_t bytes = (m.text.size() + 1) * sizeof(wchar_t);
+                if (HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+                    if (void* p = GlobalLock(h)) {
+                        memcpy(p, m.text.c_str(), bytes);
+                        GlobalUnlock(h);
+                        SetClipboardData(CF_UNICODETEXT, h);
+                    }
+                }
+                CloseClipboard();
+            }
+            return;
+        }
+    }
 }
 
 void App::ChatPickAndSendAttachment() {
@@ -1885,6 +1933,19 @@ bool App::HandleChatClick(float x, float y) {
         case CH::Attachment:
             if (hit.attachmentId) m_social.OpenAttachment(hit.attachmentId);
             return true;
+        case CH::React:                         // quick 👍 react
+            if (hit.msgId && m_social.IsRunning())
+                m_social.ToggleReaction(peer, hit.msgId, L"\U0001F44D");
+            InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        case CH::Reaction:                      // toggle an existing reaction pill
+            if (hit.msgId && m_social.IsRunning())
+                m_social.ToggleReaction(peer, hit.msgId, hit.emoji);
+            InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        case CH::Edit:    ChatBeginEdit(hit.msgId); return true;
+        case CH::Delete:
+            if (hit.msgId && m_social.IsRunning()) m_social.DeleteMessage(peer, hit.msgId);
+            InvalidateRect(m_hwnd, nullptr, FALSE); return true;
+        case CH::Copy:    ChatCopyMessage(hit.msgId); return true;
         case CH::Input:   return true;  // focus stays on chat; consume
         case CH::Call:    m_social.StartVoiceCall(peer); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
         case CH::Accept:  m_social.AcceptVoiceCall(peer); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
@@ -1989,6 +2050,15 @@ void App::SyncSocialRenderState() {
             mv.attachmentId   = m.attachmentId;
             mv.attachmentName = m.attachmentName;
             mv.attachmentContentType = m.attachmentContentType;
+            // Reactions (1.2b): emoji -> reactor set; flag whether I reacted.
+            for (const auto& kv : m.reactions) {
+                if (kv.second.empty()) continue;
+                RenderState::ChatMsgView::Reaction rv;
+                rv.emoji = kv.first;
+                rv.count = (int)kv.second.size();
+                rv.mine  = std::find(kv.second.begin(), kv.second.end(), self) != kv.second.end();
+                mv.reactions.push_back(std::move(rv));
+            }
             m_renderState.chatMessages.push_back(std::move(mv));
 
             // Drive lazy attachment metadata + image preview loading (1.3).
@@ -2113,6 +2183,9 @@ void App::OnTimer(UINT timerId) {
 
 void App::OnMouseMove(float x, float y) {
     m_lastMouseX = x; m_lastMouseY = y;
+    m_renderState.mouseX = x; m_renderState.mouseY = y;
+    // The chat window's per-row hover highlight + action toolbar follow the cursor.
+    if (m_renderState.chatOpen) InvalidateRect(m_hwnd, nullptr, FALSE);
 
     // Auto-reveal menu bar: only trigger in the top-left corner hot zone,
     // not the entire top edge of the window.
@@ -2390,7 +2463,8 @@ void App::OnKeyDown(WPARAM vk) {
 
     // ── Chat window — eats keys while open ────────────────────────────────────
     if (m_renderState.chatOpen) {
-        if (vk == VK_ESCAPE) { CloseChat(); return; }
+        // Esc cancels an in-progress edit first, then closes the window.
+        if (vk == VK_ESCAPE) { if (m_renderState.chatEditingMsgId) ChatCancelEdit(); else CloseChat(); return; }
         if (vk == VK_RETURN) { ChatSendCurrent(); return; }
         // Other printable keys arrive via WM_CHAR/OnChar; swallow nav keys so
         // they don't drive the grid behind the window.

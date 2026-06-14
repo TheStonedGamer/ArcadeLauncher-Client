@@ -62,6 +62,9 @@ private:
     bool ChatInputChar(wchar_t ch);     // returns true if consumed
     void ChatSendCurrent();
     void ChatPickAndSendAttachment();   // file picker → upload → send (1.3)
+    void ChatBeginEdit(uint64_t msgId); // load a message into the compose box
+    void ChatCancelEdit();              // abandon an in-progress edit
+    void ChatCopyMessage(uint64_t msgId);
     void OnTimer(UINT timerId);
     void OnMouseMove(float x, float y);
     void OnLButtonDown(float x, float y);

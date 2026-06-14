@@ -152,6 +152,9 @@ struct RenderState {
         uint64_t     attachmentId = 0; // linked attachment (1.3), 0 = none
         std::wstring attachmentName;   // original filename, for the chip label
         std::string  attachmentContentType;  // drives image/video/file rendering
+        // Reactions surfaced from the model (1.2b): emoji + count + did-I-react.
+        struct Reaction { std::wstring emoji; int count = 0; bool mine = false; };
+        std::vector<Reaction> reactions;
     };
     bool         chatOpen = false;
     uint64_t     chatPeerId = 0;
@@ -161,6 +164,8 @@ struct RenderState {
     float        chatScroll = 0.0f;     // message list scroll (px from bottom-anchored top)
     bool         chatPeerTyping = false;
     std::vector<ChatMsgView> chatMessages;
+    uint64_t     chatEditingMsgId = 0;  // non-zero while editing that message in place
+    float        mouseX = -1.0f, mouseY = -1.0f;  // cursor for chat row/toolbar hover
 
     // Voice call state surfaced to the chat window's call controls.
     int      voiceState = 0;   // 0 idle,1 connecting,2 negotiating(ringing),3 connected,...
@@ -255,8 +260,11 @@ public:
     // DrawChatWindow. Kind tells App which control was clicked.
     struct ChatHit {
         enum Kind { None, Close, Input, Send, Call, Mute, EndCall, Accept, Decline,
-                    Attach, Attachment } kind = None;
+                    Attach, Attachment,
+                    React, Edit, Delete, Copy, Reaction } kind = None;
         uint64_t attachmentId = 0;   // set when kind == Attachment
+        uint64_t msgId = 0;          // set for React/Edit/Delete/Copy/Reaction
+        std::wstring emoji;          // set when kind == Reaction (toggle target)
     };
     ChatHit HitTestChatWindow(float x, float y) const;
     bool    PointInChatWindow(float x, float y) const;
@@ -423,6 +431,12 @@ private:
     D2D1_RECT_F m_chatAttachRect{};   // "+" upload button in the input bar (1.3)
     // Clickable attachment chips drawn this frame -> their attachment id (1.3).
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_chatAttachmentHits;
+    // Per-message hover toolbar buttons drawn this frame (Discord-style).
+    struct ChatActionHit { D2D1_RECT_F rect; ChatHit::Kind kind; uint64_t msgId; };
+    std::vector<ChatActionHit> m_chatActionHits;
+    // Reaction pills drawn this frame -> (rect, msgId, emoji) for toggling.
+    struct ChatReactionHit { D2D1_RECT_F rect; uint64_t msgId; std::wstring emoji; };
+    std::vector<ChatReactionHit> m_chatReactionHits;
     float m_chatContentH = 0.0f;
 
     // Toast notifications (bottom-right). Animation timers in ms via GetTickCount64.

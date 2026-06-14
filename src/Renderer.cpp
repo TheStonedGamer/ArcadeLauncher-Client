@@ -1,6 +1,9 @@
 #include "pch.h"
 #include "Renderer.h"
 #include "Version.h"
+#include <ctime>
+#include <cwctype>
+#include <cstdio>
 
 static D2D1_RECT_F D2DInsetRect(D2D1_RECT_F r, float dx, float dy) {
     return D2D1::RectF(r.left + dx, r.top + dy, r.right - dx, r.bottom - dy);
@@ -2076,6 +2079,15 @@ Renderer::ChatHit Renderer::HitTestChatWindow(float x, float y) const {
     if (in(m_chatCallRect))    { h.kind = ChatHit::Call;    return h; }
     if (in(m_chatSendRect))    { h.kind = ChatHit::Send;    return h; }
     if (in(m_chatAttachRect))  { h.kind = ChatHit::Attach;  return h; }
+    // Per-message hover toolbar buttons (react/edit/delete/copy) take priority
+    // over the chips/pills they may overlap.
+    for (const auto& a : m_chatActionHits) {
+        if (in(a.rect)) { h.kind = a.kind; h.msgId = a.msgId; return h; }
+    }
+    // Reaction pills toggle a reaction on click.
+    for (const auto& r : m_chatReactionHits) {
+        if (in(r.rect)) { h.kind = ChatHit::Reaction; h.msgId = r.msgId; h.emoji = r.emoji; return h; }
+    }
     // Attachment chips in the message list (newest entries last; order doesn't matter).
     for (const auto& a : m_chatAttachmentHits) {
         if (in(a.first)) { h.kind = ChatHit::Attachment; h.attachmentId = a.second; return h; }
@@ -2187,29 +2199,58 @@ void Renderer::DrawChatWindow(RenderState& state) {
         listTop += stripH + 6.0f;
     }
 
-    // ── Message list ────────────────────────────────────────────────────────────
+    // ── Message list (Discord-style flat rows) ──────────────────────────────────
     float inputH = 48.0f;
-    float listBottom = top + winH - inputH;
+    float editBannerH = state.chatEditingMsgId ? 22.0f : 0.0f;
+    float listBottom = top + winH - inputH - editBannerH;
     m_rt->PushAxisAlignedClip(D2D1::RectF(left, listTop, left + winW, listBottom),
                               D2D1_ANTIALIAS_MODE_ALIASED);
 
-    float bubbleMax = winW * 0.66f;
-    float pad = 12.0f;
-    // First measure total content height for bottom anchoring.
-    // Build the display text for a message: deleted tombstone, edited tag, or raw.
+    float pad   = 12.0f;
+    float avSz  = 36.0f;                       // avatar diameter
+    float textX = left + pad + avSz + 10.0f;   // left edge of name/body text
+    float textW = (left + winW - pad) - textX; // wrap width for body + media
+    m_chatAttachmentHits.clear();
+    m_chatActionHits.clear();
+    m_chatReactionHits.clear();
+
+    // Display text: deleted tombstone, edited tag, or raw.
     auto displayText = [](const RenderState::ChatMsgView& m) -> std::wstring {
         if (m.deleted) return L"message deleted";
         if (m.edited)  return m.text + L"  (edited)";
         return m.text;
+    };
+    // Local-time helpers for timestamps + day dividers.
+    auto tmOf = [](int64_t ts) { time_t t = (time_t)ts; struct tm lt{}; localtime_s(&lt, &t); return lt; };
+    auto clockOf = [&](int64_t ts) -> std::wstring {
+        if (ts <= 0) return L"";
+        struct tm lt = tmOf(ts);
+        int h = lt.tm_hour % 12; if (h == 0) h = 12;
+        wchar_t buf[16];
+        swprintf(buf, 16, L"%d:%02d %ls", h, lt.tm_min, lt.tm_hour < 12 ? L"AM" : L"PM");
+        return buf;
+    };
+    auto dayKey = [&](int64_t ts) { struct tm lt = tmOf(ts); return (lt.tm_year + 1900) * 10000 + (lt.tm_mon + 1) * 100 + lt.tm_mday; };
+    auto dayLabel = [&](int64_t ts) -> std::wstring {
+        struct tm lt = tmOf(ts);
+        time_t now = time(nullptr);
+        int kd = dayKey(ts);
+        struct tm nt{}; localtime_s(&nt, &now);
+        int kn = (nt.tm_year + 1900) * 10000 + (nt.tm_mon + 1) * 100 + nt.tm_mday;
+        if (kd == kn) return L"Today";
+        time_t yday = now - 86400; struct tm yt{}; localtime_s(&yt, &yday);
+        int ky = (yt.tm_year + 1900) * 10000 + (yt.tm_mon + 1) * 100 + yt.tm_mday;
+        if (kd == ky) return L"Yesterday";
+        static const wchar_t* mon[] = { L"January",L"February",L"March",L"April",L"May",L"June",
+                                        L"July",L"August",L"September",L"October",L"November",L"December" };
+        wchar_t buf[40]; swprintf(buf, 40, L"%ls %d, %d", mon[lt.tm_mon], lt.tm_mday, 1900 + lt.tm_year);
+        return buf;
     };
     // Index of the last of MY messages the peer has read — gets a "Read" receipt.
     int lastReadMine = -1;
     for (size_t i = 0; i < state.chatMessages.size(); ++i)
         if (state.chatMessages[i].mine && state.chatMessages[i].read && !state.chatMessages[i].deleted)
             lastReadMine = (int)i;
-
-    const float kAttachChipH = 28.0f;   // height reserved for an attachment chip (1.3)
-    m_chatAttachmentHits.clear();
 
     // Classify an attachment by resolved content type: 1=image, 2=video, 0=other.
     auto mediaKind = [](const RenderState::ChatMsgView& m) -> int {
@@ -2221,99 +2262,174 @@ void Renderer::DrawChatWindow(RenderState& state) {
     };
     // Pixel size of the inline media box: image fit to its decoded aspect once
     // available (a placeholder until then); a 16:9 card for video.
-    auto mediaSize = [&](const RenderState::ChatMsgView& m, float maxInner) -> D2D1_SIZE_F {
+    auto mediaSize = [&](const RenderState::ChatMsgView& m) -> D2D1_SIZE_F {
         int k = mediaKind(m);
-        float maxW = (std::min)(maxInner, 320.0f);
+        float maxW = (std::min)(textW, 360.0f);
         if (k == 1) {
             if (ID2D1Bitmap* bmp = GetAttachmentImage(m.attachmentId)) {
                 D2D1_SIZE_F s = bmp->GetSize();
                 if (s.width > 0 && s.height > 0) {
-                    float scale = (std::min)(1.0f, (std::min)(maxW / s.width, 280.0f / s.height));
+                    float scale = (std::min)(1.0f, (std::min)(maxW / s.width, 300.0f / s.height));
                     return D2D1::SizeF((std::max)(48.0f, s.width * scale),
                                        (std::max)(48.0f, s.height * scale));
                 }
             }
-            return D2D1::SizeF((std::min)(maxW, 220.0f), 150.0f);   // loading placeholder
+            return D2D1::SizeF((std::min)(maxW, 240.0f), 160.0f);   // loading placeholder
         }
         if (k == 2) {
-            float w = (std::min)(maxW, 300.0f);
+            float w = (std::min)(maxW, 320.0f);
             return D2D1::SizeF(w, w * 9.0f / 16.0f);
         }
         return D2D1::SizeF(0.0f, 0.0f);
     };
-    // Full vertical layout of one message bubble: caption + media/chip.
-    struct MsgLayout { float textH; float base; int kind; float mediaW; float mediaH; bool chip; float total; };
-    auto layoutOf = [&](const RenderState::ChatMsgView& m) -> MsgLayout {
-        MsgLayout L{};
-        std::wstring dt = displayText(m);
-        L.textH = dt.empty() ? 0.0f
-                : DrawWrapped(dt, m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
-        L.base = (L.textH > 0.0f) ? L.textH + 6.0f : 0.0f;
-        L.kind = mediaKind(m);
-        bool hasAtt = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
-        if (L.kind == 1 || L.kind == 2) {
-            D2D1_SIZE_F s = mediaSize(m, bubbleMax - 16.0f);
-            L.mediaW = s.width; L.mediaH = s.height;
-        } else if (hasAtt) {
-            L.chip = true;
+
+    // Per-row layout. A "group" starts on sender change or a >7min gap; a day
+    // change inserts a divider above the group.
+    struct Row { bool newGroup; bool divider; float dividerH; float headerH;
+                 float textH; int kind; float mediaW; float mediaH; bool chip;
+                 float reactH; float total; };
+    auto layoutOf = [&](size_t i) -> Row {
+        const auto& m = state.chatMessages[i];
+        Row R{}; R.newGroup = true; R.divider = false;
+        if (i > 0) {
+            const auto& p = state.chatMessages[i - 1];
+            bool sameSender = (p.mine == m.mine);
+            bool close = (m.ts > 0 && p.ts > 0 && (m.ts - p.ts) < 420);
+            R.newGroup = !(sameSender && close);
+            if (m.ts > 0 && p.ts > 0 && dayKey(m.ts) != dayKey(p.ts)) { R.divider = true; R.newGroup = true; }
+        } else if (m.ts > 0) {
+            R.divider = true;   // first message: a divider for its day
         }
-        float content = L.base + L.mediaH + (L.chip ? kAttachChipH : 0.0f);
-        L.total = (std::max)(content, 18.0f) + 14.0f;
-        return L;
+        R.dividerH = R.divider ? 30.0f : 0.0f;
+        R.headerH  = R.newGroup ? 20.0f : 0.0f;
+        std::wstring dt = displayText(m);
+        R.textH = dt.empty() ? 0.0f
+                : DrawWrapped(dt, m_fmtSummary.Get(), 0, 0, textW, m_brushText.Get(), false);
+        R.kind = mediaKind(m);
+        bool hasAtt = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
+        if (R.kind == 1 || R.kind == 2) { D2D1_SIZE_F s = mediaSize(m); R.mediaW = s.width; R.mediaH = s.height; }
+        else if (hasAtt) R.chip = true;
+        R.reactH = m.reactions.empty() ? 0.0f : 28.0f;
+        float body = R.headerH + R.textH
+                   + (R.mediaH > 0 ? R.mediaH + 6.0f : 0.0f)
+                   + (R.chip ? 28.0f : 0.0f)
+                   + (R.reactH > 0 ? R.reactH : 0.0f);
+        R.total = R.dividerH + (R.newGroup ? 10.0f : 3.0f) + (std::max)(body, 16.0f) + 4.0f;
+        return R;
     };
 
+    std::vector<Row> rows; rows.reserve(state.chatMessages.size());
     float total = 6.0f;
-    std::vector<float> heights;
-    heights.reserve(state.chatMessages.size());
     for (size_t i = 0; i < state.chatMessages.size(); ++i) {
-        float h = layoutOf(state.chatMessages[i]).total;
-        if ((int)i == lastReadMine) h += 14.0f;   // room for the read receipt line
-        heights.push_back(h);
-        total += h + 6.0f;
+        Row R = layoutOf(i);
+        if ((int)i == lastReadMine) R.total += 14.0f;   // room for the read receipt
+        total += R.total;
+        rows.push_back(R);
     }
     if (state.chatPeerTyping) total += 22.0f;
     m_chatContentH = total;
 
+    // Width of a run of text in a given format (for inline name + timestamp).
+    auto measureW = [&](const std::wstring& s, IDWriteTextFormat* f) -> float {
+        if (s.empty()) return 0.0f;
+        ComPtr<IDWriteTextLayout> tl;
+        if (FAILED(m_dwFactory->CreateTextLayout(s.c_str(), (UINT32)s.size(), f,
+                4000.0f, 100.0f, tl.GetAddressOf()))) return 0.0f;
+        DWRITE_TEXT_METRICS tm{}; tl->GetMetrics(&tm);
+        return tm.widthIncludingTrailingWhitespace;
+    };
+    const D2D1_DRAW_TEXT_OPTIONS kEmoji = D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT;
+
+    float mx = state.mouseX, my = state.mouseY;
     float listViewH = listBottom - listTop;
     // Anchor to bottom: start so the last message sits just above the input.
     float startY = listTop + std::min(0.0f, listViewH - total) + 6.0f + state.chatScroll;
     float y = startY;
     for (size_t i = 0; i < state.chatMessages.size(); ++i) {
         const auto& m = state.chatMessages[i];
-        float h = heights[i];
-        float bw = bubbleMax;
-        D2D1_RECT_F bub;
-        if (m.mine)
-            bub = D2D1::RectF(left + winW - pad - bw, y, left + winW - pad, y + h);
-        else
-            bub = D2D1::RectF(left + pad, y, left + pad + bw, y + h);
-        std::wstring shown = displayText(m);
-        if (y + h >= listTop && y <= listBottom) {
-            // Bubble background.
-            if (m.mine) {
-                m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b,
-                                                     (m.pending || m.deleted) ? 0.45f : 0.85f));
-                m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushAccent.Get());
-                m_brushAccent->SetColor(C_ACCENT);
-            } else {
-                m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushCard.Get());
-            }
-            MsgLayout L = layoutOf(m);
-            // Caption text at the top of the bubble.
-            if (!shown.empty()) {
-                DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
-                            m.mine ? m_brushWhite.Get()
-                                   : (m.deleted ? m_brushSubtext.Get() : m_brushText.Get()), true);
-            }
-            float contentTop = y + 7.0f + L.base;
+        const Row& R = rows[i];
+        float rowTop  = y;
+        float bandTop = rowTop + R.dividerH;
+        float rowBot  = rowTop + R.total;
+        bool visible  = (rowBot >= listTop && rowTop <= listBottom);
 
-            if (L.kind == 1 || L.kind == 2) {
-                // ── Inline media (image preview / video card) ────────────────
-                D2D1_RECT_F box = D2D1::RectF(bub.left + 8.0f, contentTop,
-                                              bub.left + 8.0f + L.mediaW, contentTop + L.mediaH);
-                // Dark backing panel (also the letterbox behind a fitted image).
+        // Day divider above the first message of a new day.
+        if (R.divider && visible) {
+            float dy = rowTop + 15.0f;
+            std::wstring lbl = dayLabel(m.ts);
+            float lw = measureW(lbl, m_fmtCardSub.Get());
+            float midL = left + pad, midR = left + winW - pad;
+            float gapL = (left + winW) * 0.5f - lw * 0.5f - 8.0f;
+            float gapR = (left + winW) * 0.5f + lw * 0.5f + 8.0f;
+            m_brushSubtext->SetColor(D2D1::ColorF(C_SUBTEXT.r, C_SUBTEXT.g, C_SUBTEXT.b, 0.35f));
+            m_rt->DrawLine(D2D1::Point2F(midL, dy), D2D1::Point2F(gapL, dy), m_brushSubtext.Get(), 1.0f);
+            m_rt->DrawLine(D2D1::Point2F(gapR, dy), D2D1::Point2F(midR, dy), m_brushSubtext.Get(), 1.0f);
+            m_brushSubtext->SetColor(C_SUBTEXT);
+            D2D1_RECT_F lr = D2D1::RectF(gapL, rowTop + 6.0f, gapR, rowTop + 26.0f);
+            m_rt->DrawText(lbl.c_str(), (UINT32)lbl.size(), m_fmtCardSub.Get(), lr,
+                           m_brushSubtext.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        }
+
+        bool hover = visible && mx >= left && mx <= left + winW &&
+                     my >= bandTop && my <= rowBot && my >= listTop && my <= listBottom;
+        if (hover) {
+            D2D1_RECT_F band = D2D1::RectF(left + 4.0f, bandTop, left + winW - 4.0f, rowBot - 1.0f);
+            m_brushCardHover->SetColor(D2D1::ColorF(C_CARD_HOV.r, C_CARD_HOV.g, C_CARD_HOV.b, 0.5f));
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(band, 6, 6), m_brushCardHover.Get());
+            m_brushCardHover->SetColor(C_CARD_HOV);
+        }
+
+        if (visible) {
+            float cTop = bandTop + (R.newGroup ? 10.0f : 3.0f);
+            float ty = cTop;
+            if (R.newGroup) {
+                // Avatar.
+                D2D1_RECT_F av = D2D1::RectF(left + pad, cTop, left + pad + avSz, cTop + avSz);
+                D2D1_POINT_2F ac = D2D1::Point2F((av.left + av.right) * 0.5f, (av.top + av.bottom) * 0.5f);
+                if (m.mine && m_avatar) {
+                    m_rt->PushAxisAlignedClip(av, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                    DrawIconFit(m_avatar.Get(), av, 1.0f);
+                    m_rt->PopAxisAlignedClip();
+                } else if (m.mine) {
+                    m_rt->FillEllipse(D2D1::Ellipse(ac, avSz * 0.5f, avSz * 0.5f), m_brushAccent.Get());
+                    m_rt->DrawText(L"\xE77B", 1, m_fmtIcon.Get(), av, m_brushWhite.Get());
+                } else {
+                    m_rt->FillEllipse(D2D1::Ellipse(ac, avSz * 0.5f, avSz * 0.5f), m_brushCard.Get());
+                    if (!state.chatPeerName.empty()) {
+                        std::wstring ini(1, towupper(state.chatPeerName[0]));
+                        m_rt->DrawText(ini.c_str(), 1, m_fmtCard.Get(), av, m_brushText.Get());
+                    }
+                }
+                // Name + timestamp on the header line.
+                std::wstring who = m.mine ? L"You" : state.chatPeerName;
+                D2D1_RECT_F nameR = D2D1::RectF(textX, cTop - 2.0f, left + winW - pad, cTop + 16.0f);
+                m_rt->DrawText(who.c_str(), (UINT32)who.size(), m_fmtCard.Get(), nameR,
+                               m.mine ? m_brushAccent.Get() : m_brushText.Get());
+                float nameW = measureW(who, m_fmtCard.Get());
+                std::wstring clk = clockOf(m.ts);
+                if (!clk.empty()) {
+                    D2D1_RECT_F tmr = D2D1::RectF(textX + nameW + 8.0f, cTop - 1.0f,
+                                                  left + winW - pad, cTop + 16.0f);
+                    m_rt->DrawText(clk.c_str(), (UINT32)clk.size(), m_fmtCardSub.Get(), tmr,
+                                   m_brushSubtext.Get());
+                }
+                ty += R.headerH;
+            }
+
+            // Body text.
+            std::wstring shown = displayText(m);
+            if (R.textH > 0.0f) {
+                DrawWrapped(shown, m_fmtSummary.Get(), textX, ty, textW,
+                            m.deleted ? m_brushSubtext.Get()
+                                      : (m.pending ? m_brushSubtext.Get() : m_brushText.Get()), true);
+                ty += R.textH;
+            }
+
+            // Inline media / attachment chip.
+            if (R.kind == 1 || R.kind == 2) {
+                D2D1_RECT_F box = D2D1::RectF(textX, ty, textX + R.mediaW, ty + R.mediaH);
                 m_rt->FillRoundedRectangle(D2D1::RoundedRect(box, 8, 8), m_brushOverlay.Get());
-                if (L.kind == 1) {
+                if (R.kind == 1) {
                     if (ID2D1Bitmap* bmp = GetAttachmentImage(m.attachmentId)) {
                         m_rt->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
                         DrawIconFit(bmp, box, 1.0f);
@@ -2323,7 +2439,6 @@ void Renderer::DrawChatWindow(RenderState& state) {
                                        m_brushSubtext.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
                     }
                 } else {
-                    // Video card: play badge + filename; click opens externally.
                     D2D1_POINT_2F c = D2D1::Point2F((box.left + box.right) * 0.5f,
                                                     (box.top + box.bottom) * 0.5f - 6.0f);
                     m_rt->FillEllipse(D2D1::Ellipse(c, 22.0f, 22.0f), m_brushAccent.Get());
@@ -2336,36 +2451,94 @@ void Renderer::DrawChatWindow(RenderState& state) {
                                    m_brushWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 }
                 if (m.attachmentId) m_chatAttachmentHits.push_back({ box, m.attachmentId });
-            } else if (L.chip) {
-                // ── Non-media attachment chip (download/open) ────────────────
-                D2D1_RECT_F chip = D2D1::RectF(bub.left + 8.0f, contentTop,
-                                               bub.right - 8.0f, contentTop + 24.0f);
-                if (m.mine)
-                    m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6, 6), m_brushOverlay.Get());
-                else {
-                    m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.18f));
-                    m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6, 6), m_brushAccent.Get());
-                    m_brushAccent->SetColor(C_ACCENT);
-                }
+                ty += R.mediaH + 6.0f;
+            } else if (R.chip) {
+                D2D1_RECT_F chip = D2D1::RectF(textX, ty, (std::min)(textX + 280.0f, left + winW - pad), ty + 24.0f);
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6, 6), m_brushOverlay.Get());
                 bool uploading = (m.attachmentId == 0);
                 std::wstring nm = m.attachmentName.empty() ? L"Attachment" : m.attachmentName;
                 std::wstring label = uploading ? (L"↑ " + nm + L" — uploading…")
                                                : (L"\U0001F4CE " + nm);
                 D2D1_RECT_F tr2 = D2D1::RectF(chip.left + 8, chip.top, chip.right - 6, chip.bottom);
                 m_rt->DrawText(label.c_str(), (UINT32)label.size(), m_fmtCardSub.Get(), tr2,
-                               m.mine ? m_brushWhite.Get() : m_brushText.Get(),
-                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                               m_brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
                 if (m.attachmentId) m_chatAttachmentHits.push_back({ chip, m.attachmentId });
+                ty += 28.0f;
             }
+
+            // Reaction pills.
+            if (!m.reactions.empty()) {
+                float rx = textX;
+                for (const auto& r : m.reactions) {
+                    std::wstring cnt = std::to_wstring(r.count);
+                    float ew = measureW(r.emoji, m_fmtSummary.Get());
+                    float cw = measureW(cnt, m_fmtCardSub.Get());
+                    float pw = 10.0f + ew + 5.0f + cw + 10.0f;
+                    D2D1_RECT_F pill = D2D1::RectF(rx, ty, rx + pw, ty + 22.0f);
+                    if (r.mine) {
+                        m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.22f));
+                        m_rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 11, 11), m_brushAccent.Get());
+                        m_brushAccent->SetColor(C_ACCENT);
+                        m_rt->DrawRoundedRectangle(D2D1::RoundedRect(pill, 11, 11), m_brushAccent.Get(), 1.0f);
+                    } else {
+                        m_rt->FillRoundedRectangle(D2D1::RoundedRect(pill, 11, 11), m_brushCard.Get());
+                    }
+                    D2D1_RECT_F er = D2D1::RectF(pill.left + 8, pill.top + 2, pill.left + 8 + ew + 4, pill.bottom);
+                    m_rt->DrawText(r.emoji.c_str(), (UINT32)r.emoji.size(), m_fmtSummary.Get(), er,
+                                   m_brushText.Get(), kEmoji);
+                    D2D1_RECT_F cr = D2D1::RectF(pill.left + 8 + ew + 5, pill.top + 3, pill.right - 4, pill.bottom);
+                    m_rt->DrawText(cnt.c_str(), (UINT32)cnt.size(), m_fmtCardSub.Get(), cr,
+                                   r.mine ? m_brushAccent.Get() : m_brushSubtext.Get());
+                    m_chatReactionHits.push_back({ pill, m.msgId, r.emoji });
+                    rx += pw + 6.0f;
+                    if (rx > left + winW - pad - 40.0f) break;   // single row of pills
+                }
+                ty += 28.0f;
+            }
+
             // Read receipt under the last of my messages the peer has read.
             if ((int)i == lastReadMine) {
-                D2D1_RECT_F rr = D2D1::RectF(bub.left, y + h - 14.0f, bub.right, y + h);
-                static const wchar_t* kRead = L"Read";
-                m_rt->DrawText(kRead, 4, m_fmtCardSub.Get(), rr, m_brushSubtext.Get(),
+                D2D1_RECT_F rr = D2D1::RectF(textX, rowBot - 14.0f, left + winW - pad, rowBot);
+                m_rt->DrawText(L"✓ Read", 6, m_fmtCardSub.Get(), rr, m_brushSubtext.Get(),
                                D2D1_DRAW_TEXT_OPTIONS_NONE);
             }
+
+            // Hover action toolbar (top-right of the row), drawn on top.
+            if (hover && !m.deleted) {
+                struct Btn { ChatHit::Kind k; const wchar_t* g; };
+                std::vector<Btn> btns;
+                btns.push_back({ ChatHit::React, L"\xE76E" });
+                if (m.mine && m.attachmentId == 0) btns.push_back({ ChatHit::Edit, L"\xE70F" });
+                btns.push_back({ ChatHit::Copy, L"\xE8C8" });
+                if (m.mine) btns.push_back({ ChatHit::Delete, L"\xE74D" });
+                float bw2 = 26.0f, bh2 = 24.0f, gap = 2.0f;
+                float twid = btns.size() * bw2 + (btns.size() - 1) * gap + 8.0f;
+                float tbR = left + winW - pad;
+                float tbL = tbR - twid;
+                float tbT = (std::max)(listTop + 2.0f, bandTop - 10.0f);
+                D2D1_RECT_F bar = D2D1::RectF(tbL, tbT, tbR, tbT + bh2 + 4.0f);
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(bar, 6, 6), m_brushSidebar.Get());
+                m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.35f));
+                m_rt->DrawRoundedRectangle(D2D1::RoundedRect(bar, 6, 6), m_brushAccent.Get(), 1.0f);
+                m_brushAccent->SetColor(C_ACCENT);
+                float bx = tbL + 4.0f, byo = tbT + 2.0f;
+                for (const auto& b : btns) {
+                    D2D1_RECT_F br = D2D1::RectF(bx, byo, bx + bw2, byo + bh2);
+                    bool bh = mx >= br.left && mx <= br.right && my >= br.top && my <= br.bottom;
+                    if (bh) {
+                        m_brushCardHover->SetColor(D2D1::ColorF(C_CARD_HOV.r, C_CARD_HOV.g, C_CARD_HOV.b, 0.9f));
+                        m_rt->FillRoundedRectangle(D2D1::RoundedRect(br, 4, 4), m_brushCardHover.Get());
+                        m_brushCardHover->SetColor(C_CARD_HOV);
+                    }
+                    ID2D1Brush* gb = (b.k == ChatHit::Delete) ? m_brushSubtext.Get()
+                                   : (bh ? m_brushAccent.Get() : m_brushSubtext.Get());
+                    m_rt->DrawText(b.g, 1, m_fmtIcon.Get(), br, gb);
+                    m_chatActionHits.push_back({ br, b.k, m.msgId });
+                    bx += bw2 + gap;
+                }
+            }
         }
-        y += h + 6.0f;
+        y += R.total;
     }
     if (state.chatPeerTyping) {
         D2D1_RECT_F tr = D2D1::RectF(left + pad, y, left + winW - pad, y + 20.0f);
@@ -2381,18 +2554,31 @@ void Renderer::DrawChatWindow(RenderState& state) {
         m_rt->DrawText(hint.c_str(), (UINT32)hint.size(), m_fmtSummary.Get(), er, m_brushSubtext.Get());
     }
 
+    // ── Editing banner (shown above the input while editing a message) ───────────
+    if (editBannerH > 0.0f) {
+        D2D1_RECT_F eb = D2D1::RectF(left + 8.0f, listBottom, left + winW - 8.0f, listBottom + editBannerH);
+        m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.14f));
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(eb, 4, 4), m_brushAccent.Get());
+        m_brushAccent->SetColor(C_ACCENT);
+        D2D1_RECT_F ebt = D2D1::RectF(eb.left + 8, eb.top + 1, eb.right - 8, eb.bottom);
+        std::wstring ebs = L"Editing message — Enter to save, Esc to cancel";
+        m_rt->DrawText(ebs.c_str(), (UINT32)ebs.size(),
+                       m_fmtCardSub.Get(), ebt, m_brushAccent.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
+
     // ── Input bar ───────────────────────────────────────────────────────────────
+    bool editing = (state.chatEditingMsgId != 0);
     float ib = top + winH - inputH;
     m_chatSendRect   = D2D1::RectF(left + winW - 70.0f, ib + 8.0f, left + winW - 10.0f, ib + inputH - 8.0f);
-    // Attachment "+" button on the far left of the input row (1.3).
+    // Attachment (paperclip) button on the far left of the input row (1.3).
     m_chatAttachRect = D2D1::RectF(left + 10.0f, ib + 8.0f, left + 44.0f, ib + inputH - 8.0f);
     m_chatInputRect  = D2D1::RectF(m_chatAttachRect.right + 8.0f, ib + 8.0f, m_chatSendRect.left - 8.0f, ib + inputH - 8.0f);
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatAttachRect, 6, 6), m_brushCard.Get());
     m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
     m_rt->DrawRoundedRectangle(D2D1::RoundedRect(m_chatAttachRect, 6, 6), m_brushAccent.Get(), 1.0f);
     m_brushAccent->SetColor(C_ACCENT);
-    m_rt->DrawText(L"+", 1, m_fmtCardSub.Get(), m_chatAttachRect, m_brushAccent.Get(),
-                   D2D1_DRAW_TEXT_OPTIONS_NONE);
+    m_rt->DrawText(L"\xE723", 1, m_fmtIcon.Get(), m_chatAttachRect, m_brushAccent.Get(),
+                   D2D1_DRAW_TEXT_OPTIONS_NONE);   // paperclip
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatInputRect, 6, 6), m_brushCard.Get());
     m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
     m_rt->DrawRoundedRectangle(D2D1::RoundedRect(m_chatInputRect, 6, 6), m_brushAccent.Get(), 1.0f);
@@ -2403,7 +2589,8 @@ void Renderer::DrawChatWindow(RenderState& state) {
     bool blink = ((GetTickCount64() / 500) % 2) == 0;
     std::wstring shown = state.chatInput;
     if (shown.empty()) {
-        m_rt->DrawText(L"Type a message…", 15, m_fmtSearch.Get(), tr, m_brushSubtext.Get());
+        m_rt->DrawText(editing ? L"Edit message…" : L"Type a message…",
+                       editing ? 14 : 15, m_fmtSearch.Get(), tr, m_brushSubtext.Get());
     } else {
         if (blink) shown += L"|";
         m_rt->DrawText(shown.c_str(), (UINT32)shown.size(), m_fmtSearch.Get(), tr, m_brushText.Get());
@@ -2414,7 +2601,7 @@ void Renderer::DrawChatWindow(RenderState& state) {
                                     : D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.35f));
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatSendRect, 6, 6), m_brushAccent.Get());
     m_brushAccent->SetColor(C_ACCENT);
-    m_rt->DrawText(L"Send", 4, m_fmtCardSub.Get(), m_chatSendRect, m_brushWhite.Get());
+    m_rt->DrawText(editing ? L"Save" : L"Send", 4, m_fmtCardSub.Get(), m_chatSendRect, m_brushWhite.Get());
 }
 
 void Renderer::ClearAvatar() { m_avatar.Reset(); }
