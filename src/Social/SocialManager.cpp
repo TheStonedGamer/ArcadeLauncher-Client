@@ -629,6 +629,54 @@ int SocialManager::HttpPutBinaryAbsolute(const std::wstring& absoluteUrl,
     return status;
 }
 
+bool SocialManager::HttpGetBytesAbsolute(const std::wstring& absoluteUrl,
+                                         std::vector<unsigned char>& out) {
+    out.clear();
+    URL_COMPONENTS uc{};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}; wchar_t path[2048] = {}; wchar_t extra[2048] = {};
+    uc.lpszHostName = host;   uc.dwHostNameLength = 255;
+    uc.lpszUrlPath = path;    uc.dwUrlPathLength = 2047;
+    uc.lpszExtraInfo = extra; uc.dwExtraInfoLength = 2047;
+    uc.dwSchemeLength = (DWORD)-1;
+    if (!WinHttpCrackUrl(absoluteUrl.c_str(), 0, 0, &uc)) return false;
+    bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
+    std::wstring fullPath = std::wstring(path) + extra;
+
+    HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/Social",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!sess) return false;
+    HINTERNET conn = WinHttpConnect(sess, host, uc.nPort, 0);
+    if (!conn) { WinHttpCloseHandle(sess); return false; }
+    HINTERNET req = WinHttpOpenRequest(conn, L"GET", fullPath.c_str(), nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
+    if (!req) { WinHttpCloseHandle(conn); WinHttpCloseHandle(sess); return false; }
+
+    bool ok = false;
+    if (WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                           WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+        WinHttpReceiveResponse(req, nullptr)) {
+        DWORD code = 0, len = sizeof(code);
+        WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX);
+        if (code >= 200 && code < 300) {
+            DWORD avail = 0;
+            do {
+                avail = 0;
+                if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+                size_t off = out.size();
+                out.resize(off + avail);
+                DWORD read = 0;
+                if (!WinHttpReadData(req, out.data() + off, avail, &read)) { out.resize(off); break; }
+                out.resize(off + read);
+            } while (avail > 0);
+            ok = !out.empty();
+        }
+    }
+    WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+    return ok;
+}
+
 // ── Friends ─────────────────────────────────────────────────────────────────
 
 void SocialManager::RefreshFriends() {
@@ -1503,6 +1551,80 @@ void SocialManager::OpenAttachment(uint64_t attachmentId) {
         // Our own MinIO, URL minted by our server — open in the default browser.
         ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     }).detach();
+}
+
+void SocialManager::EnsureAttachmentInfo(uint64_t attachmentId) {
+    if (attachmentId == 0 || !m_running.load()) return;
+    {
+        std::lock_guard<std::mutex> lk(m_attachMtx);
+        if (m_attachInfo.count(attachmentId) || m_attachInfoBusy.count(attachmentId))
+            return;                       // already resolved or in flight
+        m_attachInfoBusy.insert(attachmentId);
+    }
+    std::thread([this, attachmentId]() {
+        std::string body;
+        bool ok = HttpGet(L"/api/social/attachments/" + std::to_wstring(attachmentId), body);
+        AttachInfo info;
+        if (ok) {
+            JsonValue v = JsonValue::Parse(body);
+            info.filename    = Utf8ToWide(v["filename"].asString());
+            info.contentType = v["contentType"].asString();
+            info.size        = v["size"].asInt();
+            info.downloadUrl = Utf8ToWide(v["downloadUrl"].asString());
+        }
+        {
+            std::lock_guard<std::mutex> lk(m_attachMtx);
+            m_attachInfoBusy.erase(attachmentId);
+            if (ok) m_attachInfo[attachmentId] = info;
+        }
+        if (!ok) return;
+        // Back-fill the metadata into every message referencing this attachment.
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            for (auto& kv : m_convos)
+                for (auto& m : kv.second.messages)
+                    if (m.attachmentId == attachmentId) {
+                        if (m.attachmentName.empty()) m.attachmentName = info.filename;
+                        m.attachmentContentType = info.contentType;
+                        m.attachmentSize = info.size;
+                    }
+        }
+        FireChanged();
+    }).detach();
+}
+
+void SocialManager::RequestAttachmentImage(uint64_t attachmentId) {
+    if (attachmentId == 0 || !m_running.load()) return;
+    {
+        std::lock_guard<std::mutex> lk(m_attachMtx);
+        if (m_attachImgBusy.count(attachmentId)) return;   // download in flight
+        m_attachImgBusy.insert(attachmentId);
+    }
+    std::thread([this, attachmentId]() {
+        // Resolve a fresh download URL (presigned GET URLs are short-lived).
+        std::string body;
+        std::wstring url;
+        if (HttpGet(L"/api/social/attachments/" + std::to_wstring(attachmentId), body)) {
+            JsonValue v = JsonValue::Parse(body);
+            url = Utf8ToWide(v["downloadUrl"].asString());
+        }
+        std::vector<unsigned char> bytes;
+        bool ok = !url.empty() && HttpGetBytesAbsolute(url, bytes) && !bytes.empty();
+        {
+            std::lock_guard<std::mutex> lk(m_attachMtx);
+            m_attachImgBusy.erase(attachmentId);
+            if (ok) m_attachImgReady.emplace_back(attachmentId, std::move(bytes));
+        }
+        if (ok) FireChanged();
+    }).detach();
+}
+
+std::vector<std::pair<uint64_t, std::vector<unsigned char>>>
+SocialManager::TakeReadyAttachmentImages() {
+    std::vector<std::pair<uint64_t, std::vector<unsigned char>>> out;
+    std::lock_guard<std::mutex> lk(m_attachMtx);
+    out.swap(m_attachImgReady);
+    return out;
 }
 
 void SocialManager::NotifyTyping(uint64_t peerId) {

@@ -797,16 +797,33 @@ void App::StartArtDecodeWorker() {
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         for (;;) {
             std::pair<std::wstring, std::wstring> job;
+            std::pair<uint64_t, std::vector<unsigned char>> attJob;
+            bool isAtt = false;
             {
                 std::unique_lock<std::mutex> lk(m_artQueueMutex);
-                m_artQueueCv.wait(lk, [this] { return m_artStop || !m_artQueue.empty(); });
-                if (m_artStop && m_artQueue.empty()) break;
-                job = std::move(m_artQueue.front());
-                m_artQueue.pop_front();
+                m_artQueueCv.wait(lk, [this] {
+                    return m_artStop || !m_artQueue.empty() || !m_attImgQueue.empty();
+                });
+                if (m_artStop && m_artQueue.empty() && m_attImgQueue.empty()) break;
+                if (!m_artQueue.empty()) {
+                    job = std::move(m_artQueue.front());
+                    m_artQueue.pop_front();
+                } else {
+                    attJob = std::move(m_attImgQueue.front());
+                    m_attImgQueue.pop_front();
+                    isAtt = true;
+                }
             }
             auto* img = new Renderer::DecodedImage();
-            img->gameId = job.first;
-            if (Renderer::DecodeImageFile(job.second, *img) && !img->pixels.empty()) {
+            bool ok;
+            if (isAtt) {
+                img->attachmentId = attJob.first;
+                ok = Renderer::DecodeImageMemory(attJob.second.data(), attJob.second.size(), *img);
+            } else {
+                img->gameId = job.first;
+                ok = Renderer::DecodeImageFile(job.second, *img);
+            }
+            if (ok && !img->pixels.empty()) {
                 if (!PostMessageW(hwnd, WM_ART_DECODED, 0, (LPARAM)img))
                     delete img;   // window gone — drop it
             } else {
@@ -1454,7 +1471,10 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         std::unique_ptr<Renderer::DecodedImage> img(
             reinterpret_cast<Renderer::DecodedImage*>(lp));
         if (img) {
-            m_renderer.StoreDecodedArt(*img);
+            if (img->attachmentId != 0)
+                m_renderer.StoreDecodedAttachmentImage(*img);   // DM attachment preview (1.3)
+            else
+                m_renderer.StoreDecodedArt(*img);
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
         return 0;
@@ -1968,7 +1988,28 @@ void App::SyncSocialRenderState() {
             mv.msgId   = m.messageId;
             mv.attachmentId   = m.attachmentId;
             mv.attachmentName = m.attachmentName;
+            mv.attachmentContentType = m.attachmentContentType;
             m_renderState.chatMessages.push_back(std::move(mv));
+
+            // Drive lazy attachment metadata + image preview loading (1.3).
+            if (m.attachmentId != 0) {
+                if (m.attachmentContentType.empty())
+                    m_social.EnsureAttachmentInfo(m.attachmentId);    // learn the type
+                else if (m.attachmentContentType.rfind("image/", 0) == 0 &&
+                         !m_renderer.GetAttachmentImage(m.attachmentId) &&
+                         !m_attImgRequested.count(m.attachmentId)) {
+                    m_attImgRequested.insert(m.attachmentId);
+                    m_social.RequestAttachmentImage(m.attachmentId);  // fetch bytes
+                }
+            }
+        }
+        // Move any downloaded image payloads onto the decode worker.
+        for (auto& ready : m_social.TakeReadyAttachmentImages()) {
+            {
+                std::lock_guard<std::mutex> lk(m_artQueueMutex);
+                m_attImgQueue.push_back(std::move(ready));
+            }
+            m_artQueueCv.notify_one();
         }
         m_renderState.chatPeerTyping = conv.peerTyping;
         // Keep the peer's presence/name fresh from the friends list.

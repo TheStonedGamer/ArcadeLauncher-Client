@@ -230,6 +230,10 @@ private:
     std::mutex                                           m_artQueueMutex;
     std::condition_variable                              m_artQueueCv;
     std::deque<std::pair<std::wstring, std::wstring>>    m_artQueue;
+    // DM attachment image bytes awaiting decode (1.3 previews); serviced by the
+    // same art worker. Each is (attachmentId, encoded image bytes).
+    std::deque<std::pair<uint64_t, std::vector<unsigned char>>> m_attImgQueue;
+    std::unordered_set<uint64_t>                         m_attImgRequested;
     bool                                                 m_artStop = false;
 
     std::mutex m_downloadMutex;

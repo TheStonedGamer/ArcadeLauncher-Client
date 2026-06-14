@@ -151,6 +151,7 @@ struct RenderState {
         uint64_t     msgId   = 0;      // server message id (0 = pending/local)
         uint64_t     attachmentId = 0; // linked attachment (1.3), 0 = none
         std::wstring attachmentName;   // original filename, for the chip label
+        std::string  attachmentContentType;  // drives image/video/file rendering
     };
     bool         chatOpen = false;
     uint64_t     chatPeerId = 0;
@@ -192,6 +193,7 @@ public:
     // art never blocks the UI.
     struct DecodedImage {
         std::wstring        gameId;
+        uint64_t            attachmentId = 0;   // non-zero => a DM attachment (1.3)
         UINT                width = 0;
         UINT                height = 0;
         std::vector<BYTE>   pixels;   // 32bpp PBGRA, stride = width*4
@@ -199,8 +201,15 @@ public:
     // Decode an image file to a CPU BGRA buffer. Safe to call off the render
     // thread; the calling thread must have COM initialized. Returns false on error.
     static bool DecodeImageFile(const std::wstring& path, DecodedImage& out);
+    // Decode an in-memory encoded image (PNG/JPG/GIF/BMP/…) to a CPU BGRA buffer.
+    // Same threading rules as DecodeImageFile. Used for DM attachment previews.
+    static bool DecodeImageMemory(const BYTE* data, size_t size, DecodedImage& out);
     // Upload an already-decoded buffer as the game's art bitmap (render thread only).
     bool StoreDecodedArt(const DecodedImage& img);
+    // Upload a decoded attachment image, cached by attachment id (render thread).
+    bool StoreDecodedAttachmentImage(const DecodedImage& img);
+    // Cached attachment bitmap, or nullptr if not decoded yet.
+    ID2D1Bitmap* GetAttachmentImage(uint64_t attachmentId) const;
 
     // Call after Initialize() to load and attach platform icons.
     void LoadPlatformIcons(PlatformIcons& icons, const EmulatorConfig& emuCfg);
@@ -365,6 +374,8 @@ private:
     // Cached game art bitmaps keyed by game id
     mutable std::mutex m_artMutex;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap>> m_artCache;
+    // Cached DM attachment image previews keyed by attachment id (1.3).
+    std::unordered_map<uint64_t, ComPtr<ID2D1Bitmap>> m_attachmentImages;
 
     // Layout constants (computed in Resize)
     int   m_lastGameCount = 0;

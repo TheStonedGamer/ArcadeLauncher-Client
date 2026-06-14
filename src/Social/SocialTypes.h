@@ -59,6 +59,8 @@ struct ChatMessage {
     // Attachment (1.3): id of an uploaded object linked to this message, 0 = none.
     uint64_t     attachmentId = 0;
     std::wstring attachmentName;    // original filename, for display (may be empty)
+    std::string  attachmentContentType;  // e.g. "image/png" — resolved lazily
+    int64_t      attachmentSize = 0;      // bytes, resolved lazily
 };
 
 // Per-peer conversation: ordered message history + unread/typing state.

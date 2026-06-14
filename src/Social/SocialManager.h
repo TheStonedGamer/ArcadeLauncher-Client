@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 
 // Posted to the main window whenever social state changes so it can repaint.
 static constexpr UINT WM_APP_SOCIAL_CHANGED = WM_USER + 114;
@@ -111,6 +112,15 @@ public:
     // Resolve an attachment id to a short-lived download URL and open it in the
     // user's browser. Worker thread; no-op if the server returns no url.
     void OpenAttachment(uint64_t attachmentId);
+    // Lazily resolve an attachment's metadata (filename, content type, size) and
+    // back-fill it into every ChatMessage referencing it. Fetched once per id.
+    void EnsureAttachmentInfo(uint64_t attachmentId);
+    // Download an image attachment's bytes (once) so the UI can decode + inline
+    // it. Bytes land in the ready queue; drain with TakeReadyAttachmentImages().
+    void RequestAttachmentImage(uint64_t attachmentId);
+    // Hand off any downloaded image payloads to the UI thread for decode.
+    std::vector<std::pair<uint64_t, std::vector<unsigned char>>>
+        TakeReadyAttachmentImages();
 
     // ── Chat 1.2a — read receipts, edit/delete, scrollback ────────────────────
     // Tell the peer we've read their messages up to now ({"type":"read"}).
@@ -155,7 +165,24 @@ private:
     int  HttpPutBinaryAbsolute(const std::wstring& absoluteUrl,
                                const std::vector<char>& data,
                                const std::string& contentType);
+    // GET an absolute URL's raw bytes (the presigned MinIO download). Returns
+    // true on 2xx with body filled.
+    bool HttpGetBytesAbsolute(const std::wstring& absoluteUrl,
+                              std::vector<unsigned char>& out);
     std::wstring WsUrl() const;   // derives ws(s)://.../ws/social?token=...
+
+    // Attachment metadata cache (1.3 previews). Resolved lazily per id.
+    struct AttachInfo {
+        std::wstring filename;
+        std::string  contentType;
+        int64_t      size = 0;
+        std::wstring downloadUrl;   // short-lived; refreshed when fetching bytes
+    };
+    std::mutex                              m_attachMtx;
+    std::map<uint64_t, AttachInfo>          m_attachInfo;     // resolved metadata
+    std::set<uint64_t>                      m_attachInfoBusy; // info fetch inflight
+    std::set<uint64_t>                      m_attachImgBusy;  // bytes fetch inflight
+    std::vector<std::pair<uint64_t, std::vector<unsigned char>>> m_attachImgReady;
 
     void FireChanged();
     FriendInfo* FindFriendLocked(uint64_t id);          // call under m_mtx

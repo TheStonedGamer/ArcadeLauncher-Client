@@ -1316,6 +1316,61 @@ bool Renderer::StoreDecodedArt(const DecodedImage& img) {
     return true;
 }
 
+bool Renderer::DecodeImageMemory(const BYTE* data, size_t size, DecodedImage& out) {
+    if (!data || size == 0) return false;
+    ComPtr<IWICImagingFactory> wic;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(wic.GetAddressOf()))))
+        return false;
+
+    // Wrap the encoded bytes in a WIC stream (copies into an internal buffer).
+    ComPtr<IWICStream> stream;
+    if (FAILED(wic->CreateStream(stream.GetAddressOf()))) return false;
+    if (FAILED(stream->InitializeFromMemory(const_cast<BYTE*>(data), (DWORD)size)))
+        return false;
+
+    ComPtr<IWICBitmapDecoder>     dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter>   conv;
+    if (FAILED(wic->CreateDecoderFromStream(stream.Get(), nullptr,
+               WICDecodeMetadataCacheOnLoad, dec.GetAddressOf())))
+        return false;
+    if (FAILED(dec->GetFrame(0, frame.GetAddressOf()))) return false;
+    if (FAILED(wic->CreateFormatConverter(conv.GetAddressOf()))) return false;
+    if (FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+               WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut)))
+        return false;
+
+    UINT w = 0, h = 0;
+    if (FAILED(conv->GetSize(&w, &h)) || w == 0 || h == 0) return false;
+    out.width = w; out.height = h;
+    out.pixels.resize((size_t)w * h * 4);
+    WICRect rc{ 0, 0, (INT)w, (INT)h };
+    if (FAILED(conv->CopyPixels(&rc, w * 4, (UINT)out.pixels.size(), out.pixels.data())))
+        return false;
+    return true;
+}
+
+bool Renderer::StoreDecodedAttachmentImage(const DecodedImage& img) {
+    if (!m_rt || img.attachmentId == 0 || img.pixels.empty() ||
+        img.width == 0 || img.height == 0) return false;
+    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap> bmp;
+    if (FAILED(m_rt->CreateBitmap(D2D1::SizeU(img.width, img.height),
+               img.pixels.data(), img.width * 4, props, bmp.GetAddressOf())))
+        return false;
+    std::lock_guard<std::mutex> lk(m_artMutex);
+    m_attachmentImages[img.attachmentId] = std::move(bmp);
+    return true;
+}
+
+ID2D1Bitmap* Renderer::GetAttachmentImage(uint64_t attachmentId) const {
+    std::lock_guard<std::mutex> lk(m_artMutex);
+    auto it = m_attachmentImages.find(attachmentId);
+    return it == m_attachmentImages.end() ? nullptr : it->second.Get();
+}
+
 // ── Hit testing ───────────────────────────────────────────────────────────────
 
 int Renderer::HitTestGrid(float x, float y, const RenderState& state,
@@ -2155,17 +2210,63 @@ void Renderer::DrawChatWindow(RenderState& state) {
 
     const float kAttachChipH = 28.0f;   // height reserved for an attachment chip (1.3)
     m_chatAttachmentHits.clear();
+
+    // Classify an attachment by resolved content type: 1=image, 2=video, 0=other.
+    auto mediaKind = [](const RenderState::ChatMsgView& m) -> int {
+        if (!m.attachmentId || m.deleted) return 0;
+        const std::string& ct = m.attachmentContentType;
+        if (ct.rfind("image/", 0) == 0) return 1;
+        if (ct.rfind("video/", 0) == 0) return 2;
+        return 0;
+    };
+    // Pixel size of the inline media box: image fit to its decoded aspect once
+    // available (a placeholder until then); a 16:9 card for video.
+    auto mediaSize = [&](const RenderState::ChatMsgView& m, float maxInner) -> D2D1_SIZE_F {
+        int k = mediaKind(m);
+        float maxW = (std::min)(maxInner, 320.0f);
+        if (k == 1) {
+            if (ID2D1Bitmap* bmp = GetAttachmentImage(m.attachmentId)) {
+                D2D1_SIZE_F s = bmp->GetSize();
+                if (s.width > 0 && s.height > 0) {
+                    float scale = (std::min)(1.0f, (std::min)(maxW / s.width, 280.0f / s.height));
+                    return D2D1::SizeF((std::max)(48.0f, s.width * scale),
+                                       (std::max)(48.0f, s.height * scale));
+                }
+            }
+            return D2D1::SizeF((std::min)(maxW, 220.0f), 150.0f);   // loading placeholder
+        }
+        if (k == 2) {
+            float w = (std::min)(maxW, 300.0f);
+            return D2D1::SizeF(w, w * 9.0f / 16.0f);
+        }
+        return D2D1::SizeF(0.0f, 0.0f);
+    };
+    // Full vertical layout of one message bubble: caption + media/chip.
+    struct MsgLayout { float textH; float base; int kind; float mediaW; float mediaH; bool chip; float total; };
+    auto layoutOf = [&](const RenderState::ChatMsgView& m) -> MsgLayout {
+        MsgLayout L{};
+        std::wstring dt = displayText(m);
+        L.textH = dt.empty() ? 0.0f
+                : DrawWrapped(dt, m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
+        L.base = (L.textH > 0.0f) ? L.textH + 6.0f : 0.0f;
+        L.kind = mediaKind(m);
+        bool hasAtt = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
+        if (L.kind == 1 || L.kind == 2) {
+            D2D1_SIZE_F s = mediaSize(m, bubbleMax - 16.0f);
+            L.mediaW = s.width; L.mediaH = s.height;
+        } else if (hasAtt) {
+            L.chip = true;
+        }
+        float content = L.base + L.mediaH + (L.chip ? kAttachChipH : 0.0f);
+        L.total = (std::max)(content, 18.0f) + 14.0f;
+        return L;
+    };
+
     float total = 6.0f;
     std::vector<float> heights;
     heights.reserve(state.chatMessages.size());
     for (size_t i = 0; i < state.chatMessages.size(); ++i) {
-        const auto& m = state.chatMessages[i];
-        std::wstring dt = displayText(m);
-        float th = dt.empty() ? 0.0f
-                 : DrawWrapped(dt, m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
-        float h = std::max(th, 18.0f) + 14.0f;   // bubble padding
-        bool hasChip = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
-        if (hasChip) h += kAttachChipH;   // room for the chip
+        float h = layoutOf(state.chatMessages[i]).total;
         if ((int)i == lastReadMine) h += 14.0f;   // room for the read receipt line
         heights.push_back(h);
         total += h + 6.0f;
@@ -2186,32 +2287,59 @@ void Renderer::DrawChatWindow(RenderState& state) {
             bub = D2D1::RectF(left + winW - pad - bw, y, left + winW - pad, y + h);
         else
             bub = D2D1::RectF(left + pad, y, left + pad + bw, y + h);
-        // Only draw if visible.
         std::wstring shown = displayText(m);
         if (y + h >= listTop && y <= listBottom) {
+            // Bubble background.
             if (m.mine) {
                 m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b,
                                                      (m.pending || m.deleted) ? 0.45f : 0.85f));
                 m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushAccent.Get());
                 m_brushAccent->SetColor(C_ACCENT);
-                DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
-                            m_brushWhite.Get(), true);
             } else {
                 m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushCard.Get());
-                // Deleted placeholder reads as muted subtext; live text as normal.
-                DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
-                            m.deleted ? m_brushSubtext.Get() : m_brushText.Get(), true);
             }
-            // Attachment chip (1.3): a pill the user clicks to download/open. While
-            // the upload is in flight (attachmentId still 0) it shows "Uploading…"
-            // and isn't yet clickable.
-            bool hasChip = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
-            if (hasChip) {
-                float recv = ((int)i == lastReadMine) ? 14.0f : 0.0f;
-                D2D1_RECT_F chip = D2D1::RectF(bub.left + 8.0f, y + h - recv - 26.0f,
-                                               bub.right - 8.0f, y + h - recv - 4.0f);
-                // Contrasting fill: dark overlay on the accent (mine) bubble, a
-                // lighter accent tint on the peer bubble.
+            MsgLayout L = layoutOf(m);
+            // Caption text at the top of the bubble.
+            if (!shown.empty()) {
+                DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
+                            m.mine ? m_brushWhite.Get()
+                                   : (m.deleted ? m_brushSubtext.Get() : m_brushText.Get()), true);
+            }
+            float contentTop = y + 7.0f + L.base;
+
+            if (L.kind == 1 || L.kind == 2) {
+                // ── Inline media (image preview / video card) ────────────────
+                D2D1_RECT_F box = D2D1::RectF(bub.left + 8.0f, contentTop,
+                                              bub.left + 8.0f + L.mediaW, contentTop + L.mediaH);
+                // Dark backing panel (also the letterbox behind a fitted image).
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(box, 8, 8), m_brushOverlay.Get());
+                if (L.kind == 1) {
+                    if (ID2D1Bitmap* bmp = GetAttachmentImage(m.attachmentId)) {
+                        m_rt->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                        DrawIconFit(bmp, box, 1.0f);
+                        m_rt->PopAxisAlignedClip();
+                    } else {
+                        m_rt->DrawText(L"Loading image…", 14, m_fmtCardSub.Get(), box,
+                                       m_brushSubtext.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    }
+                } else {
+                    // Video card: play badge + filename; click opens externally.
+                    D2D1_POINT_2F c = D2D1::Point2F((box.left + box.right) * 0.5f,
+                                                    (box.top + box.bottom) * 0.5f - 6.0f);
+                    m_rt->FillEllipse(D2D1::Ellipse(c, 22.0f, 22.0f), m_brushAccent.Get());
+                    D2D1_RECT_F glyph = D2D1::RectF(c.x - 20.0f, c.y - 20.0f, c.x + 20.0f, c.y + 18.0f);
+                    m_rt->DrawText(L"▶", 1, m_fmtTitle.Get(), glyph, m_brushWhite.Get(),
+                                   D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    std::wstring nm = m.attachmentName.empty() ? L"Video" : m.attachmentName;
+                    D2D1_RECT_F cap = D2D1::RectF(box.left + 8, box.bottom - 20, box.right - 8, box.bottom - 2);
+                    m_rt->DrawText(nm.c_str(), (UINT32)nm.size(), m_fmtCardSub.Get(), cap,
+                                   m_brushWhite.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+                if (m.attachmentId) m_chatAttachmentHits.push_back({ box, m.attachmentId });
+            } else if (L.chip) {
+                // ── Non-media attachment chip (download/open) ────────────────
+                D2D1_RECT_F chip = D2D1::RectF(bub.left + 8.0f, contentTop,
+                                               bub.right - 8.0f, contentTop + 24.0f);
                 if (m.mine)
                     m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6, 6), m_brushOverlay.Get());
                 else {
