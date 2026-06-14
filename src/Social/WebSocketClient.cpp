@@ -67,6 +67,16 @@ void WebSocketClient::Run(std::wstring url, MessageCallback onMessage, StateCall
         if (onState) onState(false);
     };
 
+    // WinHttpCrackUrl does NOT understand the ws:// / wss:// schemes - it returns
+    // INTERNET_SCHEME_UNKNOWN with port 0, so the connect would target port 0 and
+    // fail before any socket opens (the WS request never reaches the server). The
+    // WinHTTP WebSocket upgrade actually rides on a normal http(s) request with
+    // WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET set, so map the scheme back to http(s)
+    // for parsing: wss -> https, ws -> http.
+    std::wstring parseUrl = url;
+    if (parseUrl.rfind(L"wss://", 0) == 0)      parseUrl = L"https://" + parseUrl.substr(6);
+    else if (parseUrl.rfind(L"ws://", 0) == 0)  parseUrl = L"http://"  + parseUrl.substr(5);
+
     URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof(uc);
     wchar_t host[256] = {};
@@ -74,7 +84,7 @@ void WebSocketClient::Run(std::wstring url, MessageCallback onMessage, StateCall
     uc.lpszHostName = host;  uc.dwHostNameLength = 255;
     uc.lpszUrlPath  = path;  uc.dwUrlPathLength  = 1023;
     uc.dwSchemeLength = (DWORD)-1;
-    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) { fail(); return; }
+    if (!WinHttpCrackUrl(parseUrl.c_str(), 0, 0, &uc)) { fail(); return; }
     bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
 
     HINTERNET session = WinHttpOpen(L"ArcadeLauncher/SocialWS",
