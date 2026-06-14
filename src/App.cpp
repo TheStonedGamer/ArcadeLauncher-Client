@@ -1666,11 +1666,40 @@ bool App::HandleFriendsPanelClick(float x, float y) {
         PromptAddFriend();
         return true;
     }
+    if (hit.kind == Renderer::FriendsHit::AcceptRequest) {
+        m_social.RespondRequest(hit.accountId, "accept");
+        return true;
+    }
+    if (hit.kind == Renderer::FriendsHit::DeclineRequest) {
+        m_social.RespondRequest(hit.accountId, "decline");
+        return true;
+    }
     if (hit.kind == Renderer::FriendsHit::Row) {
         ShowFriendContextMenu(hit.accountId);
         return true;
     }
     return false;
+}
+
+void App::HandleNotifAction(int notifKind, uint64_t accountId) {
+    // notifKind mirrors social::NotifKind; -1 means a generic history-row click.
+    m_renderState.notifOpen = false;
+    if (accountId == 0) { m_renderState.showFriendsPanel = true; return; }
+
+    // Friend-request toasts open the friends panel (where the request is actionable).
+    if (notifKind == static_cast<int>(social::NotifKind::FriendRequest)) {
+        m_renderState.showFriendsPanel = true;
+        if (m_social.IsRunning()) m_social.RefreshFriends();
+        return;
+    }
+    // Everything else opens the conversation with that account.
+    std::wstring name;
+    for (const auto& f : m_social.GetFriends())
+        if (f.accountId == accountId) {
+            name = !f.nickname.empty() ? f.nickname : f.username;
+            break;
+        }
+    OpenChat(accountId, name);
 }
 
 void App::PromptAddFriend() {
@@ -1690,10 +1719,14 @@ void App::PromptAddFriend() {
 void App::ShowFriendContextMenu(uint64_t accountId) {
     // Find the friend's current relation to build the right menu.
     int relation = 0; std::wstring uname;
+    bool fav = false; std::wstring nick;
     for (const auto& f : m_renderState.friends)
-        if (f.accountId == accountId) { relation = f.relation; uname = f.username; break; }
+        if (f.accountId == accountId) {
+            relation = f.relation; uname = f.username; fav = f.favorite; nick = f.nickname; break;
+        }
 
-    enum { ID_MSG = 0x9101, ID_ACCEPT, ID_DECLINE, ID_CANCEL, ID_REMOVE, ID_BLOCK, ID_UNBLOCK, ID_CALL };
+    enum { ID_MSG = 0x9101, ID_ACCEPT, ID_DECLINE, ID_CANCEL, ID_REMOVE, ID_BLOCK, ID_UNBLOCK,
+           ID_CALL, ID_FAV, ID_NICK, ID_NICK_RESET };
     HMENU menu = CreatePopupMenu();
     if (relation == 2) { // RequestReceived
         AppendMenuW(menu, MF_STRING, ID_ACCEPT, L"Accept Friend Request");
@@ -1707,6 +1740,12 @@ void App::ShowFriendContextMenu(uint64_t accountId) {
     } else { // Accepted
         AppendMenuW(menu, MF_STRING, ID_MSG, L"Message…");
         AppendMenuW(menu, MF_STRING, ID_CALL, L"Voice Call");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, ID_FAV, fav ? L"Remove from Favorites"
+                                                 : L"Add to Favorites");
+        AppendMenuW(menu, MF_STRING, ID_NICK, L"Set Nickname…");
+        if (!nick.empty())
+            AppendMenuW(menu, MF_STRING, ID_NICK_RESET, L"Reset Nickname");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, ID_REMOVE, L"Remove Friend");
         AppendMenuW(menu, MF_STRING, ID_BLOCK, L"Block");
@@ -1727,6 +1766,15 @@ void App::ShowFriendContextMenu(uint64_t accountId) {
         case ID_REMOVE:  m_social.RespondRequest(accountId, "remove");  break;
         case ID_BLOCK:   m_social.BlockUser(accountId, true);           break;
         case ID_UNBLOCK: m_social.BlockUser(accountId, false);          break;
+        case ID_FAV:     m_social.SetFavorite(accountId, !fav);         break;
+        case ID_NICK_RESET: m_social.SetNickname(accountId, L"");       break;
+        case ID_NICK: {
+            std::wstring n = nick;
+            if (ShowTextPrompt(m_hwnd, L"Set Nickname",
+                               L"Display name for this friend (blank to reset):", n))
+                m_social.SetNickname(accountId, n);
+            break;
+        }
         default: break;
     }
     InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1741,7 +1789,7 @@ void App::OpenChat(uint64_t peerId, const std::wstring& name) {
     m_renderState.chatInput.clear();
     m_renderState.chatScroll = 0.0f;
     m_renderState.focusArea = FocusArea::Grid;  // release search focus
-    if (m_social.IsRunning()) m_social.OpenConversation(peerId);
+    if (m_social.IsRunning()) { m_social.OpenConversation(peerId); m_social.MarkInteracted(peerId); }
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -1844,6 +1892,8 @@ void App::SyncSocialRenderState() {
         v.relation  = static_cast<int>(f.relationStatus);
         v.gameTitle = f.currentGameTitle;
         v.unread    = m_social.GetConversation(f.accountId).unread;
+        v.favorite  = f.favorite;
+        v.nickname  = f.nickname;
         if (f.relationStatus == social::FriendStatus::RequestReceived) ++pending;
         m_renderState.friends.push_back(std::move(v));
     }
@@ -1880,6 +1930,41 @@ void App::SyncSocialRenderState() {
     } else {
         m_renderState.chatMessages.clear();
         m_renderState.chatPeerTyping = false;
+    }
+
+    // ── Notifications: drain new toasts into the renderer; fill the history view.
+    m_renderState.notifUnread = m_social.UnreadNotifications();
+    bool playSound = false;
+    for (auto& n : m_social.DrainToasts()) {
+        // Suppress message toasts for a conversation that is already open.
+        if (n.kind == social::NotifKind::Message &&
+            m_renderState.chatOpen && m_renderState.chatPeerId == n.accountId)
+            continue;
+        m_renderer.PushToast(static_cast<int>(n.kind), n.accountId, n.title, n.body);
+        // Audible cue for higher-priority events only.
+        if (n.kind == social::NotifKind::FriendRequest ||
+            n.kind == social::NotifKind::Message ||
+            n.kind == social::NotifKind::VoiceInvite)
+            playSound = true;
+    }
+    if (playSound) MessageBeep(MB_ICONASTERISK);
+    if (m_renderState.notifOpen) {
+        auto hist = m_social.GetNotifications();
+        m_renderState.notifs.clear();
+        m_renderState.notifs.reserve(hist.size());
+        // Newest first.
+        for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
+            NotifRowView r;
+            r.kind = static_cast<int>(it->kind);
+            r.accountId = it->accountId;
+            r.title = it->title;
+            r.body = it->body;
+            r.ts = it->timestamp;
+            r.read = it->read;
+            m_renderState.notifs.push_back(std::move(r));
+        }
+    } else {
+        m_renderState.notifs.clear();
     }
 }
 
@@ -1918,6 +2003,11 @@ void App::OnTimer(UINT timerId) {
         s = t;
     }
 
+    // Toast notifications: advance animation timers; keep repainting while any
+    // toast is still on screen.
+    if (m_renderer.UpdateToasts())
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+
     // Repaint if game is running (for any live updates)
     if (m_monitor.IsRunning())
         InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1952,6 +2042,45 @@ void App::OnMouseMove(float x, float y) {
 }
 
 void App::OnLButtonDown(float x, float y) {
+    // Toasts float above everything — handle their clicks first.
+    {
+        auto th = m_renderer.HitTestToasts(x, y);
+        if (th.kind == Renderer::ToastHit::Dismiss) {
+            m_renderer.DismissToast(th.accountId, th.toastKind);
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
+        }
+        if (th.kind == Renderer::ToastHit::Action) {
+            HandleNotifAction(th.toastKind, th.accountId);
+            m_renderer.DismissToast(th.accountId, th.toastKind);
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
+        }
+    }
+
+    // Notifications bell toggles the history dropdown; opening marks them read.
+    if (m_renderer.HitTestBellBtn(x, y)) {
+        m_renderState.notifOpen = !m_renderState.notifOpen;
+        if (m_renderState.notifOpen) { m_renderState.notifScroll = 0.0f; m_social.MarkNotificationsRead(); }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+    if (m_renderState.notifOpen) {
+        if (m_renderer.PointInNotifPanel(x, y)) {
+            auto nh = m_renderer.HitTestNotifPanel(x, y);
+            if (nh.kind == Renderer::NotifHit::MarkAll) m_social.MarkNotificationsRead();
+            else if (nh.kind == Renderer::NotifHit::Clear) m_social.ClearNotifications();
+            else if (nh.kind == Renderer::NotifHit::Row && nh.accountId)
+                HandleNotifAction(-1, nh.accountId);  // default: open chat
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
+        }
+        // Click outside closes the dropdown.
+        m_renderState.notifOpen = false;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        // fall through so the click also lands on whatever was under it
+    }
+
     // The chat window is modal-ish: while open it captures all clicks (the
     // window itself and the dimmed backdrop, which closes it).
     if (m_renderState.chatOpen) {
@@ -2407,6 +2536,14 @@ void App::OnScroll(float delta) {
         // Scroll up (delta>0) reveals older messages.
         m_renderState.chatScroll =
             std::clamp(m_renderState.chatScroll + delta * 0.4f, 0.0f, maxC);
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
+    // Notifications dropdown scroll takes priority while it's open and hovered.
+    if (m_renderState.notifOpen &&
+        m_renderer.PointInNotifPanel(m_lastMouseX, m_lastMouseY)) {
+        m_renderState.notifScroll = std::max(0.0f, m_renderState.notifScroll - delta * 0.4f);
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return;
     }

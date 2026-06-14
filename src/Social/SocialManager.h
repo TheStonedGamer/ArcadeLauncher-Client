@@ -55,6 +55,20 @@ public:
     void BlockUser(uint64_t userId, bool block);
     std::vector<FriendInfo> GetFriends() const;
 
+    // ── Personalization (client-local; persisted to social_prefs.json) ─────────
+    void SetFavorite(uint64_t userId, bool fav);
+    bool IsFavorite(uint64_t userId) const;
+    void SetNickname(uint64_t userId, const std::wstring& nick); // empty = reset
+    std::wstring NicknameOf(uint64_t userId) const;
+    void MarkInteracted(uint64_t userId);                        // for recent sort
+
+    // ── Notifications (toast queue + session history) ──────────────────────────
+    std::vector<Notification> DrainToasts();          // new toasts since last call
+    std::vector<Notification> GetNotifications() const;
+    int  UnreadNotifications() const;
+    void MarkNotificationsRead();
+    void ClearNotifications();
+
     // ── Presence ─────────────────────────────────────────────────────────────
     void SetPresence(PresenceState state);
     void SetInGame(const std::wstring& gameId, const std::wstring& gameTitle);
@@ -82,6 +96,7 @@ private:
     void HandleGatewayFrame(const std::string& utf8);
     void OnGatewaySocketState(bool connected);
     void ScheduleReconnect();
+    void ReconcileAfterReconnect();   // re-pull friends + missed messages on resume
     bool SendGatewayJson(const std::string& json);
 
     // REST helpers (own WinHTTP, simple JSON in/out). Run on worker threads.
@@ -91,6 +106,15 @@ private:
 
     void FireChanged();
     FriendInfo* FindFriendLocked(uint64_t id);          // call under m_mtx
+
+    // Notifications: emit one (history + toast queue), fire change. Thread-safe.
+    void Notify(NotifKind kind, uint64_t accountId,
+                std::wstring title, std::wstring body);
+
+    // Personalization persistence (social_prefs.json next to other app data).
+    void LoadPrefs();
+    void SavePrefs();
+    void ApplyPrefsLocked();                            // overlay favorite/nick onto m_friends
     Conversation& ConvLocked(uint64_t peerId);          // call under m_mtx
     void SendVoiceSignal(uint64_t peerId, const std::string& kind);
 
@@ -109,10 +133,21 @@ private:
     std::atomic<GatewayState>  m_gateway{ GatewayState::Disconnected };
     std::atomic<int>           m_backoffMs{ 1000 };
     std::atomic<int>           m_reconnectGen{ 0 };     // invalidates stale timers
+    std::atomic<bool>          m_everConnected{ false }; // first connect vs a resume
 
     mutable std::mutex m_mtx;
     std::vector<FriendInfo>                m_friends;     // guarded
     std::map<uint64_t, Conversation>       m_convos;      // guarded
+    bool                                   m_friendsLoaded = false; // suppress toasts on first load
+
+    // Notifications (guarded by m_mtx).
+    std::vector<Notification>              m_history;     // capped, newest last
+    std::vector<Notification>              m_toastQueue;  // undrained toasts
+    uint64_t                               m_notifSeq = 1;
+
+    // Client-local personalization, keyed by account id (guarded by m_mtx).
+    struct LocalPref { bool favorite = false; std::wstring nickname; int64_t lastInteract = 0; };
+    std::map<uint64_t, LocalPref>          m_prefs;
     PresenceState                          m_presence = PresenceState::Online;
     std::wstring                           m_curGameId;
     std::wstring                           m_curGameTitle;

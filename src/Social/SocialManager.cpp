@@ -2,12 +2,14 @@
 #include "SocialManager.h"
 #include "SocialJson.h"
 #include <winhttp.h>
+#include <shlobj.h>
 #include <thread>
 #include <chrono>
 #include <sstream>
 #include <cstring>
 
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace social {
 
@@ -48,10 +50,13 @@ void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token
         m_token = token;
         m_friends.clear();
         m_convos.clear();
+        m_friendsLoaded = false;
     }
     if (baseUrl.empty() || token.empty()) return;
     m_running.store(true);
     m_backoffMs.store(1000);
+    m_everConnected.store(false);
+    LoadPrefs();
     RefreshFriends();
     OpenGateway();
 }
@@ -115,11 +120,63 @@ void SocialManager::OnGatewaySocketState(bool connected) {
         }
         if (p == PresenceState::InGame) SetInGame(gid, gtitle);
         else SetPresence(p);
+        // On a *resume* (not the first connect) reconcile state that may have
+        // changed while we were offline: friend list/presence + missed messages.
+        if (m_everConnected.exchange(true))
+            ReconcileAfterReconnect();
         FireChanged();
     } else {
         m_gateway.store(GatewayState::Disconnected);
         FireChanged();
         if (m_running.load()) ScheduleReconnect();
+    }
+}
+
+void SocialManager::ReconcileAfterReconnect() {
+    // 1) Authoritative friend list + presence (also raises toasts for requests
+    //    that arrived while we were disconnected, via RefreshFriends' diff).
+    RefreshFriends();
+
+    // 2) Re-pull history for conversations opened this session so messages sent
+    //    while we were offline appear and unread counts are corrected. Server
+    //    isRead flags drive the unread recompute (we don't clobber it to 0).
+    std::vector<uint64_t> peers;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        for (const auto& kv : m_convos)
+            if (!kv.second.messages.empty()) peers.push_back(kv.first);
+    }
+    for (uint64_t peerId : peers) {
+        std::thread([this, peerId]() {
+            std::wstring path = L"/api/social/messages/" + std::to_wstring(peerId);
+            std::string body;
+            if (!HttpGet(path, body)) return;
+            JsonValue v = JsonValue::Parse(body);
+            const JsonValue& arr = v["messages"];
+            uint64_t self = m_selfId.load();
+            std::vector<ChatMessage> hist;
+            int unread = 0;
+            if (arr.isArray()) {
+                for (const auto& m : arr.arr) {
+                    ChatMessage cm;
+                    cm.messageId  = m["messageId"].asUint();
+                    cm.senderId   = m["senderId"].asUint();
+                    cm.receiverId = m["receiverId"].asUint();
+                    cm.messageText = Utf8ToWide(m["text"].asString());
+                    cm.timestamp  = m["timestamp"].asInt();
+                    cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
+                    if (!cm.isRead && cm.senderId != self) ++unread;
+                    hist.push_back(std::move(cm));
+                }
+            }
+            {
+                std::lock_guard<std::mutex> lk(m_mtx);
+                Conversation& c = ConvLocked(peerId);
+                c.messages = std::move(hist);
+                c.unread = unread;
+            }
+            FireChanged();
+        }).detach();
     }
 }
 
@@ -157,15 +214,34 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         PresenceState ps = PresenceFromString(v["state"].asString());
         std::wstring gid = Utf8ToWide(v["gameId"].asString());
         std::wstring gt  = Utf8ToWide(v["gameTitle"].asString());
+        NotifKind toastKind = NotifKind::System; bool emitToast = false;
+        std::wstring who, bodyTxt;
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             if (FriendInfo* f = FindFriendLocked(uid)) {
+                PresenceState before = f->presence;
+                std::wstring beforeGame = f->currentGameId;
                 f->presence = ps;
                 f->currentGameId = gid;
                 f->currentGameTitle = gt;
                 if (ps != PresenceState::Offline) f->lastOnline = NowSecs();
+                who = !f->nickname.empty() ? f->nickname : f->username;
+                bool wasVisible = (before != PresenceState::Offline &&
+                                   before != PresenceState::Invisible);
+                // Friend started a game (new game or fresh launch).
+                if (ps == PresenceState::InGame && (before != PresenceState::InGame ||
+                                                    beforeGame != gid) && !gt.empty()) {
+                    toastKind = NotifKind::FriendInGame; emitToast = true;
+                    bodyTxt = L"started playing " + gt;
+                } else if (!wasVisible && (ps == PresenceState::Online ||
+                                           ps == PresenceState::Away ||
+                                           ps == PresenceState::Busy)) {
+                    toastKind = NotifKind::FriendOnline; emitToast = true;
+                    bodyTxt = L"came online";
+                }
             }
         }
+        if (emitToast) Notify(toastKind, uid, who, bodyTxt);
         FireChanged();
         return;
     }
@@ -190,6 +266,7 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         uint64_t self = m_selfId.load();
         uint64_t peer = (m.senderId == self) ? m.receiverId : m.senderId;
         m.isRead = (m.senderId == self);
+        bool emitToast = false; std::wstring who, preview;
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             Conversation& c = ConvLocked(peer);
@@ -204,9 +281,18 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
             }
             if (!replaced) {
                 c.messages.push_back(m);
-                if (m.senderId != self) c.unread++;
+                if (m.senderId != self) {
+                    c.unread++;
+                    emitToast = true;
+                    if (FriendInfo* f = FindFriendLocked(m.senderId))
+                        who = !f->nickname.empty() ? f->nickname : f->username;
+                    preview = m.messageText.size() > 80
+                                  ? m.messageText.substr(0, 80) + L"…" : m.messageText;
+                }
             }
         }
+        // Caller (App) suppresses the toast if this peer's chat is already open.
+        if (emitToast) Notify(NotifKind::Message, peer, who.empty() ? L"New message" : who, preview);
         FireChanged();
         return;
     }
@@ -223,6 +309,14 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
             if (m_voiceState.load() == VoiceState::Idle) {
                 m_voicePeer.store(from);
                 m_voiceState.store(VoiceState::Negotiating);
+                std::wstring who;
+                {
+                    std::lock_guard<std::mutex> lk(m_mtx);
+                    if (FriendInfo* f = FindFriendLocked(from))
+                        who = !f->nickname.empty() ? f->nickname : f->username;
+                }
+                Notify(NotifKind::VoiceInvite, from, who.empty() ? L"Voice call" : who,
+                       L"is calling you");
                 FireChanged();
             }
         } else if (kind == "accept") {
@@ -341,9 +435,41 @@ void SocialManager::RefreshFriends() {
                 next.push_back(std::move(fi));
             }
         }
+        // Diff against the previous list so relationship changes raise toasts
+        // with the requester's name resolved (gateway events carry only an id).
+        struct Pending { NotifKind kind; uint64_t id; std::wstring name; };
+        std::vector<Pending> toEmit;
         {
             std::lock_guard<std::mutex> lk(m_mtx);
+            std::map<uint64_t, FriendStatus> prev;
+            for (const auto& f : m_friends) prev[f.accountId] = f.relationStatus;
+            bool firstLoad = !m_friendsLoaded;
+            for (auto& f : next) {
+                auto display = [&]() {
+                    auto it = m_prefs.find(f.accountId);
+                    if (it != m_prefs.end() && !it->second.nickname.empty()) return it->second.nickname;
+                    return f.username;
+                };
+                auto pit = prev.find(f.accountId);
+                FriendStatus before = pit == prev.end() ? FriendStatus::None : pit->second;
+                if (!firstLoad) {
+                    if (f.relationStatus == FriendStatus::RequestReceived &&
+                        before != FriendStatus::RequestReceived)
+                        toEmit.push_back({ NotifKind::FriendRequest, f.accountId, display() });
+                    else if (f.relationStatus == FriendStatus::Accepted &&
+                             before != FriendStatus::Accepted)
+                        toEmit.push_back({ NotifKind::FriendAccepted, f.accountId, display() });
+                }
+            }
             m_friends = std::move(next);
+            ApplyPrefsLocked();
+            m_friendsLoaded = true;
+        }
+        for (const auto& e : toEmit) {
+            if (e.kind == NotifKind::FriendRequest)
+                Notify(e.kind, e.id, e.name, L"sent you a friend request");
+            else
+                Notify(e.kind, e.id, e.name, L"is now your friend");
         }
         FireChanged();
     }).detach();
@@ -387,6 +513,176 @@ std::vector<FriendInfo> SocialManager::GetFriends() const {
 FriendInfo* SocialManager::FindFriendLocked(uint64_t id) {
     for (auto& f : m_friends) if (f.accountId == id) return &f;
     return nullptr;
+}
+
+// ── Personalization (favorites / nicknames / recency) ─────────────────────────
+
+static std::wstring PrefsPath() {
+    wchar_t path[MAX_PATH]{};
+    SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, path);
+    return std::wstring(path) + L"\\ArcadeLauncher\\social_prefs.json";
+}
+
+void SocialManager::ApplyPrefsLocked() {
+    for (auto& f : m_friends) {
+        auto it = m_prefs.find(f.accountId);
+        if (it != m_prefs.end()) {
+            f.favorite = it->second.favorite;
+            f.nickname = it->second.nickname;
+            f.lastInteract = it->second.lastInteract;
+        }
+    }
+}
+
+void SocialManager::LoadPrefs() {
+    std::string body;
+    HANDLE h = CreateFileW(PrefsPath().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD sz = GetFileSize(h, nullptr), got = 0;
+    if (sz && sz != INVALID_FILE_SIZE) {
+        body.resize(sz);
+        ReadFile(h, &body[0], sz, &got, nullptr);
+        body.resize(got);
+    }
+    CloseHandle(h);
+    JsonValue v = JsonValue::Parse(body);
+    const JsonValue& arr = v["prefs"];
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_prefs.clear();
+    if (arr.isArray())
+        for (const auto& p : arr.arr) {
+            LocalPref lp;
+            lp.favorite = p["favorite"].asBool();
+            lp.nickname = Utf8ToWide(p["nickname"].asString());
+            lp.lastInteract = p["lastInteract"].asInt();
+            m_prefs[p["accountId"].asUint()] = std::move(lp);
+        }
+    ApplyPrefsLocked();
+}
+
+void SocialManager::SavePrefs() {
+    std::ostringstream os;
+    os << "{\"prefs\":[";
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        bool first = true;
+        for (const auto& kv : m_prefs) {
+            const LocalPref& lp = kv.second;
+            if (!lp.favorite && lp.nickname.empty() && lp.lastInteract == 0) continue;
+            if (!first) os << ",";
+            first = false;
+            os << "{\"accountId\":" << kv.first
+               << ",\"favorite\":" << (lp.favorite ? "true" : "false")
+               << ",\"nickname\":\"" << JsonEscape(WideToUtf8(lp.nickname)) << "\""
+               << ",\"lastInteract\":" << lp.lastInteract << "}";
+        }
+    }
+    os << "]}";
+    std::string body = os.str();
+    HANDLE h = CreateFileW(PrefsPath().c_str(), GENERIC_WRITE, 0, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    WriteFile(h, body.data(), (DWORD)body.size(), &wrote, nullptr);
+    CloseHandle(h);
+}
+
+void SocialManager::SetFavorite(uint64_t userId, bool fav) {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_prefs[userId].favorite = fav;
+        if (FriendInfo* f = FindFriendLocked(userId)) f->favorite = fav;
+    }
+    SavePrefs();
+    FireChanged();
+}
+
+bool SocialManager::IsFavorite(uint64_t userId) const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    auto it = m_prefs.find(userId);
+    return it != m_prefs.end() && it->second.favorite;
+}
+
+void SocialManager::SetNickname(uint64_t userId, const std::wstring& nick) {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_prefs[userId].nickname = nick;
+        if (FriendInfo* f = FindFriendLocked(userId)) f->nickname = nick;
+    }
+    SavePrefs();
+    FireChanged();
+}
+
+std::wstring SocialManager::NicknameOf(uint64_t userId) const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    auto it = m_prefs.find(userId);
+    return it != m_prefs.end() ? it->second.nickname : L"";
+}
+
+void SocialManager::MarkInteracted(uint64_t userId) {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_prefs[userId].lastInteract = NowSecs();
+        if (FriendInfo* f = FindFriendLocked(userId)) f->lastInteract = m_prefs[userId].lastInteract;
+    }
+    SavePrefs();
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+void SocialManager::Notify(NotifKind kind, uint64_t accountId,
+                           std::wstring title, std::wstring body) {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        Notification n;
+        n.id        = m_notifSeq++;
+        n.kind      = kind;
+        n.accountId = accountId;
+        n.title     = std::move(title);
+        n.body      = std::move(body);
+        n.timestamp = NowMs();
+        m_history.push_back(n);
+        if (m_history.size() > 200)
+            m_history.erase(m_history.begin(), m_history.begin() + (m_history.size() - 200));
+        m_toastQueue.push_back(std::move(n));
+    }
+    FireChanged();
+}
+
+std::vector<Notification> SocialManager::DrainToasts() {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    std::vector<Notification> out;
+    out.swap(m_toastQueue);
+    return out;
+}
+
+std::vector<Notification> SocialManager::GetNotifications() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_history;
+}
+
+int SocialManager::UnreadNotifications() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    int n = 0;
+    for (const auto& x : m_history) if (!x.read) ++n;
+    return n;
+}
+
+void SocialManager::MarkNotificationsRead() {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        for (auto& x : m_history) x.read = true;
+    }
+    FireChanged();
+}
+
+void SocialManager::ClearNotifications() {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_history.clear();
+    }
+    FireChanged();
 }
 
 // ── Presence ────────────────────────────────────────────────────────────────

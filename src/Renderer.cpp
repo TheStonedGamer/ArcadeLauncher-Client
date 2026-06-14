@@ -146,6 +146,7 @@ void Renderer::Resize(UINT w, UINT h) {
     m_downloadsBtnRect  = D2D1::RectF((float)w - 188.0f, 16.0f, (float)w - 150.0f, 48.0f);
     m_sortBtnRect       = D2D1::RectF((float)w - 234.0f, 16.0f, (float)w - 196.0f, 48.0f);
     m_friendsBtnRect    = D2D1::RectF((float)w - 280.0f, 16.0f, (float)w - 242.0f, 48.0f);
+    m_bellBtnRect       = D2D1::RectF((float)w - 326.0f, 16.0f, (float)w - 288.0f, 48.0f);
     m_friendsPanelW = std::clamp((float)w * 0.26f, 280.0f, 340.0f);
     m_launchBtnRect = {}; // set during detail panel draw
 }
@@ -173,6 +174,12 @@ void Renderer::Render(const std::vector<const Game*>& games, RenderState& state)
 
     if (state.chatOpen)
         DrawChatWindow(state);
+
+    if (state.notifOpen)
+        DrawNotifPanel(state);
+
+    // Toasts render above everything else.
+    DrawToasts();
 
     m_rt->EndDraw();
 }
@@ -321,6 +328,27 @@ void Renderer::DrawTopBar(const RenderState& state) {
         m_brushAccent->SetColor(C_ACCENT);
         m_rt->DrawText(count.c_str(), (UINT32)count.size(), m_fmtCardSub.Get(),
                        badge, m_brushWhite.Get());
+    }
+
+    // Notifications bell (Segoe MDL2 U+E7E7). Active while the dropdown is open;
+    // red badge shows unread count.
+    auto& bl = m_bellBtnRect;
+    bool bellActive = state.notifOpen;
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(bl, 6, 6),
+                               bellActive ? m_brushCardHover.Get() : m_brushCard.Get());
+    if (bellActive)
+        m_rt->DrawRoundedRectangle(D2D1::RoundedRect(bl, 6, 6), m_brushAccent.Get(), 1.5f);
+    m_rt->DrawText(L"\xE7E7", 1, m_fmtIcon.Get(),
+                   D2D1::RectF(bl.left, bl.top, bl.right, bl.bottom),
+                   bellActive ? m_brushAccent.Get() : m_brushSubtext.Get());
+    if (state.notifUnread > 0) {
+        std::wstring count = std::to_wstring(state.notifUnread);
+        D2D1_POINT_2F bc = D2D1::Point2F(bl.right - 2.0f, bl.top + 2.0f);
+        m_brushAccent->SetColor(D2D1::ColorF(0xE5534B));
+        m_rt->FillEllipse(D2D1::Ellipse(bc, 10.0f, 10.0f), m_brushAccent.Get());
+        m_brushAccent->SetColor(C_ACCENT);
+        m_rt->DrawText(count.c_str(), (UINT32)count.size(), m_fmtCardSub.Get(),
+                       D2D1::RectF(bc.x - 10, bc.y - 10, bc.x + 10, bc.y + 10), m_brushWhite.Get());
     }
 
     auto& sb = m_settingsBtnRect;
@@ -1420,6 +1448,23 @@ Renderer::FriendsHit Renderer::HitTestFriendsPanel(float x, float y) const {
         hit.kind = FriendsHit::AddFriend;
         return hit;
     }
+    // Inline request actions take priority over the row they sit on.
+    for (const auto& rr : m_friendAcceptRects) {
+        const D2D1_RECT_F& r = rr.first;
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            hit.kind = FriendsHit::AcceptRequest;
+            hit.accountId = rr.second;
+            return hit;
+        }
+    }
+    for (const auto& rr : m_friendDeclineRects) {
+        const D2D1_RECT_F& r = rr.first;
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+            hit.kind = FriendsHit::DeclineRequest;
+            hit.accountId = rr.second;
+            return hit;
+        }
+    }
     for (const auto& rr : m_friendRowRects) {
         const D2D1_RECT_F& r = rr.first;
         if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
@@ -1468,24 +1513,31 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
                               D2D1_ANTIALIAS_MODE_ALIASED);
 
     m_friendRowRects.clear();
+    m_friendAcceptRects.clear();
+    m_friendDeclineRects.clear();
 
     // Bucket friends into Steam-like groups. Pending received first (actionable),
-    // then In-Game, Online, Away/Busy, Offline, then sent requests + blocked.
+    // then Favorites, In-Game, Online, Away/Busy, Offline, sent requests, blocked.
     auto bucket = [](const FriendRowView& f) -> int {
         if (f.relation == 2) return 0;           // RequestReceived
         if (f.relation == 1) return 6;           // RequestSent
         if (f.relation == 4) return 7;           // Blocked
+        if (f.favorite) return 1;                // Favorites pinned above the rest
         switch (f.presence) {                     // Accepted -> by presence
-            case 5: return 1;                     // InGame
-            case 1: return 2;                     // Online
-            case 2: case 3: return 3;             // Away/Busy
+            case 5: return 2;                     // InGame
+            case 1: return 3;                     // Online
+            case 2: case 3: return 4;             // Away/Busy
             default: return 5;                    // Offline/Invisible
         }
     };
     const wchar_t* groupNames[8] = {
-        L"PENDING REQUESTS", L"IN-GAME", L"ONLINE", L"AWAY", L"",
+        L"PENDING REQUESTS", L"FAVORITES", L"IN-GAME", L"ONLINE", L"AWAY",
         L"OFFLINE", L"REQUEST SENT", L"BLOCKED"
     };
+
+    // Presence rank for within-group ordering (favorites group mixes states).
+    auto presRank = [](int p) { switch (p) { case 5: return 0; case 1: return 1;
+        case 2: case 3: return 2; default: return 3; } };
 
     float y = listTop + 6.0f - state.friendsScroll;
     int hoveredId = state.hoveredFriendId;
@@ -1497,6 +1549,18 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
         for (const auto& f : state.friends)
             if (bucket(f) == g) rows.push_back(&f);
         if (rows.empty()) continue;
+
+        // Order: favorites by presence then name; others alphabetically by display.
+        std::sort(rows.begin(), rows.end(), [&](const FriendRowView* a, const FriendRowView* b) {
+            auto disp = [](const FriendRowView* f) {
+                return f->nickname.empty() ? f->username : f->nickname; };
+            if (g == 1) { int ra = presRank(a->presence), rb = presRank(b->presence);
+                          if (ra != rb) return ra < rb; }
+            std::wstring da = disp(a), db = disp(b);
+            for (auto& c : da) c = towlower(c);
+            for (auto& c : db) c = towlower(c);
+            return da < db;
+        });
 
         // Group header.
         D2D1_RECT_F gh = D2D1::RectF(panelL + pad, y, w - pad, y + 20.0f);
@@ -1530,11 +1594,19 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
                               m_brushWhite.Get());
             m_brushWhite->SetColor(C_WHITE);
 
-            // Username (top) + status/game (bottom).
+            // Display name (nickname overrides username) + status/game.
             float tx = panelL + 50.0f;
+            const std::wstring& disp = f.nickname.empty() ? f.username : f.nickname;
             D2D1_RECT_F nameR = D2D1::RectF(tx, y + 5.0f, w - 30.0f, y + 24.0f);
-            m_rt->DrawText(f.username.c_str(), (UINT32)f.username.size(),
+            m_rt->DrawText(disp.c_str(), (UINT32)disp.size(),
                            m_fmtCard.Get(), nameR, m_brushText.Get());
+            // Favorite star (gold) at the row's right edge for accepted friends.
+            if (f.favorite && f.relation != 2) {
+                m_brushWhite->SetColor(D2D1::ColorF(0xE3B341));
+                D2D1_RECT_F starR = D2D1::RectF(w - 28.0f, y + 4.0f, w - 10.0f, y + 22.0f);
+                m_rt->DrawText(L"\xE735", 1, m_fmtSmall.Get(), starR, m_brushWhite.Get());
+                m_brushWhite->SetColor(C_WHITE);
+            }
 
             std::wstring sub;
             if (f.relation == 2)      sub = L"wants to be friends";
@@ -1551,8 +1623,28 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
             m_rt->DrawText(sub.c_str(), (UINT32)sub.size(), m_fmtCardSub.Get(), subR, subBrush);
             if (f.presence == 5) m_brushAccent->SetColor(C_ACCENT);
 
+            // Incoming friend request: inline Accept (✓) / Decline (✕) buttons.
+            if (f.relation == 2) {
+                float bs = 28.0f;                 // button size
+                float by = cy - bs * 0.5f;
+                D2D1_RECT_F decl = D2D1::RectF(w - 6.0f - bs, by, w - 6.0f, by + bs);
+                D2D1_RECT_F acc  = D2D1::RectF(decl.left - 6.0f - bs, by, decl.left - 6.0f, by + bs);
+                // Accept (green).
+                m_brushWhite->SetColor(D2D1::ColorF(0x238636));
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(acc, 6, 6), m_brushWhite.Get());
+                m_brushWhite->SetColor(C_WHITE);
+                m_rt->DrawText(L"\xE73E", 1, m_fmtIcon.Get(), acc, m_brushWhite.Get()); // ✓ glyph
+                // Decline (red).
+                m_brushWhite->SetColor(D2D1::ColorF(0xDA3633));
+                m_rt->FillRoundedRectangle(D2D1::RoundedRect(decl, 6, 6), m_brushWhite.Get());
+                m_brushWhite->SetColor(C_WHITE);
+                m_rt->DrawText(L"\xE711", 1, m_fmtIcon.Get(), decl, m_brushWhite.Get()); // ✕ glyph
+                m_friendAcceptRects.push_back({ acc, f.accountId });
+                m_friendDeclineRects.push_back({ decl, f.accountId });
+            }
+
             // Unread badge on the right.
-            if (f.unread > 0) {
+            if (f.relation != 2 && f.unread > 0) {
                 std::wstring n = std::to_wstring(f.unread);
                 D2D1_POINT_2F bc = D2D1::Point2F(w - 24.0f, cy);
                 m_brushAccent->SetColor(D2D1::ColorF(0xE5534B));
@@ -1575,6 +1667,223 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
 
     m_rt->PopAxisAlignedClip();
     m_friendsContentH = (y + state.friendsScroll) - listTop;
+}
+
+// ── Toast notifications ───────────────────────────────────────────────────────
+
+// Per-kind accent color + Segoe MDL2 glyph for toasts and history rows.
+static D2D1_COLOR_F NotifAccent(int kind) {
+    switch (kind) {
+        case 0: return D2D1::ColorF(0x3FB950); // FriendRequest  green
+        case 1: return D2D1::ColorF(0x3FB950); // FriendAccepted green
+        case 2: return D2D1::ColorF(0x58A6FF); // FriendOnline   blue
+        case 3: return D2D1::ColorF(0x57AB5A); // FriendInGame   game-green
+        case 4: return D2D1::ColorF(0x8957E5); // Message        purple
+        case 5: return D2D1::ColorF(0xD29922); // VoiceInvite    amber
+        default: return D2D1::ColorF(0x6E7681);
+    }
+}
+static const wchar_t* NotifGlyph(int kind) {
+    switch (kind) {
+        case 0: return L"\xE8FA"; // add friend
+        case 1: return L"\xE8FB"; // accept
+        case 2: return L"\xE768"; // play/online
+        case 3: return L"\xE7FC"; // game
+        case 4: return L"\xE8BD"; // message
+        case 5: return L"\xE717"; // phone
+        default: return L"\xE7E7"; // bell
+    }
+}
+
+void Renderer::PushToast(int kind, uint64_t accountId,
+                         const std::wstring& title, const std::wstring& body) {
+    ActiveToast t;
+    t.kind = kind; t.accountId = accountId;
+    t.title = title; t.body = body;
+    t.spawnTick = GetTickCount64();
+    // Cap simultaneous toasts; drop the oldest non-dismissing one.
+    if (m_toasts.size() >= 4 && !m_toasts.empty()) m_toasts.erase(m_toasts.begin());
+    m_toasts.push_back(std::move(t));
+}
+
+void Renderer::DismissToast(uint64_t accountId, int kind) {
+    uint64_t now = GetTickCount64();
+    for (auto& t : m_toasts)
+        if (t.accountId == accountId && t.kind == kind && !t.dismissing) {
+            t.dismissing = true; t.dismissTick = now; break;
+        }
+}
+
+bool Renderer::UpdateToasts() {
+    uint64_t now = GetTickCount64();
+    for (auto it = m_toasts.begin(); it != m_toasts.end(); ) {
+        const ActiveToast& t = *it;
+        uint64_t fadeOut = t.dismissing ? t.dismissTick : (t.spawnTick + t.lifeMs);
+        if (now >= fadeOut + 280) it = m_toasts.erase(it);
+        else ++it;
+    }
+    return !m_toasts.empty();
+}
+
+void Renderer::DrawToasts() {
+    if (m_toasts.empty()) return;
+    uint64_t now = GetTickCount64();
+    const float cardW = 320.0f, cardH = 64.0f, gap = 10.0f, margin = 18.0f;
+    float right = (float)m_width - margin;
+    float y = (float)m_height - margin - cardH;
+
+    // Draw newest at the bottom, older stacking upward.
+    for (auto it = m_toasts.rbegin(); it != m_toasts.rend(); ++it) {
+        ActiveToast& t = *it;
+        // Slide-in (first 200ms) and fade-out (last 280ms) easing.
+        float inA = std::min(1.0f, (now - t.spawnTick) / 200.0f);
+        uint64_t fadeStart = t.dismissing ? t.dismissTick : (t.spawnTick + t.lifeMs);
+        float outA = now >= fadeStart ? std::min(1.0f, (now - fadeStart) / 280.0f) : 0.0f;
+        float alpha = inA * (1.0f - outA);
+        float slide = (1.0f - inA) * 40.0f + outA * 40.0f;  // ease from/to the right
+        float left = right - cardW + slide;
+        D2D1_RECT_F card = D2D1::RectF(left, y, left + cardW, y + cardH);
+        t.rect = card;
+
+        // Card shadow + fill + left accent bar.
+        m_brushWhite->SetColor(D2D1::ColorF(0, 0.35f * alpha));
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(
+            D2D1::RectF(card.left + 3, card.top + 4, card.right + 3, card.bottom + 4), 8, 8),
+            m_brushWhite.Get());
+        m_brushWhite->SetColor(C_WHITE);
+        ID2D1SolidColorBrush* bg = m_brushCard.Get();
+        float prevBgA = bg->GetOpacity(); bg->SetOpacity(alpha);
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(card, 8, 8), bg);
+        bg->SetOpacity(prevBgA);
+
+        D2D1_COLOR_F ac = NotifAccent(t.kind); ac.a = alpha;
+        m_brushWhite->SetColor(ac);
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(
+            D2D1::RectF(card.left, card.top + 6, card.left + 4, card.bottom - 6), 2, 2),
+            m_brushWhite.Get());
+        // Glyph chip.
+        D2D1_RECT_F gr = D2D1::RectF(card.left + 12, card.top, card.left + 48, card.bottom);
+        m_rt->DrawText(NotifGlyph(t.kind), 1, m_fmtIcon.Get(), gr, m_brushWhite.Get());
+        m_brushWhite->SetColor(C_WHITE);
+
+        float prevTA = m_brushText->GetOpacity(); m_brushText->SetOpacity(alpha);
+        float prevSA = m_brushSubtext->GetOpacity(); m_brushSubtext->SetOpacity(alpha);
+        D2D1_RECT_F tr = D2D1::RectF(card.left + 52, card.top + 9, card.right - 28, card.top + 30);
+        m_rt->DrawText(t.title.c_str(), (UINT32)t.title.size(), m_fmtCard.Get(), tr, m_brushText.Get());
+        D2D1_RECT_F br = D2D1::RectF(card.left + 52, card.top + 31, card.right - 12, card.bottom - 8);
+        m_rt->DrawText(t.body.c_str(), (UINT32)t.body.size(), m_fmtCardSub.Get(), br, m_brushSubtext.Get());
+        // Dismiss ✕.
+        t.closeRect = D2D1::RectF(card.right - 26, card.top + 6, card.right - 6, card.top + 26);
+        m_rt->DrawText(L"\xE711", 1, m_fmtSmall.Get(), t.closeRect, m_brushSubtext.Get());
+        m_brushText->SetOpacity(prevTA);
+        m_brushSubtext->SetOpacity(prevSA);
+
+        y -= cardH + gap;
+    }
+}
+
+Renderer::ToastHit Renderer::HitTestToasts(float x, float y) const {
+    ToastHit hit;
+    for (const auto& t : m_toasts) {
+        const D2D1_RECT_F& c = t.closeRect;
+        if (x >= c.left && x <= c.right && y >= c.top && y <= c.bottom) {
+            hit.kind = ToastHit::Dismiss; hit.accountId = t.accountId; hit.toastKind = t.kind;
+            return hit;
+        }
+    }
+    for (const auto& t : m_toasts) {
+        const D2D1_RECT_F& c = t.rect;
+        if (x >= c.left && x <= c.right && y >= c.top && y <= c.bottom) {
+            hit.kind = ToastHit::Action; hit.accountId = t.accountId; hit.toastKind = t.kind;
+            return hit;
+        }
+    }
+    return hit;
+}
+
+// ── Notifications history dropdown ────────────────────────────────────────────
+
+bool Renderer::HitTestBellBtn(float x, float y) const {
+    return x >= m_bellBtnRect.left && x <= m_bellBtnRect.right &&
+           y >= m_bellBtnRect.top  && y <= m_bellBtnRect.bottom;
+}
+
+bool Renderer::PointInNotifPanel(float x, float y) const {
+    return x >= m_notifPanelRect.left && x <= m_notifPanelRect.right &&
+           y >= m_notifPanelRect.top  && y <= m_notifPanelRect.bottom;
+}
+
+void Renderer::DrawNotifPanel(RenderState& state) {
+    float w = (float)m_width;
+    float panelW = 340.0f, panelH = std::min(440.0f, (float)m_height - m_topbarH - 24.0f);
+    float pl = w - panelW - 14.0f, pt = m_topbarH + 4.0f;
+    D2D1_RECT_F panel = D2D1::RectF(pl, pt, pl + panelW, pt + panelH);
+    m_notifPanelRect = panel;
+
+    // Shadow + body.
+    m_brushWhite->SetColor(D2D1::ColorF(0, 0.4f));
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(
+        D2D1::RectF(pl + 4, pt + 5, pl + panelW + 4, pt + panelH + 5), 10, 10), m_brushWhite.Get());
+    m_brushWhite->SetColor(C_WHITE);
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(panel, 10, 10), m_brushSidebar.Get());
+    m_rt->DrawRoundedRectangle(D2D1::RoundedRect(panel, 10, 10), m_brushCard.Get(), 1.0f);
+
+    // Header with title + actions.
+    float pad = 14.0f;
+    D2D1_RECT_F hdr = D2D1::RectF(pl + pad, pt + 10, pl + panelW - pad, pt + 34);
+    m_rt->DrawText(L"Notifications", 13, m_fmtHeading.Get(), hdr, m_brushText.Get());
+    m_notifClearRect   = D2D1::RectF(pl + panelW - 58, pt + 12, pl + panelW - pad, pt + 32);
+    m_notifMarkAllRect = D2D1::RectF(pl + panelW - 132, pt + 12, pl + panelW - 64, pt + 32);
+    m_rt->DrawText(L"Read", 4, m_fmtSmall.Get(), m_notifMarkAllRect, m_brushAccent.Get());
+    m_rt->DrawText(L"Clear", 5, m_fmtSmall.Get(), m_notifClearRect, m_brushSubtext.Get());
+
+    float listTop = pt + 42.0f;
+    m_rt->PushAxisAlignedClip(D2D1::RectF(pl, listTop, pl + panelW, pt + panelH),
+                              D2D1_ANTIALIAS_MODE_ALIASED);
+    m_notifRowRects.clear();
+    float y = listTop + 4.0f - state.notifScroll;
+
+    if (state.notifs.empty()) {
+        D2D1_RECT_F er = D2D1::RectF(pl + pad, listTop + 30, pl + panelW - pad, listTop + 70);
+        m_rt->DrawText(L"You're all caught up.", 21, m_fmtSummary.Get(), er, m_brushSubtext.Get());
+    }
+    for (const auto& n : state.notifs) {
+        float rowH = 56.0f;
+        D2D1_RECT_F row = D2D1::RectF(pl + 6, y, pl + panelW - 6, y + rowH);
+        if (!n.read) {
+            D2D1_COLOR_F hl = NotifAccent(n.kind); hl.a = 0.10f;
+            m_brushWhite->SetColor(hl);
+            m_rt->FillRoundedRectangle(D2D1::RoundedRect(row, 6, 6), m_brushWhite.Get());
+            m_brushWhite->SetColor(C_WHITE);
+        }
+        m_notifRowRects.push_back({ row, n.accountId });
+        // Glyph.
+        D2D1_COLOR_F ac = NotifAccent(n.kind);
+        m_brushWhite->SetColor(ac);
+        D2D1_RECT_F gr = D2D1::RectF(pl + 12, y + 6, pl + 44, y + 38);
+        m_rt->DrawText(NotifGlyph(n.kind), 1, m_fmtIcon.Get(), gr, m_brushWhite.Get());
+        m_brushWhite->SetColor(C_WHITE);
+        // Title + body.
+        D2D1_RECT_F tr = D2D1::RectF(pl + 48, y + 7, pl + panelW - 12, y + 28);
+        m_rt->DrawText(n.title.c_str(), (UINT32)n.title.size(), m_fmtCard.Get(), tr, m_brushText.Get());
+        D2D1_RECT_F br = D2D1::RectF(pl + 48, y + 28, pl + panelW - 12, y + rowH - 4);
+        m_rt->DrawText(n.body.c_str(), (UINT32)n.body.size(), m_fmtCardSub.Get(), br, m_brushSubtext.Get());
+        y += rowH + 2.0f;
+    }
+    m_rt->PopAxisAlignedClip();
+    m_notifContentH = (y + state.notifScroll) - listTop;
+}
+
+Renderer::NotifHit Renderer::HitTestNotifPanel(float x, float y) const {
+    NotifHit hit;
+    auto in = [&](const D2D1_RECT_F& r) {
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    if (in(m_notifMarkAllRect)) { hit.kind = NotifHit::MarkAll; return hit; }
+    if (in(m_notifClearRect))   { hit.kind = NotifHit::Clear;   return hit; }
+    for (const auto& rr : m_notifRowRects)
+        if (in(rr.first)) { hit.kind = NotifHit::Row; hit.accountId = rr.second; return hit; }
+    return hit;
 }
 
 // ── Direct-message chat window ────────────────────────────────────────────────

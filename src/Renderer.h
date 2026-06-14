@@ -56,6 +56,18 @@ struct FriendRowView {
     int          relation = 0;   // 0 None,1 RequestSent,2 RequestReceived,3 Accepted,4 Blocked
     std::wstring gameTitle;
     int          unread = 0;
+    bool         favorite = false;
+    std::wstring nickname;          // overrides username for display when set
+};
+
+// One notification row for the history dropdown (render-only view).
+struct NotifRowView {
+    int          kind = 6;     // mirrors social::NotifKind int
+    uint64_t     accountId = 0;
+    std::wstring title;
+    std::wstring body;
+    int64_t      ts = 0;       // epoch ms
+    bool         read = false;
 };
 
 struct RenderState {
@@ -143,6 +155,12 @@ struct RenderState {
     int      voiceState = 0;   // 0 idle,1 connecting,2 negotiating(ringing),3 connected,...
     uint64_t voicePeer  = 0;
     bool     voiceMuted = false;
+
+    // ── Notifications history dropdown (bell button in the topbar) ────────────
+    bool notifOpen   = false;
+    int  notifUnread = 0;
+    std::vector<NotifRowView> notifs;  // newest first; filled by App when open
+    float notifScroll = 0.0f;
 };
 
 class Renderer {
@@ -203,7 +221,7 @@ public:
 
     // Friends panel hit testing. Returns what was clicked; for a friend row,
     // outAccountId is set. Geometry comes from rects cached during the last draw.
-    struct FriendsHit { enum Kind { None, Row, AddFriend } kind = None; uint64_t accountId = 0; };
+    struct FriendsHit { enum Kind { None, Row, AddFriend, AcceptRequest, DeclineRequest } kind = None; uint64_t accountId = 0; };
     FriendsHit HitTestFriendsPanel(float x, float y) const;
     bool       PointInFriendsPanel(float x, float y) const;
     float      FriendsPanelWidth() const { return m_friendsPanelW; }
@@ -218,6 +236,26 @@ public:
     ChatHit HitTestChatWindow(float x, float y) const;
     bool    PointInChatWindow(float x, float y) const;
     float   MaxChatScroll(const RenderState& s) const;
+
+    // ── Toast notifications (bottom-right, animated, auto-expiring) ────────────
+    // App pushes toasts (drained from SocialManager); the renderer owns their
+    // animation + lifetime. UpdateToasts() advances timers and returns true while
+    // any toast is still on screen (so the host keeps the 60fps repaint going).
+    void PushToast(int kind, uint64_t accountId,
+                   const std::wstring& title, const std::wstring& body);
+    bool UpdateToasts();
+    bool HasActiveToasts() const { return !m_toasts.empty(); }
+    void DismissToast(uint64_t accountId, int kind);  // start the fade-out now
+    struct ToastHit { enum Kind { None, Dismiss, Action } kind = None;
+                      uint64_t accountId = 0; int toastKind = -1; };
+    ToastHit HitTestToasts(float x, float y) const;
+
+    // ── Notifications history dropdown (bell button) ──────────────────────────
+    bool HitTestBellBtn(float x, float y) const;
+    struct NotifHit { enum Kind { None, Row, MarkAll, Clear, Close } kind = None;
+                      uint64_t accountId = 0; };
+    NotifHit HitTestNotifPanel(float x, float y) const;
+    bool PointInNotifPanel(float x, float y) const;
 
     // Profile picture (server account avatar) shown in the topbar profile button.
     // Decoded from in-memory image bytes on the render-target thread. Pass empty
@@ -334,6 +372,8 @@ private:
     D2D1_RECT_F m_friendsPanelRect{};
     D2D1_RECT_F m_friendsAddBtnRect{};
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendRowRects;
+    std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendAcceptRects;  // incoming-request ✓
+    std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendDeclineRects; // incoming-request ✕
     float m_friendsContentH = 0.0f;   // total content height for scroll clamping
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
 
@@ -348,6 +388,30 @@ private:
     D2D1_RECT_F m_chatAcceptRect{};
     D2D1_RECT_F m_chatDeclineRect{};
     float m_chatContentH = 0.0f;
+
+    // Toast notifications (bottom-right). Animation timers in ms via GetTickCount64.
+    struct ActiveToast {
+        int          kind = 6;
+        uint64_t     accountId = 0;
+        std::wstring title, body;
+        uint64_t     spawnTick = 0;   // shifted forward while hovered (pause)
+        uint64_t     lifeMs = 5200;
+        bool         dismissing = false;
+        uint64_t     dismissTick = 0;
+        D2D1_RECT_F  rect{};          // last drawn card rect (for hit-test)
+        D2D1_RECT_F  closeRect{};
+    };
+    std::vector<ActiveToast> m_toasts;
+    void DrawToasts();
+
+    // Notifications history dropdown layout.
+    D2D1_RECT_F m_bellBtnRect{};
+    D2D1_RECT_F m_notifPanelRect{};
+    D2D1_RECT_F m_notifMarkAllRect{};
+    D2D1_RECT_F m_notifClearRect{};
+    std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_notifRowRects;
+    float m_notifContentH = 0.0f;
+    void DrawNotifPanel(RenderState& state);
 
     // Current user's profile picture (circular avatar). Null = show person glyph.
     ComPtr<ID2D1Bitmap> m_avatar;

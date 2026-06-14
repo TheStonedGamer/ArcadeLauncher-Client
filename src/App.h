@@ -51,6 +51,7 @@ private:
     // the click.
     bool HandleFriendsPanelClick(float x, float y);
     void ShowFriendContextMenu(uint64_t accountId);
+    void HandleNotifAction(int notifKind, uint64_t accountId); // toast/notif-row click
     void PromptAddFriend();
     // Direct-message chat window. OpenChat loads history + focuses the compose
     // box; HandleChatClick routes the chat window's controls; ChatInputChar

@@ -37,6 +37,11 @@ struct FriendInfo {
     std::wstring  currentGameTitle;
     std::wstring  currentGameId;
     int64_t       lastOnline = 0;   // epoch seconds
+    // Client-local personalization (persisted in social_prefs.json, never sent
+    // to the server). Favorites pin to the top; nickname overrides display name.
+    bool          favorite = false;
+    std::wstring  nickname;
+    int64_t       lastInteract = 0; // epoch secs — for "recently interacted" sort
 };
 
 struct ChatMessage {
@@ -56,6 +61,28 @@ struct Conversation {
     int                      unread = 0;
     bool                     peerTyping = false;
     int64_t                  peerTypingUntil = 0; // epoch ms; clears the indicator
+};
+
+// Desktop notification categories. The integer values are mirrored into the
+// dependency-free Renderer (toast accent colors + glyphs), so keep them stable.
+enum class NotifKind {
+    FriendRequest = 0,   // someone sent you a request
+    FriendAccepted = 1,  // your request was accepted
+    FriendOnline = 2,    // a friend came online
+    FriendInGame = 3,    // a friend started a game
+    Message = 4,         // new direct message
+    VoiceInvite = 5,     // incoming voice call
+    System = 6           // generic/system announcement
+};
+
+struct Notification {
+    uint64_t     id = 0;          // monotonic, per-session
+    NotifKind    kind = NotifKind::System;
+    uint64_t     accountId = 0;   // related user (0 if none) — click target
+    std::wstring title;
+    std::wstring body;
+    int64_t      timestamp = 0;   // epoch ms
+    bool         read = false;
 };
 
 // Voice signaling state machine states (per social.md §6).
