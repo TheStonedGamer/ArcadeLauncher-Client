@@ -95,10 +95,16 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
 
 ## 5. Phased execution (each phase: Windows stays green; Linux progress is additive)
 
-**Phase L0 — Toolchain & portable core** *(foundation)*
+**Phase L0 — Toolchain & portable core** *(foundation)* — ✅ **core build green**
 - CMake build that compiles the already-portable files (JSON, Config, protocol)
   into a `core` static lib on Linux. Stand up a Debian build CT (proposed
   `10.0.0.221`) as the Linux build/CI box. Prove the core compiles clean.
+- **Done:** `CMakeLists.txt` builds `arcade_core` (QrCode + `src/core/CoreSmoke.cpp`
+  exercising `SocialJson.h`) + a `core_selfcheck` driver. `pch.h` is now
+  cross-platform (Win stack behind `#ifdef _WIN32`; Windows MSI build unchanged).
+  Verified on Debian 12 / g++ 12 / cmake 3.25: compiles, links, `core_selfcheck`
+  exits 0. (Validated on the existing app CT toolchain; dedicated `10.0.0.221`
+  build CT still to be provisioned as the standing CI box.)
 
 **Phase L1 — Platform interfaces + Windows wrappers**
 - Land `src/platform/*.h`. Wrap existing Win32/Direct2D/WinHTTP/WASAPI behind

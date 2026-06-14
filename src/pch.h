@@ -1,5 +1,17 @@
 #pragma once
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Precompiled header. On Windows (MSVC) this pulls in the full Win32/Direct2D/
+// WinHTTP/WIC stack exactly as before. On non-Windows (the Linux native port,
+// see PORTING_LINUX.md) the Windows-only includes/pragmas/helpers are compiled
+// out so that the genuinely portable files (JSON, QrCode, protocol/data models)
+// can be built into a `core` static lib without dragging in windows.h. The
+// Windows build is byte-for-byte unchanged — everything platform-specific lives
+// inside `#ifdef _WIN32`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#ifdef _WIN32
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #ifndef UNICODE
@@ -27,7 +39,9 @@
 // COM
 #include <wrl/client.h>
 
-// STL
+#endif // _WIN32
+
+// STL — portable, included on every platform.
 #include <string>
 #include <vector>
 #include <deque>
@@ -43,8 +57,11 @@
 #include <sstream>
 #include <cassert>
 #include <filesystem>
-#include <tlhelp32.h>
 #include <condition_variable>
+
+#ifdef _WIN32
+
+#include <tlhelp32.h>
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
@@ -58,7 +75,12 @@
 #pragma comment(lib, "advapi32.lib")
 
 using Microsoft::WRL::ComPtr;
+
+#endif // _WIN32
+
 namespace fs = std::filesystem;
+
+#ifdef _WIN32
 
 inline std::wstring ToWide(const std::string& s) {
     if (s.empty()) return {};
@@ -81,3 +103,5 @@ inline std::wstring GetAppDataPath() {
     SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, path);
     return std::wstring(path) + L"\\ArcadeLauncher";
 }
+
+#endif // _WIN32
