@@ -110,9 +110,23 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   libfontconfig1-dev, libasound2-dev). End-to-end verified: clone from GitHub →
   cmake → build → `core_selfcheck` exits 0.
 
-**Phase L1 — Platform interfaces + Windows wrappers**
+**Phase L1 — Platform interfaces + Windows wrappers** — 🚧 **boundary + portable utils landed**
 - Land `src/platform/*.h`. Wrap existing Win32/Direct2D/WinHTTP/WASAPI behind
   them. Windows build now goes through the boundary (no visual change).
+- **Done (L1a):** `src/platform/` boundary headers — `Platform.h` (umbrella),
+  `Net.h` (IHttpClient/IWebSocket), `Window.h` (IWindow + events/keys),
+  `Renderer2D.h` (IRenderer2D), `AudioIO.h` (IAudioIn/Out), plus the portable
+  utilities now compiled into `arcade_core`: `Text.{h,cpp}` (UTF-8↔UTF-16 codec,
+  incl. surrogate pairs), `Crypto.h`+`Sha256.cpp` (vendored FIPS-180-4 SHA-256),
+  `Paths.{h,cpp}` (data/temp/exe dirs — Win32 SHGetFolderPath vs XDG, `#ifdef`).
+  `CoreSmoke` gained known-answer tests for all three (SHA-256 "abc" KAT, text
+  round-trip with €/😀, app-scoped path checks). MSVC compiles the new TUs clean;
+  Windows MSI build untouched (platform/ files are not in the vcxproj yet — they
+  enter the Windows build when code is migrated onto the boundary in L1b).
+- **Next (L1b):** Windows impls under `platform/win/` that wrap the existing
+  ServerClient/WinHTTP (→IHttpClient/IWebSocket), the Win32 window/loop (→IWindow),
+  Direct2D Renderer (→IRenderer2D), WASAPI VoiceEngine (→IAudioIn/Out); then route
+  the app through the interfaces with no visual change.
 
 **Phase L2 — Net + Crypto on Linux**
 - libcurl `IHttpClient`, IXWebSocket `IWebSocket`, vendored sha256. Headless test:

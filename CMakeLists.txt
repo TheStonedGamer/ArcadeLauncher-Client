@@ -28,6 +28,9 @@ endif()
 # Win32 dependency. As files are ported (PORTING_LINUX.md L1+), add them here.
 add_library(arcade_core STATIC
   src/QrCode.cpp
+  src/platform/Text.cpp
+  src/platform/Sha256.cpp
+  src/platform/Paths.cpp
   src/core/CoreSmoke.cpp
 )
 
