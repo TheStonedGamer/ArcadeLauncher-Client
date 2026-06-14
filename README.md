@@ -23,6 +23,11 @@ bundled LZMA SDK are all that's used, statically linked or shipped in the MSI.
   RPCS3, and PC repacks.
 - **Periodic re-sync** — re-fetches the server catalog every 10 minutes and on
   window focus, preserving local install state.
+- **Social** — friends list with requests, presence (online / away / in-game),
+  direct messages, voice calls, and toast notifications, all over a persistent
+  WebSocket gateway. Favorites, nicknames, and notification preferences are kept
+  client-side. The panel reconnects automatically with backoff and an
+  application-level heartbeat.
 
 ## Build
 

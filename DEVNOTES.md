@@ -82,6 +82,8 @@ main.cpp
         ├── IgdbClient      — IGDB/Twitch REST API
         ├── MetadataManager — matches games → IGDB, writes to GameLibrary
         ├── MetadataFetcher — downloads cover art from SteamGridDB
+        ├── SocialManager   — friends/presence/chat/voice over a WSS gateway
+        │     └── WebSocketClient — persistent WinHTTP WebSocket (own worker)
         └── Scanners (background thread)
               ├── SteamScanner
               ├── EpicScanner
@@ -140,6 +142,10 @@ Client-side work should preserve the current local library behavior. Server game
 | `MetadataPickerDialog.h/.cpp` | UI for manually picking an IGDB match |
 | `GameEditDialog.h/.cpp` | Edit game title / launch path dialog |
 | `ProcessMonitor.h/.cpp` | Watches launched game process; re-shows launcher on exit |
+| `Social/SocialManager.h/.cpp` | Owns the whole social subsystem: friends, presence, chat, notifications, voice signaling; gateway lifecycle + reconnect |
+| `Social/WebSocketClient.h/.cpp` | Persistent client WebSocket over the WinHTTP WebSocket API (own worker thread; text + binary frames) |
+| `Social/SocialTypes.h` | `FriendInfo`, `Conversation`, `Notification`, and the `FriendStatus`/`PresenceState`/`GatewayState`/`NotifKind` enums |
+| `Social/VoiceEngine.h/.cpp` | WASAPI capture/render for voice calls; PCM relayed over the gateway's binary path |
 | `Scanner.h` | `IScanner` interface |
 | `Platform/SteamScanner.cpp` | Parses `libraryfolders.vdf` + `appmanifest_*.acf` |
 | `Platform/EpicScanner.cpp` | Parses `.item` manifest JSON files |
@@ -174,8 +180,11 @@ All persistent data lives in `%APPDATA%\ArcadeLauncher\`.
 
 ```
 %APPDATA%\ArcadeLauncher\
-├── config.json       — AppConfig (settings, emulator paths, IGDB creds)
+├── config.json       — AppConfig (settings, emulator paths, IGDB creds, server URL/token)
 ├── library.json      — GameLibrary cache (all scanned games + metadata)
+├── social_prefs.json — Client-local social personalization (favorites, nicknames,
+│                       last-interaction times, notification sound/presence-alert toggles)
+├── game_icons\       — Per-game .ico files generated for desktop/Start-menu shortcuts
 ├── art\              — Cover art images (PNG), keyed by game ID
 ├── repacks_icon.png  — Cached FitGirl icon (downloaded on first launch)
 ├── tools\            — Optional: 7za.exe / 7z.exe for archive extraction
@@ -257,6 +266,48 @@ If the downloaded asset ends in `.exe`, extraction is skipped entirely (Gopher64
 3. On scan completion, `MetadataManager` fuzzy-matches each game title against IGDB.
 4. Ambiguous matches show `MetadataPickerDialog`. Confirmed matches are written back to `GameLibrary`.
 5. `MetadataFetcher` downloads cover art from SteamGridDB to `art\<gameId>.png`.
+
+### Social Subsystem (`src/Social/`)
+
+`SocialManager` is a single thread-safe owner for everything social — friends,
+requests, presence, DMs, notifications, and voice signaling — so the rest of the
+app touches one object instead of a web of singletons. It is started from
+`App.cpp` only when a server library is configured:
+
+```cpp
+m_social.SetChangeHandler([this]{ PostMessageW(m_hwnd, WM_APP_SOCIAL_CHANGED, 0, 0); });
+m_social.Start(serverBaseUrl, token);   // kicks REST friends fetch + opens the gateway
+```
+
+**Transport.** A persistent WebSocket (`WebSocketClient`, WinHTTP WebSocket API)
+to `wss://<host>/ws/social?token=<bearer>` carries JSON control frames (presence
+diffs, chat, typing, request/accept events) on the text path and voice PCM on the
+binary path. REST helpers (`HttpGet`/`HttpPostJson`) handle the
+request/response operations (friend list, message history, send request).
+
+**Gateway lifecycle.** `OpenGateway → OnGatewaySocketState`:
+- On connect → `GatewayState::Connected`, re-announce presence, and on a *resume*
+  (not the first connect) `ReconcileAfterReconnect()` re-pulls the friend list and
+  open-conversation history so anything missed while offline is picked up.
+- On drop → `ScheduleReconnect()` with exponential backoff (1s → cap 30s),
+  `GatewayState::Reconnecting`.
+- While connected, a 20s **application heartbeat** sends `{"type":"ping"}`; the
+  server replies with a data-frame `{"type":"pong"}`. This is load-bearing — see
+  the gotcha below.
+
+**UI flow (renderer stays Social-agnostic).** `SocialManager` never talks to the
+renderer. `App::SyncSocialRenderState` copies value types (ints, small structs)
+into `RenderState` — friend rows, grouping, notification list, toast queue,
+`gatewayState` (0 disconnected / 1 connecting / 2 connected / 3 reconnecting).
+The friends panel's empty-state text is driven entirely by that int.
+
+**Notifications.** `NotifKind` events (friend request/accepted/online/in-game,
+message, voice invite, system) land in a capped session history plus a toast
+queue drained each frame. Sound + presence-alert toasts are gated by user prefs.
+
+**Client-local personalization** (favorites, nicknames, last-interaction times,
+notif toggles) is persisted to `social_prefs.json` and overlaid onto the
+server-authoritative friend list — the server never sees it.
 
 ---
 
@@ -444,3 +495,9 @@ The resource compiler is not a C++ compiler. `ArcadeLauncher.rc` includes only `
 
 **Gopher64 ships as a bare `.exe` asset, not an archive.**  
 `EmulatorDownloader::Worker()` checks the asset filename extension and skips extraction if it ends in `.exe`. The `urlPattern` for Gopher64 is `windows-x86_64.exe` to avoid matching the `aarch64` variant.
+
+**The social base URL must carry an explicit scheme.**  
+`config.serverBaseUrl` is often stored schemeless (`arcade.orlandoaio.net`). `ServerClient` normalizes that to `https://` internally, but only on *its own* copy — so `SocialManager::Start` used to receive a bare host. With no scheme, `WsUrl()` fell through to plaintext `ws://` (port 80, which the proxy 301-redirects → the WebSocket upgrade gets a 301 instead of 101 and never connects), and the social REST helpers' `WinHttpCrackUrl` rejected the URL outright. `SocialManager::Start` now runs its own `NormalizeOrigin` (https:// for public hosts, http:// for `10.`/`192.168.`/`127.`/`localhost`). Any caller passing a host into the social subsystem must not assume the scheme is added elsewhere.
+
+**The gateway needs an application-level heartbeat, not just the protocol ping.**  
+The server sends a WebSocket *control* Ping every 25s, but WinHTTP answers those internally and never surfaces them to `WinHttpWebSocketReceive` — so on an idle connection the client's blocking receive would hit its timeout and tear the socket down, looping on "Reconnecting…". The fix is an application `{"type":"ping"}` every 20s (server replies with a data-frame `{"type":"pong"}`, which actually wakes the receive loop); the WS session receive timeout is set to 45s so a single missed pong doesn't drop a healthy connection while a genuinely dead one is still caught within two intervals.

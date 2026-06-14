@@ -43,6 +43,16 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
 - `Renderer.cpp` — topbar buttons. Downloads button rect is left of select-mode;
   both draw accent count badges. `BuildSidebarEntries` lists platform tabs
   (Dolphin tab removed; GameCube/Wii are separate, both → `dolphinPath`).
+- `Social/SocialManager.cpp` — single owner of the social subsystem (friends,
+  presence, chat, notifications, voice). `Start(baseUrl, token)` runs
+  `NormalizeOrigin` (the base URL may be schemeless), kicks the REST friends fetch
+  and opens the WSS gateway. `OnGatewaySocketState` drives connect/reconnect
+  (exponential backoff) and starts/stops the 20s `{"type":"ping"}` heartbeat.
+  `SyncSocialRenderState` (in `App.cpp`) is the only bridge to the renderer — copies
+  value types into `RenderState`; the renderer never references Social directly.
+- `Social/WebSocketClient.cpp` — WinHTTP WebSocket worker. Receive timeout is 45s
+  (set via `WinHttpSetTimeouts`) so an idle gateway kept alive by the heartbeat
+  isn't torn down.
 - `ServerClient.cpp` — `ParsePlatform` maps `"PC"`→`Platform::Repacks`.
   `InstallGame` streams files to disk (write-through, so download speed == disk
   write speed) then extracts pc_archive installs. `igdbMatched = igdbId > 0`
@@ -51,6 +61,16 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
 
 ## Conventions / gotchas
 - The user runs catalog scans/rescans **manually** — do not trigger them.
+- **Social base URL must have a scheme.** `config.serverBaseUrl` is often schemeless
+  (`arcade.orlandoaio.net`); `ServerClient` only normalizes its own copy, so
+  `SocialManager::Start` normalizes again. Schemeless → `ws://` port 80 → proxy 301 →
+  the gateway never connects and shows "Reconnecting…". Any new base-URL consumer must
+  normalize.
+- **Gateway keepalive is application-level.** The server's 25s WS *control* Ping is
+  swallowed by WinHTTP and never wakes `WinHttpWebSocketReceive`; the client must send
+  `{"type":"ping"}` (~20s) and the server replies with a data-frame `{"type":"pong"}`
+  that actually wakes the receive loop. Don't remove the heartbeat thinking the
+  protocol ping covers it.
 - Report build results honestly. The download status window's "disk write speed"
   intentionally equals download speed (write-through install); extraction is a
   separate phase but not instrumented for progress.

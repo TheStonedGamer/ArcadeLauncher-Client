@@ -1,6 +1,6 @@
 # ArcadeLauncher — Session Handoff
 
-_Last updated: 2026-06-12 (work done in prior session, dated 2026-06-10 in logs)_
+_Last updated: 2026-06-13 — social subsystem refinements + gateway reconnect fix._
 
 Native **C++17 / Win32 / Direct2D** Windows launcher (`ArcadeLauncher-Client`) talking to a
 **Rust/axum/MariaDB** backend (`ArcadeLauncher-Server`) via nginx reverse proxy.
@@ -22,7 +22,41 @@ Native **C++17 / Win32 / Direct2D** Windows launcher (`ArcadeLauncher-Client`) t
 - Commit messages end with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 - PowerShell here-strings mangle when chained after `;` — use repeated `-m` flags for multi-paragraph commits.
 
-## Work completed this session (all shipped to `main`)
+## Work completed 2026-06-13 (social system, pushed to `main`)
+Refined the social UX toward Steam/Discord quality without rewriting the
+architecture (`src/Social/`):
+1. **Friend requests** — inline Accept/Decline buttons; send-feedback toasts;
+   request/accept events diffed from `RefreshFriends` and surfaced as notifications.
+2. **Notification + toast system** — `NotifKind` history (capped) + a toast queue
+   drained each frame, hover-pause, relative timestamps, bell button + panel,
+   per-user sound/presence-alert prefs.
+3. **Personalization** — favorites, nicknames, recent-interaction sort, all
+   client-local in `social_prefs.json` and overlaid on the server friend list.
+4. **Friends panel polish** — inline search/filter, selectable sort (A–Z / Recent),
+   collapsible groups (pending / favorites / in-game / online / away / offline / …).
+5. **Reconnect reconciliation** — on resume, re-pull friends + open-conversation
+   history so anything missed while offline appears and unread counts correct.
+6. **Gateway "Reconnecting…" bug — root cause + fix (two parts):**
+   - **Scheme normalization (the actual cause).** `App.cpp` passed the raw
+     schemeless `serverBaseUrl` ("arcade.orlandoaio.net") to `SocialManager::Start`.
+     `ServerClient` normalizes a bare host internally but only on its own copy, so
+     social got no scheme → `WsUrl()` produced plaintext `ws://` (port 80, which the
+     proxy 301-redirects → the upgrade gets a 301 not 101 → never connects), and the
+     social REST helpers' `WinHttpCrackUrl` rejected the URL. `SocialManager::Start`
+     now runs its own `NormalizeOrigin`. Verified against prod: a `wss://` handshake
+     with the real token returns 101 + `hello` + answers app pings with `pong`, so
+     server/nginx were never at fault.
+   - **Application heartbeat (keeps an idle connection alive).** The server's 25s
+     keepalive is a WS *control* Ping that WinHTTP answers internally and never
+     surfaces to `WinHttpWebSocketReceive`, so an idle socket would hit the receive
+     timeout and drop. Added a 20s `{"type":"ping"}` sender (server replies with a
+     data-frame `{"type":"pong"}` that wakes the receive loop) and raised the WS
+     session receive timeout to 45s.
+- `build.ps1 -SkipPackage` = **0 warnings / 0 errors**. nginx on `10.0.0.203`
+  already has a correct `/ws/` location (`proxy_http_version 1.1`,
+  `Upgrade`/`Connection "upgrade"`, 3600s timeouts) — no proxy change needed.
+
+## Work completed (earlier session, shipped to `main`)
 1. **Removed server-sync settings from Settings → General.** Server URL/username/password/install-root/
    "enable sync" block deleted from `SettingsWindow.cpp::BuildGeneralPage` + its Load/Save refs. Server
    connection is configured only at sign-in now. Underlying `cfg.server.*` fields preserved.
@@ -75,8 +109,10 @@ Native **C++17 / Win32 / Direct2D** Windows launcher (`ArcadeLauncher-Client`) t
   (No code fix outstanding; this is a one-time user action.)
 - **Existing shortcuts keep the old launcher icon** — only newly created ones get game art. Optional future
   work: a one-time "rebuild all shortcut icons" pass.
-- The user's own stored `serverBaseUrl` is schemeless (`arcade.orlandoaio.net`); harmless now (ctor
-  normalizes), but could be rewritten to the full URL on next save if desired.
+- The user's own stored `serverBaseUrl` is schemeless (`arcade.orlandoaio.net`). Both `ServerClient` (ctor)
+  and now `SocialManager::Start` (`NormalizeOrigin`) prepend the scheme, so it's handled — but any *new*
+  subsystem that consumes the base URL must normalize too (the schemeless value is what broke the social
+  gateway this session). Could be rewritten to the full URL on next config save to remove the footgun.
 
 ## Standing rules / conventions
 - Prod deploy/SSH to `10.0.0.210` (root) requires **explicit per-turn authorization**. nginx `10.0.0.203`
