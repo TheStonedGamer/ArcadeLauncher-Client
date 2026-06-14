@@ -53,9 +53,15 @@ public:
     // ── Friends ──────────────────────────────────────────────────────────────
     void RefreshFriends();                              // REST GET, async
     void SendFriendRequest(const std::wstring& username);
-    void RespondRequest(uint64_t userId, const std::string& action); // accept|decline|cancel|remove
+    void RespondRequest(uint64_t userId, const std::string& action); // accept|decline|cancel|remove|ignore
+    void IgnoreRequest(uint64_t userId);                // silently drop an incoming request (1.1)
     void BlockUser(uint64_t userId, bool block);
     std::vector<FriendInfo> GetFriends() const;
+
+    // ── Friend-request privacy (1.1) — who may send me requests ────────────────
+    // Policy is one of "everyone" | "mutual" | "nobody"; server is authoritative.
+    std::string FriendPolicy() const;                  // cached; "everyone" until pulled
+    void SetFriendPolicy(const std::string& policy);   // PUT + update cache, async
 
     // ── Personalization (client-local; persisted to social_prefs.json) ─────────
     void SetFavorite(uint64_t userId, bool fav);
@@ -113,6 +119,7 @@ private:
     // REST helpers (own WinHTTP, simple JSON in/out). Run on worker threads.
     bool HttpGet(const std::wstring& path, std::string& body);
     bool HttpPostJson(const std::wstring& path, const std::string& json, std::string& body);
+    bool HttpPut(const std::wstring& path, const std::string& json, std::string& body);
     std::wstring WsUrl() const;   // derives ws(s)://.../ws/social?token=...
 
     void FireChanged();
@@ -133,6 +140,7 @@ private:
     std::string BuildPrefsJson();      // serialize current prefs to the wire/file shape
     void PushPrefsToServer();          // async POST /api/social/prefs (last write wins)
     void PullPrefsFromServer();        // async GET; server is authoritative, caches locally
+    void PullFriendPolicy();           // async GET /api/social/privacy on start
     void ApplyPrefsLocked();                            // overlay favorite/nick onto m_friends
     Conversation& ConvLocked(uint64_t peerId);          // call under m_mtx
     void SendVoiceSignal(uint64_t peerId, const std::string& kind);
@@ -171,6 +179,7 @@ private:
     // Client-local personalization, keyed by account id (guarded by m_mtx).
     struct LocalPref { bool favorite = false; std::wstring nickname; int64_t lastInteract = 0; };
     std::map<uint64_t, LocalPref>          m_prefs;
+    std::string                            m_friendPolicy = "everyone"; // 1.1, guarded
     PresenceState                          m_presence = PresenceState::Online;
     std::wstring                           m_curGameId;
     std::wstring                           m_curGameTitle;

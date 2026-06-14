@@ -82,6 +82,7 @@ void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token
     PullPrefsFromServer();    // then adopt the server's authoritative copy (0.5)
     RefreshFriends();
     RefreshNotifications();
+    PullFriendPolicy();       // adopt server's friend-request privacy setting (1.1)
     OpenGateway();
 }
 
@@ -492,6 +493,21 @@ bool SocialManager::HttpPostJson(const std::wstring& path, const std::string& js
     return ok;
 }
 
+bool SocialManager::HttpPut(const std::wstring& path, const std::string& json, std::string& body) {
+    std::wstring base, token;
+    { std::lock_guard<std::mutex> lk(m_mtx); base = m_baseUrl; token = m_token; }
+    std::wstring url = base + path;
+    HINTERNET sess = nullptr, conn = nullptr, req = nullptr; bool secure = false;
+    if (!CrackAndOpen(url, L"PUT", sess, conn, req, secure)) return false;
+    std::wstring hdr = L"Authorization: Bearer " + token + L"\r\nContent-Type: application/json\r\n";
+    WinHttpAddRequestHeaders(req, hdr.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+    bool ok = WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                 (LPVOID)json.data(), (DWORD)json.size(),
+                                 (DWORD)json.size(), 0) && ReadAll(req, body);
+    WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+    return ok;
+}
+
 // ── Friends ─────────────────────────────────────────────────────────────────
 
 void SocialManager::RefreshFriends() {
@@ -590,6 +606,10 @@ void SocialManager::RespondRequest(uint64_t userId, const std::string& action) {
         HttpPostJson(L"/api/social/friends/respond", os.str(), body);
         RefreshFriends();
     }).detach();
+}
+
+void SocialManager::IgnoreRequest(uint64_t userId) {
+    RespondRequest(userId, "ignore");
 }
 
 void SocialManager::BlockUser(uint64_t userId, bool block) {
@@ -747,6 +767,45 @@ void SocialManager::PullPrefsFromServer() {
             DWORD wrote = 0;
             WriteFile(h, body.data(), (DWORD)body.size(), &wrote, nullptr);
             CloseHandle(h);
+        }
+        FireChanged();
+    }).detach();
+}
+
+// ── Friend-request privacy (1.1) ──────────────────────────────────────────────
+
+std::string SocialManager::FriendPolicy() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_friendPolicy;
+}
+
+void SocialManager::SetFriendPolicy(const std::string& policy) {
+    if (policy != "everyone" && policy != "mutual" && policy != "nobody") return;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_friendPolicy = policy;
+    }
+    FireChanged();
+    if (!m_running.load()) return;
+    std::thread([this, policy]() {
+        std::ostringstream os;
+        os << "{\"friendPolicy\":\"" << policy << "\"}";
+        std::string resp;
+        HttpPut(L"/api/social/privacy", os.str(), resp);
+    }).detach();
+}
+
+void SocialManager::PullFriendPolicy() {
+    if (!m_running.load()) return;
+    std::thread([this]() {
+        std::string resp;
+        if (!HttpGet(L"/api/social/privacy", resp)) return;
+        JsonValue v = JsonValue::Parse(resp);
+        std::string p = v["friendPolicy"].asString();
+        if (p.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            m_friendPolicy = p;
         }
         FireChanged();
     }).detach();
