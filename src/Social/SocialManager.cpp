@@ -228,12 +228,14 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
                 who = !f->nickname.empty() ? f->nickname : f->username;
                 bool wasVisible = (before != PresenceState::Offline &&
                                    before != PresenceState::Invisible);
+                // Presence toasts are favorites-only to avoid noise (Steam-style).
+                bool fav = f->favorite;
                 // Friend started a game (new game or fresh launch).
-                if (ps == PresenceState::InGame && (before != PresenceState::InGame ||
+                if (fav && ps == PresenceState::InGame && (before != PresenceState::InGame ||
                                                     beforeGame != gid) && !gt.empty()) {
                     toastKind = NotifKind::FriendInGame; emitToast = true;
                     bodyTxt = L"started playing " + gt;
-                } else if (!wasVisible && (ps == PresenceState::Online ||
+                } else if (fav && !wasVisible && (ps == PresenceState::Online ||
                                            ps == PresenceState::Away ||
                                            ps == PresenceState::Busy)) {
                     toastKind = NotifKind::FriendOnline; emitToast = true;

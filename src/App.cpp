@@ -2005,7 +2005,7 @@ void App::OnTimer(UINT timerId) {
 
     // Toast notifications: advance animation timers; keep repainting while any
     // toast is still on screen.
-    if (m_renderer.UpdateToasts())
+    if (m_renderer.UpdateToasts(m_lastMouseX, m_lastMouseY))
         InvalidateRect(m_hwnd, nullptr, FALSE);
 
     // Repaint if game is running (for any live updates)

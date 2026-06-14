@@ -1658,11 +1658,15 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
         y += 8.0f;
     }
 
-    // Empty state.
+    // Empty state — context-aware (connecting vs genuinely empty).
     if (state.friends.empty()) {
+        const wchar_t* msg =
+            state.gatewayState == 2 ? L"No friends yet.\nUse + to add someone by username."
+          : state.gatewayState == 1 ? L"Connecting to social…"
+          : state.gatewayState == 3 ? L"Reconnecting…\nYour friends will appear shortly."
+                                     : L"Social is offline.\nCheck your server connection.";
         D2D1_RECT_F er = D2D1::RectF(panelL + pad, listTop + 30.0f, w - pad, listTop + 90.0f);
-        m_rt->DrawText(L"No friends yet.\nUse + to add someone by username.",
-                       41, m_fmtSummary.Get(), er, m_brushSubtext.Get());
+        m_rt->DrawText(msg, (UINT32)wcslen(msg), m_fmtSummary.Get(), er, m_brushSubtext.Get());
     }
 
     m_rt->PopAxisAlignedClip();
@@ -1695,6 +1699,22 @@ static const wchar_t* NotifGlyph(int kind) {
     }
 }
 
+// Wall-clock epoch milliseconds (matches SocialManager's NowMs).
+static int64_t NowEpochMs() {
+    FILETIME ft; GetSystemTimeAsFileTime(&ft);
+    uint64_t t = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime; // 100ns since 1601
+    return (int64_t)(t / 10000ULL) - 11644473600000LL;                    // → ms since 1970
+}
+// "now", "5m", "3h", "2d" — compact relative age for the history dropdown.
+static std::wstring RelativeAge(int64_t tsMs) {
+    int64_t s = (NowEpochMs() - tsMs) / 1000;
+    if (s < 5)      return L"now";
+    if (s < 60)     return std::to_wstring(s) + L"s";
+    if (s < 3600)   return std::to_wstring(s / 60) + L"m";
+    if (s < 86400)  return std::to_wstring(s / 3600) + L"h";
+    return std::to_wstring(s / 86400) + L"d";
+}
+
 void Renderer::PushToast(int kind, uint64_t accountId,
                          const std::wstring& title, const std::wstring& body) {
     ActiveToast t;
@@ -1714,10 +1734,18 @@ void Renderer::DismissToast(uint64_t accountId, int kind) {
         }
 }
 
-bool Renderer::UpdateToasts() {
+bool Renderer::UpdateToasts(float mouseX, float mouseY) {
     uint64_t now = GetTickCount64();
+    uint64_t delta = m_lastToastTick ? std::min<uint64_t>(now - m_lastToastTick, 250) : 0;
+    m_lastToastTick = now;
     for (auto it = m_toasts.begin(); it != m_toasts.end(); ) {
-        const ActiveToast& t = *it;
+        ActiveToast& t = *it;
+        // Hover-pause: while the cursor is over a settled toast, push its spawn
+        // tick forward so the hold timer freezes (a manual dismiss still runs).
+        bool hovered = mouseX >= t.rect.left && mouseX <= t.rect.right &&
+                       mouseY >= t.rect.top  && mouseY <= t.rect.bottom;
+        if (hovered && !t.dismissing && (now - t.spawnTick) > 200)
+            t.spawnTick += delta;
         uint64_t fadeOut = t.dismissing ? t.dismissTick : (t.spawnTick + t.lifeMs);
         if (now >= fadeOut + 280) it = m_toasts.erase(it);
         else ++it;
@@ -1863,8 +1891,11 @@ void Renderer::DrawNotifPanel(RenderState& state) {
         D2D1_RECT_F gr = D2D1::RectF(pl + 12, y + 6, pl + 44, y + 38);
         m_rt->DrawText(NotifGlyph(n.kind), 1, m_fmtIcon.Get(), gr, m_brushWhite.Get());
         m_brushWhite->SetColor(C_WHITE);
-        // Title + body.
-        D2D1_RECT_F tr = D2D1::RectF(pl + 48, y + 7, pl + panelW - 12, y + 28);
+        // Title + relative timestamp (right) + body.
+        std::wstring age = RelativeAge(n.ts);
+        D2D1_RECT_F ageR = D2D1::RectF(pl + panelW - 52, y + 8, pl + panelW - 12, y + 26);
+        m_rt->DrawText(age.c_str(), (UINT32)age.size(), m_fmtCardSub.Get(), ageR, m_brushSubtext.Get());
+        D2D1_RECT_F tr = D2D1::RectF(pl + 48, y + 7, pl + panelW - 56, y + 28);
         m_rt->DrawText(n.title.c_str(), (UINT32)n.title.size(), m_fmtCard.Get(), tr, m_brushText.Get());
         D2D1_RECT_F br = D2D1::RectF(pl + 48, y + 28, pl + panelW - 12, y + rowH - 4);
         m_rt->DrawText(n.body.c_str(), (UINT32)n.body.size(), m_fmtCardSub.Get(), br, m_brushSubtext.Get());

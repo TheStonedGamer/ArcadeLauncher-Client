@@ -243,7 +243,9 @@ public:
     // any toast is still on screen (so the host keeps the 60fps repaint going).
     void PushToast(int kind, uint64_t accountId,
                    const std::wstring& title, const std::wstring& body);
-    bool UpdateToasts();
+    // Advances animation/expiry timers. Pass the cursor so a hovered toast pauses
+    // its auto-dismiss (Steam-style). Returns true while any toast is on screen.
+    bool UpdateToasts(float mouseX, float mouseY);
     bool HasActiveToasts() const { return !m_toasts.empty(); }
     void DismissToast(uint64_t accountId, int kind);  // start the fade-out now
     struct ToastHit { enum Kind { None, Dismiss, Action } kind = None;
@@ -402,6 +404,7 @@ private:
         D2D1_RECT_F  closeRect{};
     };
     std::vector<ActiveToast> m_toasts;
+    uint64_t m_lastToastTick = 0;   // for hover-pause delta accounting
     void DrawToasts();
 
     // Notifications history dropdown layout.
