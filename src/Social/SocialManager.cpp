@@ -42,11 +42,26 @@ SocialManager::~SocialManager() {
     Stop();
 }
 
+// Ensure the origin carries an explicit scheme. The config may store a bare
+// host ("arcade.orlandoaio.net"); without a scheme WsUrl() would fall through to
+// plaintext ws:// (port 80, which the proxy 301-redirects -> the upgrade fails)
+// and the REST helpers' WinHttpCrackUrl would reject the URL outright. Mirror
+// ServerClient's normalization: https:// for public hosts, http:// for local.
+static std::wstring NormalizeOrigin(std::wstring url) {
+    while (!url.empty() && url.back() == L'/') url.pop_back();
+    if (url.rfind(L"http://", 0) == 0 || url.rfind(L"https://", 0) == 0)
+        return url;
+    if (url.empty()) return url;
+    bool local = url.rfind(L"10.", 0) == 0 || url.rfind(L"192.168.", 0) == 0 ||
+                 url.rfind(L"127.", 0) == 0 || url.rfind(L"localhost", 0) == 0;
+    return (local ? L"http://" : L"https://") + url;
+}
+
 void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token) {
     Stop();
     {
         std::lock_guard<std::mutex> lk(m_mtx);
-        m_baseUrl = baseUrl;
+        m_baseUrl = NormalizeOrigin(baseUrl);
         m_token = token;
         m_friends.clear();
         m_convos.clear();
