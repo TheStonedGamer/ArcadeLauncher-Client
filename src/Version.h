@@ -7,7 +7,7 @@
 
 #define ARCADE_VERSION_MAJOR  1
 #define ARCADE_VERSION_MINOR  2
-#define ARCADE_VERSION_PATCH  16
+#define ARCADE_VERSION_PATCH  17
 #define ARCADE_VERSION_BUILD  0
 
 // Helpers — derived, do not edit.
