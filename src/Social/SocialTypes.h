@@ -52,6 +52,8 @@ struct ChatMessage {
     int64_t      timestamp = 0;     // epoch seconds
     bool         isRead = false;
     bool         pending = false;   // sent locally, not yet acked by gateway
+    int64_t      editedAt = 0;      // epoch seconds of last edit, 0 = never (1.2a)
+    bool         deleted = false;   // tombstoned — render as "message deleted" (1.2a)
 };
 
 // Per-peer conversation: ordered message history + unread/typing state.
@@ -61,6 +63,7 @@ struct Conversation {
     int                      unread = 0;
     bool                     peerTyping = false;
     int64_t                  peerTypingUntil = 0; // epoch ms; clears the indicator
+    uint64_t                 readUpTo = 0;        // highest of MY msg ids the peer has read (1.2a)
 };
 
 // Desktop notification categories. The integer values are mirrored into the

@@ -145,6 +145,10 @@ struct RenderState {
         std::wstring text;
         int64_t      ts = 0;        // epoch seconds
         bool         pending = false;
+        bool         edited  = false;  // appended "(edited)" tag (1.2a)
+        bool         deleted = false;  // render as italic "message deleted" (1.2a)
+        bool         read    = false;  // my message has been read by the peer (1.2a)
+        uint64_t     msgId   = 0;      // server message id (0 = pending/local)
     };
     bool         chatOpen = false;
     uint64_t     chatPeerId = 0;

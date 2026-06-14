@@ -319,6 +319,53 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         FireChanged();
         return;
     }
+    if (type == "read") {
+        // Peer read my messages up to upToId. Mark my outgoing msgs read (1.2a).
+        uint64_t reader = v["readerId"].asUint();
+        uint64_t upTo   = v["upToId"].asUint();
+        uint64_t self   = m_selfId.load();
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            Conversation& c = ConvLocked(reader);
+            if (upTo > c.readUpTo) c.readUpTo = upTo;
+            for (auto& m : c.messages) {
+                if (m.senderId == self && m.messageId != 0 && m.messageId <= upTo)
+                    m.isRead = true;
+            }
+        }
+        FireChanged();
+        return;
+    }
+    if (type == "chat_edit") {
+        uint64_t mid = v["messageId"].asUint();
+        std::wstring text = Utf8ToWide(v["text"].asString());
+        int64_t editedAt = v["editedAt"].asInt();
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            for (auto& kv : m_convos) {
+                for (auto& m : kv.second.messages) {
+                    if (m.messageId == mid) {
+                        m.messageText = text;
+                        m.editedAt = editedAt ? editedAt : NowSecs();
+                        m.deleted = false;
+                    }
+                }
+            }
+        }
+        FireChanged();
+        return;
+    }
+    if (type == "chat_delete") {
+        uint64_t mid = v["messageId"].asUint();
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            for (auto& kv : m_convos)
+                for (auto& m : kv.second.messages)
+                    if (m.messageId == mid) m.deleted = true;
+        }
+        FireChanged();
+        return;
+    }
     if (type == "chat_backfill") {
         // Resume reply: messages missed while we were offline. Merge each into its
         // conversation (dedup by id, replace pending echoes), bump unread for new
@@ -1079,6 +1126,8 @@ void SocialManager::OpenConversation(uint64_t peerId) {
                 cm.messageText = Utf8ToWide(m["text"].asString());
                 cm.timestamp  = m["timestamp"].asInt();
                 cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
+                cm.editedAt   = m["editedAt"].asInt();   // 0/null when never edited
+                cm.deleted    = m["deleted"].asBool();
                 AtomicMax(m_lastMsgId, cm.messageId);
                 hist.push_back(std::move(cm));
             }
@@ -1088,6 +1137,108 @@ void SocialManager::OpenConversation(uint64_t peerId) {
             Conversation& c = ConvLocked(peerId);
             c.messages = std::move(hist);
             c.unread = 0;
+        }
+        FireChanged();
+    }).detach();
+    // Tell the peer their messages are read now that the conversation is open.
+    MarkConversationRead(peerId);
+}
+
+void SocialManager::MarkConversationRead(uint64_t peerId) {
+    if (!m_running.load()) return;
+    std::ostringstream os;
+    os << "{\"type\":\"read\",\"to\":" << peerId << "}";
+    SendGatewayJson(os.str());
+}
+
+void SocialManager::EditMessage(uint64_t peerId, uint64_t msgId,
+                                const std::wstring& text) {
+    if (text.empty()) return;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        Conversation& c = ConvLocked(peerId);
+        for (auto& m : c.messages) {
+            if (m.messageId == msgId) {
+                m.messageText = text;
+                m.editedAt = NowSecs();
+                break;
+            }
+        }
+    }
+    FireChanged();
+    std::ostringstream os;
+    os << "{\"type\":\"edit\",\"msgId\":" << msgId << ",\"text\":\""
+       << JsonEscape(WideToUtf8(text)) << "\"}";
+    SendGatewayJson(os.str());
+}
+
+void SocialManager::DeleteMessage(uint64_t peerId, uint64_t msgId) {
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        Conversation& c = ConvLocked(peerId);
+        for (auto& m : c.messages) {
+            if (m.messageId == msgId) { m.deleted = true; break; }
+        }
+    }
+    FireChanged();
+    std::ostringstream os;
+    os << "{\"type\":\"delete\",\"msgId\":" << msgId << "}";
+    SendGatewayJson(os.str());
+}
+
+void SocialManager::LoadOlderHistory(uint64_t peerId) {
+    if (!m_running.load()) return;
+    // Find the oldest known message id for this peer to page before it.
+    uint64_t before = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        auto it = m_convos.find(peerId);
+        if (it != m_convos.end()) {
+            for (const auto& m : it->second.messages) {
+                if (m.messageId != 0 && (before == 0 || m.messageId < before))
+                    before = m.messageId;
+            }
+        }
+    }
+    if (before == 0) return;   // nothing loaded yet — OpenConversation handles first page
+    std::thread([this, peerId, before]() {
+        std::wstring path = L"/api/social/messages/" + std::to_wstring(peerId) +
+                            L"?before=" + std::to_wstring(before);
+        std::string body;
+        if (!HttpGet(path, body)) return;
+        JsonValue v = JsonValue::Parse(body);
+        const JsonValue& arr = v["messages"];
+        uint64_t self = m_selfId.load();
+        std::vector<ChatMessage> older;
+        if (arr.isArray()) {
+            for (const auto& m : arr.arr) {
+                ChatMessage cm;
+                cm.messageId  = m["messageId"].asUint();
+                cm.senderId   = m["senderId"].asUint();
+                cm.receiverId = m["receiverId"].asUint();
+                cm.messageText = Utf8ToWide(m["text"].asString());
+                cm.timestamp  = m["timestamp"].asInt();
+                cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
+                cm.editedAt   = m["editedAt"].asInt();
+                cm.deleted    = m["deleted"].asBool();
+                older.push_back(std::move(cm));
+            }
+        }
+        if (older.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            Conversation& c = ConvLocked(peerId);
+            // Prepend, skipping any ids we already have (dedup).
+            std::vector<ChatMessage> merged;
+            merged.reserve(older.size() + c.messages.size());
+            for (auto& m : older) {
+                bool dup = false;
+                for (const auto& e : c.messages)
+                    if (e.messageId != 0 && e.messageId == m.messageId) { dup = true; break; }
+                if (!dup) merged.push_back(std::move(m));
+            }
+            for (auto& e : c.messages) merged.push_back(std::move(e));
+            c.messages = std::move(merged);
         }
         FireChanged();
     }).detach();

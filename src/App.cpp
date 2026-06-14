@@ -1934,6 +1934,10 @@ void App::SyncSocialRenderState() {
             mv.text    = m.messageText;
             mv.ts      = m.timestamp;
             mv.pending = m.pending;
+            mv.edited  = (m.editedAt != 0);
+            mv.deleted = m.deleted;
+            mv.read    = m.isRead;
+            mv.msgId   = m.messageId;
             m_renderState.chatMessages.push_back(std::move(mv));
         }
         m_renderState.chatPeerTyping = conv.peerTyping;
@@ -2589,8 +2593,12 @@ void App::OnScroll(float delta) {
     if (m_renderState.chatOpen && m_renderer.PointInChatWindow(m_lastMouseX, m_lastMouseY)) {
         float maxC = m_renderer.MaxChatScroll(m_renderState);
         // Scroll up (delta>0) reveals older messages.
-        m_renderState.chatScroll =
-            std::clamp(m_renderState.chatScroll + delta * 0.4f, 0.0f, maxC);
+        float want = m_renderState.chatScroll + delta * 0.4f;
+        // Pulling past the top fetches an older page (infinite scrollback, 1.2a).
+        if (delta > 0.0f && want >= maxC && m_renderState.chatPeerId &&
+            m_social.IsRunning())
+            m_social.LoadOlderHistory(m_renderState.chatPeerId);
+        m_renderState.chatScroll = std::clamp(want, 0.0f, maxC);
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return;
     }

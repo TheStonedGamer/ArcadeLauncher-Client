@@ -2136,12 +2136,26 @@ void Renderer::DrawChatWindow(RenderState& state) {
     float bubbleMax = winW * 0.66f;
     float pad = 12.0f;
     // First measure total content height for bottom anchoring.
+    // Build the display text for a message: deleted tombstone, edited tag, or raw.
+    auto displayText = [](const RenderState::ChatMsgView& m) -> std::wstring {
+        if (m.deleted) return L"message deleted";
+        if (m.edited)  return m.text + L"  (edited)";
+        return m.text;
+    };
+    // Index of the last of MY messages the peer has read — gets a "Read" receipt.
+    int lastReadMine = -1;
+    for (size_t i = 0; i < state.chatMessages.size(); ++i)
+        if (state.chatMessages[i].mine && state.chatMessages[i].read && !state.chatMessages[i].deleted)
+            lastReadMine = (int)i;
+
     float total = 6.0f;
     std::vector<float> heights;
     heights.reserve(state.chatMessages.size());
-    for (const auto& m : state.chatMessages) {
-        float h = DrawWrapped(m.text, m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
+    for (size_t i = 0; i < state.chatMessages.size(); ++i) {
+        const auto& m = state.chatMessages[i];
+        float h = DrawWrapped(displayText(m), m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
         h = std::max(h, 18.0f) + 14.0f;   // bubble padding
+        if ((int)i == lastReadMine) h += 14.0f;   // room for the read receipt line
         heights.push_back(h);
         total += h + 6.0f;
     }
@@ -2162,18 +2176,27 @@ void Renderer::DrawChatWindow(RenderState& state) {
         else
             bub = D2D1::RectF(left + pad, y, left + pad + bw, y + h);
         // Only draw if visible.
+        std::wstring shown = displayText(m);
         if (y + h >= listTop && y <= listBottom) {
             if (m.mine) {
                 m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b,
-                                                     m.pending ? 0.45f : 0.85f));
+                                                     (m.pending || m.deleted) ? 0.45f : 0.85f));
                 m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushAccent.Get());
                 m_brushAccent->SetColor(C_ACCENT);
-                DrawWrapped(m.text, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
+                DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
                             m_brushWhite.Get(), true);
             } else {
                 m_rt->FillRoundedRectangle(D2D1::RoundedRect(bub, 8, 8), m_brushCard.Get());
-                DrawWrapped(m.text, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
-                            m_brushText.Get(), true);
+                // Deleted placeholder reads as muted subtext; live text as normal.
+                DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
+                            m.deleted ? m_brushSubtext.Get() : m_brushText.Get(), true);
+            }
+            // Read receipt under the last of my messages the peer has read.
+            if ((int)i == lastReadMine) {
+                D2D1_RECT_F rr = D2D1::RectF(bub.left, y + h - 14.0f, bub.right, y + h);
+                static const wchar_t* kRead = L"Read";
+                m_rt->DrawText(kRead, 4, m_fmtCardSub.Get(), rr, m_brushSubtext.Get(),
+                               D2D1_DRAW_TEXT_OPTIONS_NONE);
             }
         }
         y += h + 6.0f;

@@ -102,6 +102,15 @@ public:
     Conversation GetConversation(uint64_t peerId) const;
     int  TotalUnread() const;
 
+    // ── Chat 1.2a — read receipts, edit/delete, scrollback ────────────────────
+    // Tell the peer we've read their messages up to now ({"type":"read"}).
+    void MarkConversationRead(uint64_t peerId);
+    // Edit/delete one of MY messages; optimistic local update + WS frame.
+    void EditMessage(uint64_t peerId, uint64_t msgId, const std::wstring& text);
+    void DeleteMessage(uint64_t peerId, uint64_t msgId);
+    // Fetch an older page (id < oldest known) and PREPEND it (infinite scroll).
+    void LoadOlderHistory(uint64_t peerId);
+
     // ── Voice signaling (state machine + frame relay; media is scaffolded) ────
     VoiceState Voice() const { return m_voiceState.load(); }
     uint64_t   VoicePeer() const { return m_voicePeer.load(); }
