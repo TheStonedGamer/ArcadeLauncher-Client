@@ -78,7 +78,8 @@ void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token
     m_running.store(true);
     m_backoffMs.store(1000);
     m_everConnected.store(false);
-    LoadPrefs();
+    LoadPrefs();              // fast local cache first (offline-friendly)
+    PullPrefsFromServer();    // then adopt the server's authoritative copy (0.5)
     RefreshFriends();
     RefreshNotifications();
     OpenGateway();
@@ -662,36 +663,93 @@ void SocialManager::LoadPrefs() {
     ApplyPrefsLocked();
 }
 
-void SocialManager::SavePrefs() {
+// Serialize current prefs to the JSON shape shared by the local file and the
+// server blob: {"settings":{sound,online},"prefs":[{accountId,favorite,...}]}.
+std::string SocialManager::BuildPrefsJson() {
     std::ostringstream os;
-    {
-        std::lock_guard<std::mutex> lk(m_mtx);
-        os << "{\"settings\":{\"sound\":" << (m_prefSound ? "true" : "false")
-           << ",\"online\":" << (m_prefOnlineAlerts ? "true" : "false") << "},";
-    }
+    std::lock_guard<std::mutex> lk(m_mtx);
+    os << "{\"settings\":{\"sound\":" << (m_prefSound ? "true" : "false")
+       << ",\"online\":" << (m_prefOnlineAlerts ? "true" : "false") << "},";
     os << "\"prefs\":[";
-    {
-        std::lock_guard<std::mutex> lk(m_mtx);
-        bool first = true;
-        for (const auto& kv : m_prefs) {
-            const LocalPref& lp = kv.second;
-            if (!lp.favorite && lp.nickname.empty() && lp.lastInteract == 0) continue;
-            if (!first) os << ",";
-            first = false;
-            os << "{\"accountId\":" << kv.first
-               << ",\"favorite\":" << (lp.favorite ? "true" : "false")
-               << ",\"nickname\":\"" << JsonEscape(WideToUtf8(lp.nickname)) << "\""
-               << ",\"lastInteract\":" << lp.lastInteract << "}";
-        }
+    bool first = true;
+    for (const auto& kv : m_prefs) {
+        const LocalPref& lp = kv.second;
+        if (!lp.favorite && lp.nickname.empty() && lp.lastInteract == 0) continue;
+        if (!first) os << ",";
+        first = false;
+        os << "{\"accountId\":" << kv.first
+           << ",\"favorite\":" << (lp.favorite ? "true" : "false")
+           << ",\"nickname\":\"" << JsonEscape(WideToUtf8(lp.nickname)) << "\""
+           << ",\"lastInteract\":" << lp.lastInteract << "}";
     }
     os << "]}";
-    std::string body = os.str();
+    return os.str();
+}
+
+void SocialManager::SavePrefs() {
+    std::string body = BuildPrefsJson();
     HANDLE h = CreateFileW(PrefsPath().c_str(), GENERIC_WRITE, 0, nullptr,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return;
-    DWORD wrote = 0;
-    WriteFile(h, body.data(), (DWORD)body.size(), &wrote, nullptr);
-    CloseHandle(h);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD wrote = 0;
+        WriteFile(h, body.data(), (DWORD)body.size(), &wrote, nullptr);
+        CloseHandle(h);
+    }
+    // Mirror to the server so prefs follow the user to other devices.
+    PushPrefsToServer();
+}
+
+// POST the prefs blob to the server (best-effort, async). The server stores it
+// opaquely; last write wins.
+void SocialManager::PushPrefsToServer() {
+    if (!m_running.load()) return;
+    std::string body = BuildPrefsJson();
+    std::thread([this, body]() {
+        std::string resp;
+        HttpPostJson(L"/api/social/prefs", body, resp);
+    }).detach();
+}
+
+// GET the server's prefs blob and adopt it (server is authoritative across
+// devices). Applies onto the friend list and refreshes the local cache file.
+void SocialManager::PullPrefsFromServer() {
+    if (!m_running.load()) return;
+    std::thread([this]() {
+        std::string resp;
+        if (!HttpGet(L"/api/social/prefs", resp)) return;
+        JsonValue v = JsonValue::Parse(resp);
+        const JsonValue& prefs = v["prefs"];
+        if (!prefs.isObject()) return; // nothing stored yet — keep local
+        const JsonValue& settings = prefs["settings"];
+        const JsonValue& arr = prefs["prefs"];
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            if (settings.isObject()) {
+                m_prefSound = settings["sound"].asBool(true);
+                m_prefOnlineAlerts = settings["online"].asBool(true);
+            }
+            m_prefs.clear();
+            if (arr.isArray())
+                for (const auto& p : arr.arr) {
+                    LocalPref lp;
+                    lp.favorite = p["favorite"].asBool();
+                    lp.nickname = Utf8ToWide(p["nickname"].asString());
+                    lp.lastInteract = p["lastInteract"].asInt();
+                    m_prefs[p["accountId"].asUint()] = std::move(lp);
+                }
+            ApplyPrefsLocked();
+        }
+        // Refresh the on-disk cache (write file only, no re-POST loop).
+        std::string body = BuildPrefsJson();
+        HANDLE h = CreateFileW(PrefsPath().c_str(), GENERIC_WRITE, 0, nullptr,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            DWORD wrote = 0;
+            WriteFile(h, body.data(), (DWORD)body.size(), &wrote, nullptr);
+            CloseHandle(h);
+        }
+        FireChanged();
+    }).detach();
 }
 
 void SocialManager::SetFavorite(uint64_t userId, bool fav) {

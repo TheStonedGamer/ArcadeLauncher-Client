@@ -126,9 +126,13 @@ private:
     void IngestServerNotificationLocked(const JsonValue& n, bool emitToast,
                                         std::vector<Notification>& toasts);
 
-    // Personalization persistence (social_prefs.json next to other app data).
+    // Personalization persistence (social_prefs.json next to other app data),
+    // mirrored to the server (ROADMAP 0.5) so it follows the user across devices.
     void LoadPrefs();
     void SavePrefs();
+    std::string BuildPrefsJson();      // serialize current prefs to the wire/file shape
+    void PushPrefsToServer();          // async POST /api/social/prefs (last write wins)
+    void PullPrefsFromServer();        // async GET; server is authoritative, caches locally
     void ApplyPrefsLocked();                            // overlay favorite/nick onto m_friends
     Conversation& ConvLocked(uint64_t peerId);          // call under m_mtx
     void SendVoiceSignal(uint64_t peerId, const std::string& kind);
