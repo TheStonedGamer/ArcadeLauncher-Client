@@ -3,8 +3,12 @@
 // API (Windows 8+), so no third-party networking dependency is needed. The
 // connection runs on its own worker thread; received UTF-8 text frames are
 // delivered via a callback. Send is thread-safe and non-blocking from the
-// caller's perspective (WinHttpWebSocketSend buffers). Control ping/pong is
-// handled internally by WinHTTP, keeping proxy keep-alives alive.
+// caller's perspective (WinHttpWebSocketSend buffers). WinHTTP answers WS
+// *control* ping/pong internally, but it does NOT surface them to a blocked
+// WinHttpWebSocketReceive, so they don't keep the receive loop alive on an idle
+// link — the SocialManager sends an application-level {"type":"ping"} for that.
+// Note: pass an http(s):// URL here, not ws(s):// — WinHttpCrackUrl doesn't know
+// the ws schemes; Run() maps wss->https / ws->http before the WebSocket upgrade.
 
 #include <string>
 #include <functional>

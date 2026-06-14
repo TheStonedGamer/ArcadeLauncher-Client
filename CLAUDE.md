@@ -61,16 +61,26 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
 
 ## Conventions / gotchas
 - The user runs catalog scans/rescans **manually** — do not trigger them.
+- **`WinHttpCrackUrl` can't parse `ws://`/`wss://` — map to `http(s)://` first.** This
+  was the real "Reconnecting…" bug. `WsUrl()` emits `wss://`; cracked directly it yields
+  `INTERNET_SCHEME_UNKNOWN` + port 0, so connect fails before any socket opens and the
+  upgrade never reaches the server (REST 200s, but zero `/ws/social` in nginx). The WS
+  upgrade rides on a normal https request, so `WebSocketClient::Run` maps `wss://`→
+  `https://`, `ws://`→`http://` before cracking. Confirm a fix by grepping nginx for a
+  `101` with UA `ArcadeLauncher/SocialWS`.
 - **Social base URL must have a scheme.** `config.serverBaseUrl` is often schemeless
   (`arcade.orlandoaio.net`); `ServerClient` only normalizes its own copy, so
-  `SocialManager::Start` normalizes again. Schemeless → `ws://` port 80 → proxy 301 →
-  the gateway never connects and shows "Reconnecting…". Any new base-URL consumer must
-  normalize.
+  `SocialManager::Start` normalizes again (`NormalizeOrigin`). Schemeless breaks the
+  social REST helpers (`WinHttpCrackUrl` rejects it) and stops `WsUrl()` producing
+  `wss://`. Necessary but not sufficient — the gateway also needs the crack-url fix above.
 - **Gateway keepalive is application-level.** The server's 25s WS *control* Ping is
   swallowed by WinHTTP and never wakes `WinHttpWebSocketReceive`; the client must send
   `{"type":"ping"}` (~20s) and the server replies with a data-frame `{"type":"pong"}`
   that actually wakes the receive loop. Don't remove the heartbeat thinking the
   protocol ping covers it.
+- **The launcher auto-updates on launch.** After pushing a client fix and letting
+  Actions publish the release, just relaunch the installed app — it pulls and applies
+  the new version itself (no manual MSI install needed).
 - Report build results honestly. The download status window's "disk write speed"
   intentionally equals download speed (write-through install); extraction is a
   separate phase but not instrumented for progress.

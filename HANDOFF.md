@@ -22,7 +22,7 @@ Native **C++17 / Win32 / Direct2D** Windows launcher (`ArcadeLauncher-Client`) t
 - Commit messages end with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
 - PowerShell here-strings mangle when chained after `;` — use repeated `-m` flags for multi-paragraph commits.
 
-## Work completed 2026-06-13 (social system, pushed to `main`)
+## Work completed 2026-06-13/14 (social system, pushed to `main`; gateway live-verified)
 Refined the social UX toward Steam/Discord quality without rewriting the
 architecture (`src/Social/`):
 1. **Friend requests** — inline Accept/Decline buttons; send-feedback toasts;
@@ -36,25 +36,30 @@ architecture (`src/Social/`):
    collapsible groups (pending / favorites / in-game / online / away / offline / …).
 5. **Reconnect reconciliation** — on resume, re-pull friends + open-conversation
    history so anything missed while offline appears and unread counts correct.
-6. **Gateway "Reconnecting…" bug — root cause + fix (two parts):**
-   - **Scheme normalization (the actual cause).** `App.cpp` passed the raw
-     schemeless `serverBaseUrl` ("arcade.orlandoaio.net") to `SocialManager::Start`.
-     `ServerClient` normalizes a bare host internally but only on its own copy, so
-     social got no scheme → `WsUrl()` produced plaintext `ws://` (port 80, which the
-     proxy 301-redirects → the upgrade gets a 301 not 101 → never connects), and the
-     social REST helpers' `WinHttpCrackUrl` rejected the URL. `SocialManager::Start`
-     now runs its own `NormalizeOrigin`. Verified against prod: a `wss://` handshake
-     with the real token returns 101 + `hello` + answers app pings with `pong`, so
-     server/nginx were never at fault.
-   - **Application heartbeat (keeps an idle connection alive).** The server's 25s
-     keepalive is a WS *control* Ping that WinHTTP answers internally and never
-     surfaces to `WinHttpWebSocketReceive`, so an idle socket would hit the receive
-     timeout and drop. Added a 20s `{"type":"ping"}` sender (server replies with a
-     data-frame `{"type":"pong"}` that wakes the receive loop) and raised the WS
-     session receive timeout to 45s.
+6. **Gateway "Reconnecting…" bug — THREE layered fixes (final fix v1.2.18).** Found by
+   driving the live client + reading the nginx access log (REST 200s but zero
+   `/ws/social`) and temporary per-stage WinHTTP logging to `%LOCALAPPDATA%\ArcadeLauncher\ws.log`.
+   - **`WinHttpCrackUrl` can't parse `ws://`/`wss://` — THE actual blocker (v1.2.18).**
+     `WsUrl()` emits `wss://`; cracked directly it returns `INTERNET_SCHEME_UNKNOWN`
+     + port 0, so `secure`=false and `WinHttpConnect(host,0)` failed before any socket
+     opened — the upgrade request never left the machine. `WebSocketClient::Run` now
+     maps `wss://`→`https://`, `ws://`→`http://` before `WinHttpCrackUrl`. Verified:
+     nginx logs `101` with UA `ArcadeLauncher/SocialWS` and the gateway holds.
+   - **Scheme normalization (v1.2.16) — necessary precursor.** `App.cpp` passed the raw
+     schemeless `serverBaseUrl` to `SocialManager::Start`; `ServerClient` only
+     normalizes its own copy. Without a scheme the social REST helpers' `WinHttpCrackUrl`
+     rejected the URL (empty friends list) and `WsUrl()` couldn't form `wss://`.
+     `SocialManager::Start` now runs its own `NormalizeOrigin`. (Fixed REST, not the WS.)
+   - **Application heartbeat (v1.2.15) — keeps an idle connection alive.** Server's 25s
+     keepalive is a WS *control* Ping that WinHTTP answers internally and never surfaces
+     to `WinHttpWebSocketReceive`, so an idle socket would hit the receive timeout and
+     drop. Added a 20s `{"type":"ping"}` sender (server replies data-frame `{"type":"pong"}`
+     that wakes the receive loop); WS session receive timeout raised to 45s.
 - `build.ps1 -SkipPackage` = **0 warnings / 0 errors**. nginx on `10.0.0.203`
   already has a correct `/ws/` location (`proxy_http_version 1.1`,
-  `Upgrade`/`Connection "upgrade"`, 3600s timeouts) — no proxy change needed.
+  `Upgrade`/`Connection "upgrade"`, 3600s timeouts) and prod was healthy throughout
+  (raw `wss://` handshake with the real token returns 101) — server/nginx were never at
+  fault. The launcher auto-updated itself to 1.2.18 on relaunch.
 
 ## Work completed (earlier session, shipped to `main`)
 1. **Removed server-sync settings from Settings → General.** Server URL/username/password/install-root/
