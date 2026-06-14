@@ -1443,11 +1443,13 @@ float Renderer::MaxFriendsScroll(const RenderState& s) const {
 
 Renderer::FriendsHit Renderer::HitTestFriendsPanel(float x, float y) const {
     FriendsHit hit;
-    if (x >= m_friendsAddBtnRect.left && x <= m_friendsAddBtnRect.right &&
-        y >= m_friendsAddBtnRect.top  && y <= m_friendsAddBtnRect.bottom) {
-        hit.kind = FriendsHit::AddFriend;
-        return hit;
-    }
+    auto in = [&](const D2D1_RECT_F& r) {
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+    if (in(m_friendsAddBtnRect)) { hit.kind = FriendsHit::AddFriend; return hit; }
+    if (in(m_friendsSearchRect)) { hit.kind = FriendsHit::Search;    return hit; }
+    if (in(m_friendsSortRect))   { hit.kind = FriendsHit::SortToggle; return hit; }
+    for (const auto& gr : m_friendGroupHdrRects)
+        if (in(gr.first)) { hit.kind = FriendsHit::GroupHeader; hit.groupIndex = gr.second; return hit; }
     // Inline request actions take priority over the row they sit on.
     for (const auto& rr : m_friendAcceptRects) {
         const D2D1_RECT_F& r = rr.first;
@@ -1507,14 +1509,53 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_friendsAddBtnRect, 6, 6), m_brushCard.Get());
     m_rt->DrawText(L"\xE710", 1, m_fmtIcon.Get(), m_friendsAddBtnRect, m_brushAccent.Get()); // Add (+)
 
+    // Search box + sort toggle row.
+    float srTop = m_topbarH + 46.0f, srBot = srTop + 28.0f;
+    float sortW = 64.0f;
+    m_friendsSearchRect = D2D1::RectF(panelL + pad, srTop, w - pad - sortW - 8.0f, srBot);
+    m_friendsSortRect   = D2D1::RectF(w - pad - sortW, srTop, w - pad, srBot);
+    bool searchFocused = (state.focusArea == FocusArea::FriendsSearch);
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_friendsSearchRect, 6, 6), m_brushCard.Get());
+    if (searchFocused)
+        m_rt->DrawRoundedRectangle(D2D1::RoundedRect(m_friendsSearchRect, 6, 6), m_brushAccent.Get(), 1.0f);
+    D2D1_RECT_F mag = D2D1::RectF(m_friendsSearchRect.left + 6, srTop, m_friendsSearchRect.left + 28, srBot);
+    m_rt->DrawText(L"\xE721", 1, m_fmtSmall.Get(), mag, m_brushSubtext.Get()); // magnifier
+    D2D1_RECT_F sret = D2D1::RectF(m_friendsSearchRect.left + 30, srTop, m_friendsSearchRect.right - 8, srBot);
+    if (state.friendsFilter.empty() && !searchFocused) {
+        m_rt->DrawText(L"Search friends", 14, m_fmtCardSub.Get(), sret, m_brushSubtext.Get());
+    } else {
+        std::wstring shown = state.friendsFilter;
+        if (searchFocused && ((GetTickCount64() / 500) % 2)) shown += L"|";
+        m_rt->DrawText(shown.c_str(), (UINT32)shown.size(), m_fmtCardSub.Get(), sret, m_brushText.Get());
+    }
+    // Sort toggle: shows current mode; click cycles.
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_friendsSortRect, 6, 6), m_brushCard.Get());
+    const wchar_t* sortLbl = state.friendsSortMode == 1 ? L"Recent" : L"A–Z";
+    m_rt->DrawText(sortLbl, (UINT32)wcslen(sortLbl), m_fmtCardSub.Get(),
+                   m_friendsSortRect, m_brushSubtext.Get());
+
     // Scrollable list region.
-    float listTop = m_topbarH + 50.0f;
+    float listTop = m_topbarH + 84.0f;
     m_rt->PushAxisAlignedClip(D2D1::RectF(panelL, listTop, w, (float)m_height),
                               D2D1_ANTIALIAS_MODE_ALIASED);
 
     m_friendRowRects.clear();
     m_friendAcceptRects.clear();
     m_friendDeclineRects.clear();
+    m_friendGroupHdrRects.clear();
+
+    // Lower-cased filter; matches against username + nickname (substring).
+    std::wstring filt = state.friendsFilter;
+    for (auto& c : filt) c = towlower(c);
+    bool filtering = !filt.empty();
+    auto matches = [&](const FriendRowView& f) {
+        if (!filtering) return true;
+        auto has = [&](const std::wstring& s) {
+            std::wstring l = s; for (auto& c : l) c = towlower(c);
+            return l.find(filt) != std::wstring::npos;
+        };
+        return has(f.username) || (!f.nickname.empty() && has(f.nickname));
+    };
 
     // Bucket friends into Steam-like groups. Pending received first (actionable),
     // then Favorites, In-Game, Online, Away/Busy, Offline, sent requests, blocked.
@@ -1544,29 +1585,41 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
 
     for (int g = 0; g < 8; ++g) {
         if (groupNames[g][0] == L'\0') continue;
-        // Collect this group's members.
+        // Collect this group's members (honoring the active filter).
         std::vector<const FriendRowView*> rows;
         for (const auto& f : state.friends)
-            if (bucket(f) == g) rows.push_back(&f);
+            if (bucket(f) == g && matches(f)) rows.push_back(&f);
         if (rows.empty()) continue;
 
-        // Order: favorites by presence then name; others alphabetically by display.
+        // Order: A–Z (default) or recently-interacted. Favorites group keeps
+        // presence as the primary key so in-game friends surface first.
         std::sort(rows.begin(), rows.end(), [&](const FriendRowView* a, const FriendRowView* b) {
             auto disp = [](const FriendRowView* f) {
                 return f->nickname.empty() ? f->username : f->nickname; };
             if (g == 1) { int ra = presRank(a->presence), rb = presRank(b->presence);
                           if (ra != rb) return ra < rb; }
+            if (state.friendsSortMode == 1 && a->lastInteract != b->lastInteract)
+                return a->lastInteract > b->lastInteract;   // most recent first
             std::wstring da = disp(a), db = disp(b);
             for (auto& c : da) c = towlower(c);
             for (auto& c : db) c = towlower(c);
             return da < db;
         });
 
-        // Group header.
-        D2D1_RECT_F gh = D2D1::RectF(panelL + pad, y, w - pad, y + 20.0f);
+        // Collapsed state (ignored while filtering so matches always show).
+        bool collapsed = !filtering && (state.friendsCollapsedMask & (1u << g));
+
+        // Group header (chevron + label + count). Clickable to collapse/expand.
+        m_friendGroupHdrRects.push_back({ D2D1::RectF(panelL, y - 2.0f, w, y + 20.0f), g });
+        const wchar_t* chev = collapsed ? L"\xE76C" : L"\xE70D";   // ChevronRight / ChevronDown
+        m_rt->DrawText(chev, 1, m_fmtSmall.Get(),
+                       D2D1::RectF(panelL + pad, y, panelL + pad + 14, y + 18), m_brushSubtext.Get());
+        D2D1_RECT_F ghLbl = D2D1::RectF(panelL + pad + 16, y, w - pad, y + 20.0f);
         std::wstring hdrTxt = std::wstring(groupNames[g]) + L"  (" + std::to_wstring(rows.size()) + L")";
-        m_rt->DrawText(hdrTxt.c_str(), (UINT32)hdrTxt.size(), m_fmtSmall.Get(), gh, m_brushSubtext.Get());
+        m_rt->DrawText(hdrTxt.c_str(), (UINT32)hdrTxt.size(), m_fmtSmall.Get(), ghLbl, m_brushSubtext.Get());
         y += 24.0f;
+
+        if (collapsed) { y += 4.0f; continue; }
 
         for (const FriendRowView* fp : rows) {
             const FriendRowView& f = *fp;
@@ -1658,15 +1711,21 @@ void Renderer::DrawFriendsPanel(RenderState& state) {
         y += 8.0f;
     }
 
-    // Empty state — context-aware (connecting vs genuinely empty).
-    if (state.friends.empty()) {
-        const wchar_t* msg =
-            state.gatewayState == 2 ? L"No friends yet.\nUse + to add someone by username."
-          : state.gatewayState == 1 ? L"Connecting to social…"
-          : state.gatewayState == 3 ? L"Reconnecting…\nYour friends will appear shortly."
-                                     : L"Social is offline.\nCheck your server connection.";
+    // Empty state — context-aware (no matches / connecting / genuinely empty).
+    bool showEmpty = m_friendGroupHdrRects.empty() || (filtering && m_friendRowRects.empty());
+    if (showEmpty) {
+        std::wstring msgStr;
+        if (filtering) msgStr = L"No friends match “" + state.friendsFilter + L"”.";
+        else {
+            const wchar_t* m =
+                state.gatewayState == 2 ? L"No friends yet.\nUse + to add someone by username."
+              : state.gatewayState == 1 ? L"Connecting to social…"
+              : state.gatewayState == 3 ? L"Reconnecting…\nYour friends will appear shortly."
+                                         : L"Social is offline.\nCheck your server connection.";
+            msgStr = m;
+        }
         D2D1_RECT_F er = D2D1::RectF(panelL + pad, listTop + 30.0f, w - pad, listTop + 90.0f);
-        m_rt->DrawText(msg, (UINT32)wcslen(msg), m_fmtSummary.Get(), er, m_brushSubtext.Get());
+        m_rt->DrawText(msgStr.c_str(), (UINT32)msgStr.size(), m_fmtSummary.Get(), er, m_brushSubtext.Get());
     }
 
     m_rt->PopAxisAlignedClip();
@@ -1865,8 +1924,9 @@ void Renderer::DrawNotifPanel(RenderState& state) {
     m_rt->DrawText(L"Read", 4, m_fmtSmall.Get(), m_notifMarkAllRect, m_brushAccent.Get());
     m_rt->DrawText(L"Clear", 5, m_fmtSmall.Get(), m_notifClearRect, m_brushSubtext.Get());
 
-    float listTop = pt + 42.0f;
-    m_rt->PushAxisAlignedClip(D2D1::RectF(pl, listTop, pl + panelW, pt + panelH),
+    float footerH = 38.0f;
+    float listTop = pt + 42.0f, listBot = pt + panelH - footerH;
+    m_rt->PushAxisAlignedClip(D2D1::RectF(pl, listTop, pl + panelW, listBot),
                               D2D1_ANTIALIAS_MODE_ALIASED);
     m_notifRowRects.clear();
     float y = listTop + 4.0f - state.notifScroll;
@@ -1903,6 +1963,21 @@ void Renderer::DrawNotifPanel(RenderState& state) {
     }
     m_rt->PopAxisAlignedClip();
     m_notifContentH = (y + state.notifScroll) - listTop;
+
+    // Footer: settings toggles (Sound, Online alerts). Pill = on (accent).
+    m_rt->DrawLine(D2D1::Point2F(pl, listBot), D2D1::Point2F(pl + panelW, listBot),
+                   m_brushCard.Get(), 1.0f);
+    float fy = listBot + 7.0f, fyb = fy + 22.0f;
+    auto pill = [&](D2D1_RECT_F& rect, float left, const wchar_t* label, bool on) {
+        float tw = 64.0f;
+        rect = D2D1::RectF(left, fy, left + tw, fyb);
+        m_rt->FillRoundedRectangle(D2D1::RoundedRect(rect, 11, 11),
+                                   on ? m_brushAccent.Get() : m_brushCard.Get());
+        m_rt->DrawText(label, (UINT32)wcslen(label), m_fmtCardSub.Get(), rect,
+                       on ? m_brushWhite.Get() : m_brushSubtext.Get());
+    };
+    pill(m_notifSoundRect,  pl + pad,        L"Sound",  state.notifSoundOn);
+    pill(m_notifOnlineRect, pl + pad + 72.0f, L"Online", state.notifOnlineAlerts);
 }
 
 Renderer::NotifHit Renderer::HitTestNotifPanel(float x, float y) const {
@@ -1912,6 +1987,8 @@ Renderer::NotifHit Renderer::HitTestNotifPanel(float x, float y) const {
     };
     if (in(m_notifMarkAllRect)) { hit.kind = NotifHit::MarkAll; return hit; }
     if (in(m_notifClearRect))   { hit.kind = NotifHit::Clear;   return hit; }
+    if (in(m_notifSoundRect))   { hit.kind = NotifHit::ToggleSound;  return hit; }
+    if (in(m_notifOnlineRect))  { hit.kind = NotifHit::ToggleOnline; return hit; }
     for (const auto& rr : m_notifRowRects)
         if (in(rr.first)) { hit.kind = NotifHit::Row; hit.accountId = rr.second; return hit; }
     return hit;

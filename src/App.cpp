@@ -1662,8 +1662,24 @@ void App::OnSize(UINT w, UINT h) {
 
 bool App::HandleFriendsPanelClick(float x, float y) {
     auto hit = m_renderer.HitTestFriendsPanel(x, y);
+    // Clicking anywhere but the search box releases its text focus.
+    if (hit.kind != Renderer::FriendsHit::Search &&
+        m_renderState.focusArea == FocusArea::FriendsSearch)
+        m_renderState.focusArea = FocusArea::Grid;
     if (hit.kind == Renderer::FriendsHit::AddFriend) {
         PromptAddFriend();
+        return true;
+    }
+    if (hit.kind == Renderer::FriendsHit::Search) {
+        m_renderState.focusArea = FocusArea::FriendsSearch;
+        return true;
+    }
+    if (hit.kind == Renderer::FriendsHit::SortToggle) {
+        m_renderState.friendsSortMode = (m_renderState.friendsSortMode + 1) % 2;
+        return true;
+    }
+    if (hit.kind == Renderer::FriendsHit::GroupHeader && hit.groupIndex >= 0) {
+        m_renderState.friendsCollapsedMask ^= (1u << hit.groupIndex);
         return true;
     }
     if (hit.kind == Renderer::FriendsHit::AcceptRequest) {
@@ -1894,6 +1910,7 @@ void App::SyncSocialRenderState() {
         v.unread    = m_social.GetConversation(f.accountId).unread;
         v.favorite  = f.favorite;
         v.nickname  = f.nickname;
+        v.lastInteract = f.lastInteract;
         if (f.relationStatus == social::FriendStatus::RequestReceived) ++pending;
         m_renderState.friends.push_back(std::move(v));
     }
@@ -1947,7 +1964,9 @@ void App::SyncSocialRenderState() {
             n.kind == social::NotifKind::VoiceInvite)
             playSound = true;
     }
-    if (playSound) MessageBeep(MB_ICONASTERISK);
+    if (playSound && m_social.NotifSoundEnabled()) MessageBeep(MB_ICONASTERISK);
+    m_renderState.notifSoundOn = m_social.NotifSoundEnabled();
+    m_renderState.notifOnlineAlerts = m_social.PresenceAlertsEnabled();
     if (m_renderState.notifOpen) {
         auto hist = m_social.GetNotifications();
         m_renderState.notifs.clear();
@@ -2006,6 +2025,10 @@ void App::OnTimer(UINT timerId) {
     // Toast notifications: advance animation timers; keep repainting while any
     // toast is still on screen.
     if (m_renderer.UpdateToasts(m_lastMouseX, m_lastMouseY))
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+
+    // Keep the friends-filter caret blinking while it has focus.
+    if (m_renderState.focusArea == FocusArea::FriendsSearch)
         InvalidateRect(m_hwnd, nullptr, FALSE);
 
     // Repaint if game is running (for any live updates)
@@ -2070,6 +2093,10 @@ void App::OnLButtonDown(float x, float y) {
             auto nh = m_renderer.HitTestNotifPanel(x, y);
             if (nh.kind == Renderer::NotifHit::MarkAll) m_social.MarkNotificationsRead();
             else if (nh.kind == Renderer::NotifHit::Clear) m_social.ClearNotifications();
+            else if (nh.kind == Renderer::NotifHit::ToggleSound)
+                m_social.SetNotifSound(!m_social.NotifSoundEnabled());
+            else if (nh.kind == Renderer::NotifHit::ToggleOnline)
+                m_social.SetPresenceAlerts(!m_social.PresenceAlertsEnabled());
             else if (nh.kind == Renderer::NotifHit::Row && nh.accountId)
                 HandleNotifAction(-1, nh.accountId);  // default: open chat
             InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -2093,6 +2120,9 @@ void App::OnLButtonDown(float x, float y) {
         m_renderState.showFriendsPanel = !m_renderState.showFriendsPanel;
         if (m_renderState.showFriendsPanel && m_social.IsRunning())
             m_social.RefreshFriends();
+        if (!m_renderState.showFriendsPanel &&
+            m_renderState.focusArea == FocusArea::FriendsSearch)
+            m_renderState.focusArea = FocusArea::Grid;  // release filter focus
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return;
     }
@@ -2241,6 +2271,19 @@ void App::OnLButtonUp(float x, float y) {
 void App::OnChar(wchar_t ch) {
     // The chat window, when open, owns text input.
     if (m_renderState.chatOpen) { ChatInputChar(ch); return; }
+    // Inline friends filter owns input while focused.
+    if (m_renderState.focusArea == FocusArea::FriendsSearch) {
+        if (ch == L'\b') {
+            if (!m_renderState.friendsFilter.empty()) m_renderState.friendsFilter.pop_back();
+        } else if (ch == L'\t' || ch == L'\r' || ch == L'\x1B') {
+            return;
+        } else if (ch >= 32) {
+            m_renderState.friendsFilter += ch;
+        }
+        m_renderState.friendsScroll = 0.0f;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
     if (m_renderState.focusArea != FocusArea::Search) return;
     if (ch == L'\b') {
         if (!m_renderState.searchQuery.empty())
@@ -2257,6 +2300,18 @@ void App::OnChar(wchar_t ch) {
 void App::OnKeyDown(WPARAM vk) {
     bool shift = (GetKeyState(VK_SHIFT)   & 0x8000) != 0;
     bool ctrl  = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+    // ── Inline friends filter — Esc clears then releases focus ────────────────
+    if (m_renderState.focusArea == FocusArea::FriendsSearch) {
+        if (vk == VK_ESCAPE) {
+            if (!m_renderState.friendsFilter.empty()) m_renderState.friendsFilter.clear();
+            else m_renderState.focusArea = FocusArea::Grid;
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
+        }
+        if (vk == VK_RETURN) { m_renderState.focusArea = FocusArea::Grid;
+                               InvalidateRect(m_hwnd, nullptr, FALSE); return; }
+    }
 
     // ── Chat window — eats keys while open ────────────────────────────────────
     if (m_renderState.chatOpen) {

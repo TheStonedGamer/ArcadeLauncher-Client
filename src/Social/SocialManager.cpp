@@ -228,8 +228,8 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
                 who = !f->nickname.empty() ? f->nickname : f->username;
                 bool wasVisible = (before != PresenceState::Offline &&
                                    before != PresenceState::Invisible);
-                // Presence toasts are favorites-only to avoid noise (Steam-style).
-                bool fav = f->favorite;
+                // Presence toasts are favorites-only and gated by the user pref.
+                bool fav = f->favorite && m_prefOnlineAlerts;
                 // Friend started a game (new game or fresh launch).
                 if (fav && ps == PresenceState::InGame && (before != PresenceState::InGame ||
                                                     beforeGame != gid) && !gt.empty()) {
@@ -562,8 +562,13 @@ void SocialManager::LoadPrefs() {
     }
     CloseHandle(h);
     JsonValue v = JsonValue::Parse(body);
+    const JsonValue& settings = v["settings"];
     const JsonValue& arr = v["prefs"];
     std::lock_guard<std::mutex> lk(m_mtx);
+    if (settings.isObject()) {
+        m_prefSound = settings["sound"].asBool(true);
+        m_prefOnlineAlerts = settings["online"].asBool(true);
+    }
     m_prefs.clear();
     if (arr.isArray())
         for (const auto& p : arr.arr) {
@@ -578,7 +583,12 @@ void SocialManager::LoadPrefs() {
 
 void SocialManager::SavePrefs() {
     std::ostringstream os;
-    os << "{\"prefs\":[";
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        os << "{\"settings\":{\"sound\":" << (m_prefSound ? "true" : "false")
+           << ",\"online\":" << (m_prefOnlineAlerts ? "true" : "false") << "},";
+    }
+    os << "\"prefs\":[";
     {
         std::lock_guard<std::mutex> lk(m_mtx);
         bool first = true;
@@ -698,6 +708,21 @@ void SocialManager::ClearNotifications() {
         m_history.clear();
     }
     FireChanged();
+}
+
+bool SocialManager::NotifSoundEnabled() const {
+    std::lock_guard<std::mutex> lk(m_mtx); return m_prefSound;
+}
+void SocialManager::SetNotifSound(bool on) {
+    { std::lock_guard<std::mutex> lk(m_mtx); m_prefSound = on; }
+    SavePrefs(); FireChanged();
+}
+bool SocialManager::PresenceAlertsEnabled() const {
+    std::lock_guard<std::mutex> lk(m_mtx); return m_prefOnlineAlerts;
+}
+void SocialManager::SetPresenceAlerts(bool on) {
+    { std::lock_guard<std::mutex> lk(m_mtx); m_prefOnlineAlerts = on; }
+    SavePrefs(); FireChanged();
 }
 
 // ── Presence ────────────────────────────────────────────────────────────────

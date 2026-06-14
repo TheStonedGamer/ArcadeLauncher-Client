@@ -69,6 +69,12 @@ public:
     void MarkNotificationsRead();
     void ClearNotifications();
 
+    // Notification preferences (persisted in social_prefs.json).
+    bool NotifSoundEnabled() const;
+    void SetNotifSound(bool on);
+    bool PresenceAlertsEnabled() const;   // toast when (favorite) friends come online/launch
+    void SetPresenceAlerts(bool on);
+
     // ── Presence ─────────────────────────────────────────────────────────────
     void SetPresence(PresenceState state);
     void SetInGame(const std::wstring& gameId, const std::wstring& gameTitle);
@@ -144,6 +150,8 @@ private:
     std::vector<Notification>              m_history;     // capped, newest last
     std::vector<Notification>              m_toastQueue;  // undrained toasts
     uint64_t                               m_notifSeq = 1;
+    bool                                   m_prefSound = true;        // play a sound on toasts
+    bool                                   m_prefOnlineAlerts = true; // presence toasts on/off
 
     // Client-local personalization, keyed by account id (guarded by m_mtx).
     struct LocalPref { bool favorite = false; std::wstring nickname; int64_t lastInteract = 0; };

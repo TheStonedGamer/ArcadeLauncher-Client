@@ -5,7 +5,7 @@
 #include "Config.h"
 #include <unordered_set>
 
-enum class FocusArea { Grid, Sidebar, Search };
+enum class FocusArea { Grid, Sidebar, Search, FriendsSearch };
 enum class LibraryPage { All, Installed, ReadyToDownload, BackgroundDownloads, Updates, Platform, Collection, Favorites, RecentlyPlayed, Hidden };
 
 // Grid ordering applied by App::ApplyFilter. Recent is the historical default
@@ -58,6 +58,7 @@ struct FriendRowView {
     int          unread = 0;
     bool         favorite = false;
     std::wstring nickname;          // overrides username for display when set
+    int64_t      lastInteract = 0;  // epoch secs — for "recently interacted" sort
 };
 
 // One notification row for the history dropdown (render-only view).
@@ -132,6 +133,9 @@ struct RenderState {
     float friendsScroll   = 0.0f;
     int  hoveredFriendId  = -1;  // accountId under the cursor, or -1
     std::vector<FriendRowView> friends;
+    std::wstring friendsFilter;        // inline search/filter text
+    int      friendsSortMode = 0;      // 0 = A–Z, 1 = Recently interacted
+    uint32_t friendsCollapsedMask = 0; // bit g set => group g collapsed
 
     // ── Direct-message chat window ────────────────────────────────────────────
     // A single floating conversation window. App fills it each frame from the
@@ -161,6 +165,8 @@ struct RenderState {
     int  notifUnread = 0;
     std::vector<NotifRowView> notifs;  // newest first; filled by App when open
     float notifScroll = 0.0f;
+    bool notifSoundOn = true;          // mirror of SocialManager prefs (for toggles)
+    bool notifOnlineAlerts = true;
 };
 
 class Renderer {
@@ -221,7 +227,9 @@ public:
 
     // Friends panel hit testing. Returns what was clicked; for a friend row,
     // outAccountId is set. Geometry comes from rects cached during the last draw.
-    struct FriendsHit { enum Kind { None, Row, AddFriend, AcceptRequest, DeclineRequest } kind = None; uint64_t accountId = 0; };
+    struct FriendsHit { enum Kind { None, Row, AddFriend, AcceptRequest, DeclineRequest,
+                                    Search, SortToggle, GroupHeader } kind = None;
+                        uint64_t accountId = 0; int groupIndex = -1; };
     FriendsHit HitTestFriendsPanel(float x, float y) const;
     bool       PointInFriendsPanel(float x, float y) const;
     float      FriendsPanelWidth() const { return m_friendsPanelW; }
@@ -254,7 +262,8 @@ public:
 
     // ── Notifications history dropdown (bell button) ──────────────────────────
     bool HitTestBellBtn(float x, float y) const;
-    struct NotifHit { enum Kind { None, Row, MarkAll, Clear, Close } kind = None;
+    struct NotifHit { enum Kind { None, Row, MarkAll, Clear, Close,
+                                  ToggleSound, ToggleOnline } kind = None;
                       uint64_t accountId = 0; };
     NotifHit HitTestNotifPanel(float x, float y) const;
     bool PointInNotifPanel(float x, float y) const;
@@ -376,6 +385,9 @@ private:
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendRowRects;
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendAcceptRects;  // incoming-request ✓
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_friendDeclineRects; // incoming-request ✕
+    std::vector<std::pair<D2D1_RECT_F, int>>      m_friendGroupHdrRects; // (rect, group idx)
+    D2D1_RECT_F m_friendsSearchRect{};
+    D2D1_RECT_F m_friendsSortRect{};
     float m_friendsContentH = 0.0f;   // total content height for scroll clamping
     D2D1_RECT_F m_emptyStateBtnRect{};  // non-zero only when the empty-state button is visible
 
@@ -412,6 +424,8 @@ private:
     D2D1_RECT_F m_notifPanelRect{};
     D2D1_RECT_F m_notifMarkAllRect{};
     D2D1_RECT_F m_notifClearRect{};
+    D2D1_RECT_F m_notifSoundRect{};
+    D2D1_RECT_F m_notifOnlineRect{};
     std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_notifRowRects;
     float m_notifContentH = 0.0f;
     void DrawNotifPanel(RenderState& state);
