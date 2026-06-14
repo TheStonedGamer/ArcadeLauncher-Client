@@ -150,6 +150,7 @@ private:
     std::atomic<int>           m_reconnectGen{ 0 };     // invalidates stale timers
     std::atomic<bool>          m_everConnected{ false }; // first connect vs a resume
     std::atomic<int>           m_heartbeatGen{ 0 };       // invalidates the stale ping loop
+    std::atomic<uint64_t>      m_lastMsgId{ 0 };          // highest message id seen — for resume backfill
 
     mutable std::mutex m_mtx;
     std::vector<FriendInfo>                m_friends;     // guarded

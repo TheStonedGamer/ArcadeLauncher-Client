@@ -38,6 +38,13 @@ static int64_t NowMs() {
         std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+// Lock-free monotonic max — tracks the highest message id we've observed so a
+// reconnect can ask the server to backfill only newer messages.
+static void AtomicMax(std::atomic<uint64_t>& a, uint64_t v) {
+    uint64_t cur = a.load();
+    while (v > cur && !a.compare_exchange_weak(cur, v)) {}
+}
+
 SocialManager::~SocialManager() {
     Stop();
 }
@@ -182,47 +189,13 @@ void SocialManager::ReconcileAfterReconnect() {
     //     gateway backlog batch didn't include, e.g. already-read ones).
     RefreshNotifications();
 
-    // 2) Re-pull history for conversations opened this session so messages sent
-    //    while we were offline appear and unread counts are corrected. Server
-    //    isRead flags drive the unread recompute (we don't clobber it to 0).
-    std::vector<uint64_t> peers;
-    {
-        std::lock_guard<std::mutex> lk(m_mtx);
-        for (const auto& kv : m_convos)
-            if (!kv.second.messages.empty()) peers.push_back(kv.first);
-    }
-    for (uint64_t peerId : peers) {
-        std::thread([this, peerId]() {
-            std::wstring path = L"/api/social/messages/" + std::to_wstring(peerId);
-            std::string body;
-            if (!HttpGet(path, body)) return;
-            JsonValue v = JsonValue::Parse(body);
-            const JsonValue& arr = v["messages"];
-            uint64_t self = m_selfId.load();
-            std::vector<ChatMessage> hist;
-            int unread = 0;
-            if (arr.isArray()) {
-                for (const auto& m : arr.arr) {
-                    ChatMessage cm;
-                    cm.messageId  = m["messageId"].asUint();
-                    cm.senderId   = m["senderId"].asUint();
-                    cm.receiverId = m["receiverId"].asUint();
-                    cm.messageText = Utf8ToWide(m["text"].asString());
-                    cm.timestamp  = m["timestamp"].asInt();
-                    cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
-                    if (!cm.isRead && cm.senderId != self) ++unread;
-                    hist.push_back(std::move(cm));
-                }
-            }
-            {
-                std::lock_guard<std::mutex> lk(m_mtx);
-                Conversation& c = ConvLocked(peerId);
-                c.messages = std::move(hist);
-                c.unread = unread;
-            }
-            FireChanged();
-        }).detach();
-    }
+    // 2) Backfill only the messages we missed while offline. Instead of re-pulling
+    //    every open conversation's full history (one REST round-trip each), send a
+    //    single resume frame; the server replies with one `chat_backfill` batch of
+    //    everything newer than the highest id we've seen. See HandleGatewayFrame.
+    std::ostringstream os;
+    os << "{\"type\":\"resume\",\"afterMsgId\":" << m_lastMsgId.load() << "}";
+    SendGatewayJson(os.str());
 }
 
 void SocialManager::ScheduleReconnect() {
@@ -310,6 +283,7 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         m.receiverId = v["receiverId"].asUint();
         m.messageText = Utf8ToWide(v["text"].asString());
         m.timestamp  = v["timestamp"].asInt();
+        AtomicMax(m_lastMsgId, m.messageId);
         uint64_t self = m_selfId.load();
         uint64_t peer = (m.senderId == self) ? m.receiverId : m.senderId;
         m.isRead = (m.senderId == self);
@@ -340,6 +314,40 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         }
         // Caller (App) suppresses the toast if this peer's chat is already open.
         if (emitToast) Notify(NotifKind::Message, peer, who.empty() ? L"New message" : who, preview);
+        FireChanged();
+        return;
+    }
+    if (type == "chat_backfill") {
+        // Resume reply: messages missed while we were offline. Merge each into its
+        // conversation (dedup by id, replace pending echoes), bump unread for new
+        // inbound, but never toast — this is catch-up, not a live event.
+        const JsonValue& arr = v["messages"];
+        if (arr.isArray()) {
+            uint64_t self = m_selfId.load();
+            std::lock_guard<std::mutex> lk(m_mtx);
+            for (const auto& jm : arr.arr) {
+                ChatMessage m;
+                m.messageId  = jm["messageId"].asUint();
+                m.senderId   = jm["senderId"].asUint();
+                m.receiverId = jm["receiverId"].asUint();
+                m.messageText = Utf8ToWide(jm["text"].asString());
+                m.timestamp  = jm["timestamp"].asInt();
+                m.isRead     = jm["isRead"].asBool() || m.senderId == self;
+                AtomicMax(m_lastMsgId, m.messageId);
+                uint64_t peer = (m.senderId == self) ? m.receiverId : m.senderId;
+                Conversation& c = ConvLocked(peer);
+                // Already present (by id) or matches a pending echo? replace/skip.
+                bool handled = false;
+                for (auto& em : c.messages) {
+                    if (em.messageId == m.messageId) { em = m; handled = true; break; }
+                    if (em.pending && em.senderId == m.senderId &&
+                        em.messageText == m.messageText) { em = m; handled = true; break; }
+                }
+                if (handled) continue;
+                c.messages.push_back(m);
+                if (!m.isRead && m.senderId != self) c.unread++;
+            }
+        }
         FireChanged();
         return;
     }
@@ -931,6 +939,7 @@ void SocialManager::OpenConversation(uint64_t peerId) {
                 cm.messageText = Utf8ToWide(m["text"].asString());
                 cm.timestamp  = m["timestamp"].asInt();
                 cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
+                AtomicMax(m_lastMsgId, cm.messageId);
                 hist.push_back(std::move(cm));
             }
         }
