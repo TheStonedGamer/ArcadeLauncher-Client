@@ -29,6 +29,8 @@ static constexpr UINT WM_APP_SOCIAL_CHANGED = WM_USER + 114;
 
 namespace social {
 
+class JsonValue;   // SocialJson.h — used by IngestServerNotificationLocked
+
 class SocialManager {
 public:
     SocialManager() = default;
@@ -62,11 +64,12 @@ public:
     std::wstring NicknameOf(uint64_t userId) const;
     void MarkInteracted(uint64_t userId);                        // for recent sort
 
-    // ── Notifications (toast queue + session history) ──────────────────────────
+    // ── Notifications (server-persisted feed + toast queue) ────────────────────
+    void RefreshNotifications();                      // REST GET, async — full feed
     std::vector<Notification> DrainToasts();          // new toasts since last call
     std::vector<Notification> GetNotifications() const;
     int  UnreadNotifications() const;
-    void MarkNotificationsRead();
+    void MarkNotificationsRead();                     // local + POST read{upToId}
     void ClearNotifications();
 
     // Notification preferences (persisted in social_prefs.json).
@@ -118,6 +121,10 @@ private:
     // Notifications: emit one (history + toast queue), fire change. Thread-safe.
     void Notify(NotifKind kind, uint64_t accountId,
                 std::wstring title, std::wstring body);
+    // Merge a server notification row (live frame, connect batch, or REST list)
+    // into m_history, deduped by serverId. Toasts only when emitToast && unread.
+    void IngestServerNotificationLocked(const JsonValue& n, bool emitToast,
+                                        std::vector<Notification>& toasts);
 
     // Personalization persistence (social_prefs.json next to other app data).
     void LoadPrefs();

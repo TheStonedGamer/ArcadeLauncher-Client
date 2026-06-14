@@ -73,6 +73,7 @@ void SocialManager::Start(const std::wstring& baseUrl, const std::wstring& token
     m_everConnected.store(false);
     LoadPrefs();
     RefreshFriends();
+    RefreshNotifications();
     OpenGateway();
 }
 
@@ -177,6 +178,9 @@ void SocialManager::ReconcileAfterReconnect() {
     // 1) Authoritative friend list + presence (also raises toasts for requests
     //    that arrived while we were disconnected, via RefreshFriends' diff).
     RefreshFriends();
+    // 1b) Reconcile the persisted notification feed (read state + any rows the
+    //     gateway backlog batch didn't include, e.g. already-read ones).
+    RefreshNotifications();
 
     // 2) Re-pull history for conversations opened this session so messages sent
     //    while we were offline appear and unread counts are corrected. Server
@@ -339,9 +343,37 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         FireChanged();
         return;
     }
+    if (type == "notification") {
+        // Live persisted notification pushed by the server. Merge + toast.
+        std::vector<Notification> toasts;
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            IngestServerNotificationLocked(v, /*emitToast=*/true, toasts);
+        }
+        for (auto& n : toasts) {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            m_toastQueue.push_back(std::move(n));
+        }
+        FireChanged();
+        return;
+    }
+    if (type == "notifications") {
+        // Backlog batch delivered on (re)connect. Merge silently — no toast
+        // storm for things the user may have already seen elsewhere.
+        const JsonValue& items = v["items"];
+        if (items.isArray()) {
+            std::vector<Notification> ignore;
+            std::lock_guard<std::mutex> lk(m_mtx);
+            for (const auto& it : items.arr)
+                IngestServerNotificationLocked(it, /*emitToast=*/false, ignore);
+        }
+        FireChanged();
+        return;
+    }
     if (type == "friend_request" || type == "friend_accepted" ||
         type == "friend_removed") {
-        // Relationship changed; re-pull the authoritative list.
+        // Relationship changed; re-pull the authoritative list. The persisted
+        // notification (if any) arrives separately as a "notification" frame.
         RefreshFriends();
         return;
     }
@@ -716,6 +748,64 @@ void SocialManager::Notify(NotifKind kind, uint64_t accountId,
     FireChanged();
 }
 
+// Merge one server notification row into m_history (call under m_mtx). Dedup is
+// by serverId: an existing row's read state is refreshed; a new row is inserted
+// keeping m_history ordered by timestamp ascending (newest last, matching Notify).
+// A genuinely new + unread row is appended to `toasts` when emitToast is set.
+void SocialManager::IngestServerNotificationLocked(const JsonValue& n, bool emitToast,
+                                                   std::vector<Notification>& toasts) {
+    uint64_t sid = n["id"].asUint();
+    if (sid == 0) return;
+    bool read = n["read"].asBool();
+
+    // Already known? Just sync read state (server is authoritative).
+    for (auto& ex : m_history) {
+        if (ex.serverId == sid) {
+            ex.read = read;
+            return;
+        }
+    }
+
+    Notification nn;
+    nn.id        = m_notifSeq++;
+    nn.serverId  = sid;
+    nn.kind      = NotifKindFromString(n["kind"].asString());
+    nn.accountId = n["actorId"].asUint();
+    // Prefer the actor's name as the title; fall back to a kind-appropriate label.
+    std::wstring actor = Utf8ToWide(n["actorName"].asString());
+    nn.title     = !actor.empty() ? actor : L"Notification";
+    nn.body      = Utf8ToWide(n["body"].asString());
+    nn.timestamp = n["timestamp"].asInt() * 1000; // server stores epoch seconds
+    nn.read      = read;
+
+    // Insert keeping ascending timestamp order (history is newest-last).
+    auto pos = m_history.end();
+    while (pos != m_history.begin() && (pos - 1)->timestamp > nn.timestamp) --pos;
+    m_history.insert(pos, nn);
+    if (m_history.size() > 200)
+        m_history.erase(m_history.begin(), m_history.begin() + (m_history.size() - 200));
+
+    if (emitToast && !read) toasts.push_back(nn);
+}
+
+void SocialManager::RefreshNotifications() {
+    std::thread([this]() {
+        std::string body;
+        if (!HttpGet(L"/api/social/notifications", body)) return;
+        JsonValue v = JsonValue::Parse(body);
+        const JsonValue& arr = v["notifications"];
+        if (!arr.isArray()) return;
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            std::vector<Notification> ignore;
+            // Server returns newest-first; ingest in reverse for ascending order.
+            for (auto it = arr.arr.rbegin(); it != arr.arr.rend(); ++it)
+                IngestServerNotificationLocked(*it, /*emitToast=*/false, ignore);
+        }
+        FireChanged();
+    }).detach();
+}
+
 std::vector<Notification> SocialManager::DrainToasts() {
     std::lock_guard<std::mutex> lk(m_mtx);
     std::vector<Notification> out;
@@ -736,11 +826,22 @@ int SocialManager::UnreadNotifications() const {
 }
 
 void SocialManager::MarkNotificationsRead() {
+    uint64_t maxServerId = 0;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
-        for (auto& x : m_history) x.read = true;
+        for (auto& x : m_history) {
+            x.read = true;
+            if (x.serverId > maxServerId) maxServerId = x.serverId;
+        }
     }
     FireChanged();
+    // Persist read state server-side (upToId=0 marks all unread read). Fire and
+    // forget on a worker thread; local state already reflects the change.
+    std::thread([this, maxServerId]() {
+        std::string body;
+        std::string json = "{\"upToId\":" + std::to_string(maxServerId) + "}";
+        HttpPostJson(L"/api/social/notifications/read", json, body);
+    }).detach();
 }
 
 void SocialManager::ClearNotifications() {

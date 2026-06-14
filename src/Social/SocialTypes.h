@@ -76,7 +76,8 @@ enum class NotifKind {
 };
 
 struct Notification {
-    uint64_t     id = 0;          // monotonic, per-session
+    uint64_t     id = 0;          // local render key (monotonic, per-session)
+    uint64_t     serverId = 0;    // persisted row id (0 = client-only, e.g. presence)
     NotifKind    kind = NotifKind::System;
     uint64_t     accountId = 0;   // related user (0 if none) — click target
     std::wstring title;
@@ -84,6 +85,18 @@ struct Notification {
     int64_t      timestamp = 0;   // epoch ms
     bool         read = false;
 };
+
+// Map the server's notification `kind` string to a NotifKind. Unknown kinds fall
+// back to System so future server-side kinds still surface (just without a glyph).
+inline NotifKind NotifKindFromString(const std::string& s) {
+    if (s == "friend_request")  return NotifKind::FriendRequest;
+    if (s == "friend_accepted") return NotifKind::FriendAccepted;
+    if (s == "friend_online")   return NotifKind::FriendOnline;
+    if (s == "friend_ingame")   return NotifKind::FriendInGame;
+    if (s == "message")         return NotifKind::Message;
+    if (s == "voice_invite")    return NotifKind::VoiceInvite;
+    return NotifKind::System;
+}
 
 // Voice signaling state machine states (per social.md §6).
 enum class VoiceState {
