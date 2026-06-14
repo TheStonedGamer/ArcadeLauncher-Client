@@ -111,6 +111,10 @@ public:
     // Fetch an older page (id < oldest known) and PREPEND it (infinite scroll).
     void LoadOlderHistory(uint64_t peerId);
 
+    // ── Chat 1.2b — reactions ─────────────────────────────────────────────────
+    // Toggle my reaction on a message; sends {"type":"react",...} + local update.
+    void ToggleReaction(uint64_t peerId, uint64_t msgId, const std::wstring& emoji);
+
     // ── Voice signaling (state machine + frame relay; media is scaffolded) ────
     VoiceState Voice() const { return m_voiceState.load(); }
     uint64_t   VoicePeer() const { return m_voicePeer.load(); }

@@ -54,6 +54,8 @@ struct ChatMessage {
     bool         pending = false;   // sent locally, not yet acked by gateway
     int64_t      editedAt = 0;      // epoch seconds of last edit, 0 = never (1.2a)
     bool         deleted = false;   // tombstoned — render as "message deleted" (1.2a)
+    // Reactions (1.2b): emoji -> set of account ids that reacted with it.
+    std::map<std::wstring, std::vector<uint64_t>> reactions;
 };
 
 // Per-peer conversation: ordered message history + unread/typing state.

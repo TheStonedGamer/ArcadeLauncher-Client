@@ -7,11 +7,17 @@
 #include <chrono>
 #include <sstream>
 #include <cstring>
+#include <algorithm>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "shell32.lib")
 
 namespace social {
+
+// Toggle one account's reaction on a message (defined below; used by the gateway
+// frame handler above its definition).
+static void ApplyReactionLocked(ChatMessage& m, uint64_t userId,
+                                const std::wstring& emoji, bool on);
 
 std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty()) return L"";
@@ -362,6 +368,20 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
             for (auto& kv : m_convos)
                 for (auto& m : kv.second.messages)
                     if (m.messageId == mid) m.deleted = true;
+        }
+        FireChanged();
+        return;
+    }
+    if (type == "reaction") {
+        uint64_t mid   = v["messageId"].asUint();
+        uint64_t uid   = v["userId"].asUint();
+        std::wstring emoji = Utf8ToWide(v["emoji"].asString());
+        bool on        = v["on"].asBool();
+        if (!emoji.empty()) {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            for (auto& kv : m_convos)
+                for (auto& m : kv.second.messages)
+                    if (m.messageId == mid) ApplyReactionLocked(m, uid, emoji, on);
         }
         FireChanged();
         return;
@@ -1183,6 +1203,45 @@ void SocialManager::DeleteMessage(uint64_t peerId, uint64_t msgId) {
     FireChanged();
     std::ostringstream os;
     os << "{\"type\":\"delete\",\"msgId\":" << msgId << "}";
+    SendGatewayJson(os.str());
+}
+
+// Apply a reaction toggle to a message in any conversation (call under m_mtx).
+static void ApplyReactionLocked(ChatMessage& m, uint64_t userId,
+                                const std::wstring& emoji, bool on) {
+    auto& who = m.reactions[emoji];
+    auto it = std::find(who.begin(), who.end(), userId);
+    if (on) {
+        if (it == who.end()) who.push_back(userId);
+    } else {
+        if (it != who.end()) who.erase(it);
+        if (who.empty()) m.reactions.erase(emoji);
+    }
+}
+
+void SocialManager::ToggleReaction(uint64_t peerId, uint64_t msgId,
+                                   const std::wstring& emoji) {
+    if (emoji.empty()) return;
+    uint64_t self = m_selfId.load();
+    bool on = true;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        Conversation& c = ConvLocked(peerId);
+        for (auto& m : c.messages) {
+            if (m.messageId == msgId) {
+                auto rit = m.reactions.find(emoji);
+                bool has = rit != m.reactions.end() &&
+                           std::find(rit->second.begin(), rit->second.end(), self) != rit->second.end();
+                on = !has;
+                ApplyReactionLocked(m, self, emoji, on);
+                break;
+            }
+        }
+    }
+    FireChanged();
+    std::ostringstream os;
+    os << "{\"type\":\"react\",\"msgId\":" << msgId << ",\"emoji\":\""
+       << JsonEscape(WideToUtf8(emoji)) << "\",\"on\":" << (on ? "true" : "false") << "}";
     SendGatewayJson(os.str());
 }
 
