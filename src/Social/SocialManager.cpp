@@ -479,10 +479,23 @@ void SocialManager::RefreshFriends() {
 
 void SocialManager::SendFriendRequest(const std::wstring& username) {
     std::string u = WideToUtf8(username);
-    std::thread([this, u]() {
+    std::wstring uname = username;
+    std::thread([this, u, uname]() {
         std::string body;
         std::string json = std::string("{\"username\":\"") + JsonEscape(u) + "\"}";
         HttpPostJson(L"/api/social/friends/request", json, body);
+        // Body is JSON {"status":...} on success, or a plain-text error message.
+        JsonValue v = JsonValue::Parse(body);
+        std::string status = v.isObject() ? v["status"].asString() : "";
+        if (status == "request_sent")
+            Notify(NotifKind::FriendRequest, 0, uname, L"Friend request sent");
+        else if (status == "accepted")
+            Notify(NotifKind::FriendAccepted, 0, uname, L"is now your friend");
+        else {
+            // Surface the server's reason (e.g. "User not found", "Already friends").
+            std::wstring reason = body.empty() ? L"Could not send request" : Utf8ToWide(body);
+            Notify(NotifKind::System, 0, uname.empty() ? L"Add friend" : uname, reason);
+        }
         RefreshFriends();
     }).detach();
 }
