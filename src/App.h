@@ -216,6 +216,11 @@ private:
     // Cloud-save upload after the running game exits (raw server id + folder).
     std::wstring m_pendingSaveSyncGameId;
     std::wstring m_pendingSaveSyncDir;
+    // Library tracking (2.4): the session's elapsed seconds (set on the monitor
+    // thread) and the server game id to report it against (set at launch).
+    std::atomic<uint64_t> m_pendingPlaytimeSecs{0};
+    std::wstring          m_pendingPlaytimeServerId;
+    void FetchAndMergeLibraryStats();   // pull server stats, merge into m_library
 
     // Off-thread box-art decode. WIC decoding is expensive; doing it on the UI
     // thread froze the launcher when many covers loaded at once. A single worker

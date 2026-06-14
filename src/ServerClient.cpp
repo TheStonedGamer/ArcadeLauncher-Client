@@ -938,6 +938,50 @@ bool ServerClient::GetAccount(AccountInfo& info, std::wstring& error) {
     return true;
 }
 
+// ── Library tracking (ROADMAP 2.4) ──────────────────────────────────────────
+
+bool ServerClient::ReportPlaytime(const std::wstring& gameId, uint64_t seconds,
+                                  std::wstring& error) {
+    if (gameId.empty() || seconds == 0) return true;   // nothing to report
+    if (!EnsureAuthenticated(error)) return false;
+    std::string json = "{\"gameId\":\"" + ToUtf8(gameId) + "\",\"seconds\":" +
+                       std::to_string(seconds) + "}";
+    std::string body;
+    return HttpSendRaw(L"POST", Url(L"/api/library/playtime"),
+                       L"application/json", json, body, error);
+}
+
+bool ServerClient::SetRating(const std::wstring& gameId, int rating, int completion,
+                             std::wstring& error) {
+    if (gameId.empty()) return true;
+    if (!EnsureAuthenticated(error)) return false;
+    std::string json = "{\"gameId\":\"" + ToUtf8(gameId) +
+                       "\",\"rating\":" + std::to_string(rating) +
+                       ",\"completion\":" + std::to_string(completion) + "}";
+    std::string body;
+    return HttpSendRaw(L"POST", Url(L"/api/library/rating"),
+                       L"application/json", json, body, error);
+}
+
+bool ServerClient::FetchLibraryStats(std::vector<LibraryStat>& out, std::wstring& error) {
+    if (!EnsureAuthenticated(error)) return false;
+    std::string body;
+    if (!HttpGet(Url(L"/api/library/stats"), body, error)) return false;
+    out.clear();
+    for (const std::string& obj : ObjectsInArray(body, "stats")) {
+        LibraryStat s;
+        s.gameId          = ToWide(JsonString(obj, "gameId"));
+        if (s.gameId.empty()) continue;
+        s.playtimeSeconds = JsonNumber(obj, "playtimeSeconds");
+        s.lastPlayed      = (int64_t)JsonNumber(obj, "lastPlayed");
+        s.playCount       = (int64_t)JsonNumber(obj, "playCount");
+        s.completion      = (int)JsonNumber(obj, "completion");
+        s.rating          = (int)JsonNumber(obj, "rating");
+        out.push_back(std::move(s));
+    }
+    return true;
+}
+
 bool ServerClient::GetAvatar(std::string& bytes, std::wstring& error) {
     if (!EnsureAuthenticated(error)) return false;
     // HttpGet stores the response body verbatim (binary-safe) and reports any

@@ -107,6 +107,21 @@ public:
                         const std::wstring& relPath, int64_t mtime,
                         const std::string& bytes, std::wstring& error);
 
+    // ── Library tracking (ROADMAP 2.4) ──────────────────────────────────────
+    // Per-account playtime / last-played / completion / rating, synced across
+    // devices. gameId is the stable catalog id. All self-scoped.
+    struct LibraryStat {
+        std::wstring gameId;
+        uint64_t     playtimeSeconds = 0;
+        int64_t      lastPlayed = 0;
+        int64_t      playCount = 0;
+        int          completion = 0;
+        int          rating = 0;
+    };
+    bool ReportPlaytime(const std::wstring& gameId, uint64_t seconds, std::wstring& error);
+    bool SetRating(const std::wstring& gameId, int rating, int completion, std::wstring& error);
+    bool FetchLibraryStats(std::vector<LibraryStat>& out, std::wstring& error);
+
     // ── Account self-service (#21 / #22) ────────────────────────────────────
     struct AccountInfo {
         std::wstring username;

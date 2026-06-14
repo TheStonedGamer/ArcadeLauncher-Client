@@ -18,6 +18,8 @@
 // Defined near LaunchInstalledGame; used by the WM_GAME_CLOSED handler too.
 static void RunHookCommand(const std::wstring& cmd);
 static void SyncSavesUp(ServerConfig sc, std::wstring serverGameId, std::wstring saveDir);
+// ROADMAP 2.4: push a finished session's playtime to the server (fire-and-forget).
+static void ReportPlaytimeBg(ServerConfig sc, std::wstring serverGameId, uint64_t seconds);
 
 // Full path to this running launcher executable.
 static std::wstring ThisExePath() {
@@ -1048,6 +1050,10 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
                                                              : sc.authToken;
             if (!token.empty())
                 m_social.Start(sc.baseUrl, token);
+            // Library tracking (2.4): pull server-side playtime/last-played and
+            // merge into the local library so stats follow the account across
+            // devices. Same off-thread library access pattern as the monitor cb.
+            FetchAndMergeLibraryStats();
         }).detach();
     }
 
@@ -1151,6 +1157,13 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             m_pendingSaveSyncGameId.clear();
             m_pendingSaveSyncDir.clear();
         }
+        // Library tracking: push this session's playtime to the server (2.4).
+        if (uint64_t secs = m_pendingPlaytimeSecs.exchange(0)) {
+            if (!m_pendingPlaytimeServerId.empty())
+                std::thread(ReportPlaytimeBg, m_config.Get().server,
+                            m_pendingPlaytimeServerId, secs).detach();
+        }
+        m_pendingPlaytimeServerId.clear();
         m_discord.SetIdle();
         m_social.ClearInGame(); // back to Online presence when the game exits
         ShowWindow_(true);
@@ -3230,6 +3243,36 @@ static std::vector<std::pair<std::wstring, int64_t>> ListLocalSaves(const std::w
 
 // Upload local-newer files after a play session. Runs on a detached thread —
 // must not touch App state, so everything it needs comes in by value.
+void App::FetchAndMergeLibraryStats() {
+    ServerConfig sc = m_config.Get().server;
+    if (!sc.enabled || sc.baseUrl.empty()) return;
+    ServerClient client(sc);
+    std::wstring error;
+    std::vector<ServerClient::LibraryStat> stats;
+    if (!client.FetchLibraryStats(stats, error) || stats.empty()) return;
+    bool changed = false;
+    for (auto& g : m_library.AllMutable()) {
+        for (const auto& s : stats) {
+            bool match = (!g.serverGameId.empty() && g.serverGameId == s.gameId) ||
+                         g.id == s.gameId;
+            if (!match) continue;
+            // Server is the cross-device source of truth; never shrink a local
+            // total in case a session hasn't been reported yet.
+            if (s.playtimeSeconds > g.playtimeSeconds) { g.playtimeSeconds = s.playtimeSeconds; changed = true; }
+            if (s.lastPlayed > g.lastPlayed)           { g.lastPlayed = s.lastPlayed;           changed = true; }
+            break;
+        }
+    }
+    if (changed && m_hwnd) InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+static void ReportPlaytimeBg(ServerConfig sc, std::wstring serverGameId, uint64_t seconds) {
+    if (serverGameId.empty() || seconds == 0) return;
+    ServerClient client(sc);
+    std::wstring error;
+    client.ReportPlaytime(serverGameId, seconds, error);  // best-effort
+}
+
 static void SyncSavesUp(ServerConfig sc, std::wstring serverGameId, std::wstring saveDir) {
     ServerClient client(sc);
     std::wstring error;
@@ -3355,6 +3398,7 @@ void App::LaunchInstalledGame(Game launchGame) {
                         std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
                 }
+                m_pendingPlaytimeSecs.store(elapsed);  // reported in WM_GAME_CLOSED (2.4)
                 PostMessageW(m_hwnd, WM_GAME_CLOSED, 0, 0);
             });
     } else if (!launchGame.emulatorPath.empty()) {
@@ -3384,6 +3428,7 @@ void App::LaunchInstalledGame(Game launchGame) {
                         std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
                 }
+                m_pendingPlaytimeSecs.store(elapsed);  // reported in WM_GAME_CLOSED (2.4)
                 PostMessageW(m_hwnd, WM_GAME_CLOSED, 0, 0);
             });
     } else if (!launchGame.exePath.empty()) {
@@ -3400,6 +3445,7 @@ void App::LaunchInstalledGame(Game launchGame) {
                         std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
                 }
+                m_pendingPlaytimeSecs.store(elapsed);  // reported in WM_GAME_CLOSED (2.4)
                 PostMessageW(m_hwnd, WM_GAME_CLOSED, 0, 0);
             });
     }
@@ -3413,6 +3459,10 @@ void App::LaunchInstalledGame(Game launchGame) {
             m_pendingSaveSyncGameId = launchGame.serverGameId;
             m_pendingSaveSyncDir    = launchGame.saveDir;
         }
+        // Report this session's playtime to the server on exit (2.4). Server-backed
+        // games carry a catalog id; local-only games have none, so they stay local.
+        m_pendingPlaytimeServerId = launchGame.serverGameId;
+        m_pendingPlaytimeSecs.store(0);
         m_discord.SetPlaying(launchGame.title, PlatformName(launchGame.platform));
         // Rich presence to friends: transition to In-Game with this title.
         m_social.SetInGame(launchGame.serverGameId, launchGame.title);
