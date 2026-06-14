@@ -795,17 +795,40 @@ void SocialManager::SetFriendPolicy(const std::string& policy) {
     }).detach();
 }
 
+std::string SocialManager::DmPolicy() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_dmPolicy;
+}
+
+void SocialManager::SetDmPolicy(const std::string& policy) {
+    if (policy != "everyone" && policy != "friends" && policy != "nobody") return;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_dmPolicy = policy;
+    }
+    FireChanged();
+    if (!m_running.load()) return;
+    std::thread([this, policy]() {
+        std::ostringstream os;
+        os << "{\"dmPolicy\":\"" << policy << "\"}";
+        std::string resp;
+        HttpPut(L"/api/social/privacy", os.str(), resp);
+    }).detach();
+}
+
 void SocialManager::PullFriendPolicy() {
     if (!m_running.load()) return;
     std::thread([this]() {
         std::string resp;
         if (!HttpGet(L"/api/social/privacy", resp)) return;
         JsonValue v = JsonValue::Parse(resp);
-        std::string p = v["friendPolicy"].asString();
-        if (p.empty()) return;
+        std::string fp = v["friendPolicy"].asString();
+        // dmPolicy may be absent on an older server — leave the default in place.
+        std::string dp = v["dmPolicy"].asString();
         {
             std::lock_guard<std::mutex> lk(m_mtx);
-            m_friendPolicy = p;
+            if (!fp.empty()) m_friendPolicy = fp;
+            if (!dp.empty()) m_dmPolicy = dp;
         }
         FireChanged();
     }).detach();

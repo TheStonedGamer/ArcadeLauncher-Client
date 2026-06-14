@@ -63,6 +63,12 @@ public:
     std::string FriendPolicy() const;                  // cached; "everyone" until pulled
     void SetFriendPolicy(const std::string& policy);   // PUT + update cache, async
 
+    // ── DM privacy (1.1) — who may direct-message me ──────────────────────────
+    // Policy is one of "everyone" | "friends" | "nobody"; server is authoritative.
+    // dmPolicy may be absent on an older server — defaults to "everyone".
+    std::string DmPolicy() const;                      // cached; "everyone" until pulled
+    void SetDmPolicy(const std::string& policy);       // PUT + update cache, async
+
     // ── Personalization (client-local; persisted to social_prefs.json) ─────────
     void SetFavorite(uint64_t userId, bool fav);
     bool IsFavorite(uint64_t userId) const;
@@ -180,6 +186,7 @@ private:
     struct LocalPref { bool favorite = false; std::wstring nickname; int64_t lastInteract = 0; };
     std::map<uint64_t, LocalPref>          m_prefs;
     std::string                            m_friendPolicy = "everyone"; // 1.1, guarded
+    std::string                            m_dmPolicy = "everyone";     // 1.1, guarded
     PresenceState                          m_presence = PresenceState::Online;
     std::wstring                           m_curGameId;
     std::wstring                           m_curGameTitle;

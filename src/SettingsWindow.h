@@ -4,6 +4,8 @@
 #include "IgdbSync.h"
 #include "IgdbClient.h"
 
+namespace social { class SocialManager; }
+
 class SettingsWindow {
 public:
     SettingsWindow() = default;
@@ -25,13 +27,16 @@ public:
     static constexpr int PAGE_XBOX360 = 12;
     static constexpr int PAGE_XBOX    = 13;
     static constexpr int PAGE_CUSTOM0 = 14;
+    // High, fixed id so it never collides with the PAGE_CUSTOM0+i range.
+    static constexpr int PAGE_PRIVACY = 200;
 
     void Open(HWND parent, AppConfig& cfg,
               std::function<void()> onSave,
               std::function<void()> onRefreshMeta    = {},
               std::function<void()> onReacquireMeta  = {},
               int startPage = PAGE_GENERAL,
-              IgdbClient* igdbClient = nullptr);
+              IgdbClient* igdbClient = nullptr,
+              social::SocialManager* social = nullptr);
     void Close();
     bool IsOpen() const;
 
@@ -106,6 +111,7 @@ private:
     void SaveCurrentPage();
     void LoadCurrentPage();
 
+    void BuildPrivacyPage();
     void BuildGeneralPage();
     void BuildSteamPage();
     void BuildEpicPage();
@@ -124,6 +130,7 @@ private:
     void BuildXboxPage();
     void BuildCustomPage(int libIdx);
 
+    void LoadPrivacyPage();   void SavePrivacyPage();
     void LoadGeneralPage();   void SaveGeneralPage();
     void LoadSteamPage();     void SaveSteamPage();
     void LoadEpicPage();      void SaveEpicPage();
@@ -182,6 +189,7 @@ private:
     HBRUSH       m_sidebarBrush = nullptr;
     int          m_startPage    = PAGE_GENERAL;
     IgdbClient*  m_igdbClient   = nullptr;  // not owned
+    social::SocialManager* m_social = nullptr;  // not owned (privacy page)
 
     static constexpr wchar_t WNDCLASS[] = L"ArcadeLauncherSettings2";
 };

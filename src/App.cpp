@@ -4695,7 +4695,8 @@ void App::OpenSettings(int startPage) {
             InvalidateRect(m_hwnd, nullptr, FALSE);
         },
         startPage,
-        &m_igdbClient);
+        &m_igdbClient,
+        &m_social);
 }
 
 void App::ShowProfileMenu() {

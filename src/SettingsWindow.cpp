@@ -14,6 +14,7 @@
 #include "DuckStationConfig.h"
 #include "RyujinxConfig.h"
 #include "MesenConfig.h"
+#include "Social/SocialManager.h"
 #include <shobjidl_core.h>
 #include <commdlg.h>
 #include <shellapi.h>
@@ -178,7 +179,8 @@ void SettingsWindow::Open(HWND parent, AppConfig& cfg,
                            std::function<void()> onRefreshMeta,
                            std::function<void()> onReacquireMeta,
                            int startPage,
-                           IgdbClient* igdbClient) {
+                           IgdbClient* igdbClient,
+                           social::SocialManager* social) {
     if (IsOpen()) { SetForegroundWindow(m_hwnd); return; }
     m_parent           = parent;
     m_cfg              = &cfg;
@@ -188,6 +190,7 @@ void SettingsWindow::Open(HWND parent, AppConfig& cfg,
     m_onReacquireMeta  = onReacquireMeta;
     m_startPage        = startPage;
     m_igdbClient       = igdbClient;
+    m_social           = social;
 
     EnsureFonts();
 
@@ -601,6 +604,13 @@ void SettingsWindow::RebuildSidebarItems() {
         SendMessageW(m_sidebar, LB_SETITEMDATA, row, (LPARAM)(intptr_t)page);
     };
 
+    // Privacy lives under a USER SETTINGS section at the very top, but only when
+    // the social subsystem is wired in (it reads/writes server privacy policy).
+    if (m_social) {
+        addHeader(L"USER SETTINGS");
+        addPage(L"Privacy", PAGE_PRIVACY);
+    }
+
     addHeader(L"APP SETTINGS");
     addPage(L"General", PAGE_GENERAL);
 
@@ -653,6 +663,7 @@ void SettingsWindow::SwitchPage(int idx) {
     SendMessageW(m_sidebar, LB_SETCURSEL, RowForPage(idx), 0);
 
     switch (idx) {
+    case PAGE_PRIVACY: BuildPrivacyPage(); break;
     case PAGE_GENERAL: BuildGeneralPage(); break;
     case PAGE_STEAM:   BuildSteamPage();   break;
     case PAGE_EPIC:    BuildEpicPage();    break;
@@ -678,6 +689,7 @@ void SettingsWindow::SwitchPage(int idx) {
 void SettingsWindow::SaveCurrentPage() {
     if (m_pageControls.empty()) return;
     switch (m_currentPage) {
+    case PAGE_PRIVACY: SavePrivacyPage(); break;
     case PAGE_GENERAL: SaveGeneralPage(); break;
     case PAGE_STEAM:   SaveSteamPage();   break;
     case PAGE_EPIC:    SaveEpicPage();    break;
@@ -698,6 +710,7 @@ void SettingsWindow::SaveCurrentPage() {
 
 void SettingsWindow::LoadCurrentPage() {
     switch (m_currentPage) {
+    case PAGE_PRIVACY: LoadPrivacyPage(); break;
     case PAGE_GENERAL: LoadGeneralPage(); break;
     case PAGE_STEAM:   LoadSteamPage();   break;
     case PAGE_EPIC:    LoadEpicPage();    break;
@@ -785,6 +798,32 @@ static void ApplyDefenderExclusion(const std::wstring& path, bool add) {
         // A user who declines the UAC prompt simply leaves the exclusion
         // unchanged; the stored toggle is reconciled on the next save.
     }).detach();
+}
+
+void SettingsWindow::BuildPrivacyPage() {
+    int y = PageHeader(m_hwnd, m_pageControls, L"Privacy");
+
+    AddPC(Group(m_hwnd, L" Friend requests ", K_CX, y, K_CW, 78));
+    AddPC(Label(m_hwnd, L"Who can send me friend requests:",
+                K_CX + 12, y + 24, 250));
+    AddPC(Combo(m_hwnd, ID_EC_C1, K_CX + 268, y + 22, 240));
+    AddPC(SmallLabel(m_hwnd,
+          L"Controls who is allowed to add you. Server-enforced.",
+          K_CX + 12, y + 48, K_CW - 24));
+    y += 86;
+
+    AddPC(Group(m_hwnd, L" Direct messages ", K_CX, y, K_CW, 78));
+    AddPC(Label(m_hwnd, L"Who can DM me:",
+                K_CX + 12, y + 24, 250));
+    AddPC(Combo(m_hwnd, ID_EC_C2, K_CX + 268, y + 22, 240));
+    AddPC(SmallLabel(m_hwnd,
+          L"Restrict who can start a direct-message conversation with you.",
+          K_CX + 12, y + 48, K_CW - 24));
+    y += 86;
+
+    AddPC(SmallLabel(m_hwnd,
+          L"Changes apply when you click Apply or Save.",
+          K_CX + 12, y, K_CW - 24));
 }
 
 void SettingsWindow::BuildGeneralPage() {
@@ -1353,6 +1392,29 @@ static void WriteStartupReg(bool enable) {
         RegDeleteValueW(hk, L"ArcadeLauncher");
     }
     RegCloseKey(hk);
+}
+
+void SettingsWindow::LoadPrivacyPage() {
+    // Friend-request policy: everyone | mutual | nobody.
+    std::string fp = m_social ? m_social->FriendPolicy() : "everyone";
+    int fsel = (fp == "mutual") ? 1 : (fp == "nobody") ? 2 : 0;
+    ComboFill(PC(ID_EC_C1), { L"Everyone", L"Friends of friends", L"Nobody" }, fsel);
+
+    // DM policy: everyone | friends | nobody.
+    std::string dp = m_social ? m_social->DmPolicy() : "everyone";
+    int dsel = (dp == "friends") ? 1 : (dp == "nobody") ? 2 : 0;
+    ComboFill(PC(ID_EC_C2), { L"Everyone", L"Friends only", L"Nobody" }, dsel);
+}
+void SettingsWindow::SavePrivacyPage() {
+    if (!m_social) return;
+    static const char* kFriend[] = { "everyone", "mutual", "nobody" };
+    static const char* kDm[]     = { "everyone", "friends", "nobody" };
+    int fsel = ComboSel(PC(ID_EC_C1));
+    int dsel = ComboSel(PC(ID_EC_C2));
+    if (fsel >= 0 && fsel < 3 && kFriend[fsel] != m_social->FriendPolicy())
+        m_social->SetFriendPolicy(kFriend[fsel]);
+    if (dsel >= 0 && dsel < 3 && kDm[dsel] != m_social->DmPolicy())
+        m_social->SetDmPolicy(kDm[dsel]);
 }
 
 void SettingsWindow::LoadGeneralPage() {
