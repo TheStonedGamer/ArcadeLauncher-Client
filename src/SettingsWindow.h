@@ -95,6 +95,11 @@ private:
     static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT HandleMsg(HWND, UINT, WPARAM, LPARAM);
 
+    // Sidebar rows carry a page index in their LB item-data; non-selectable
+    // section headers (Discord-style grouping) use ROW_HEADER instead.
+    static constexpr intptr_t ROW_HEADER = -1;
+    int  RowForPage(int page) const;   // listbox row index whose item-data == page
+
     void CreateChrome(HWND hwnd);
     void RebuildSidebarItems();
     void SwitchPage(int idx);

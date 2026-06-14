@@ -18,16 +18,19 @@
 #include <commdlg.h>
 #include <shellapi.h>
 
-// ─── Colors ───────────────────────────────────────────────────────────────────
-static constexpr COLORREF C_SB_BG      = RGB(30,  30,  30);
-static constexpr COLORREF C_SB_ITEM    = RGB(200, 200, 200);
-static constexpr COLORREF C_SB_SEL_BG  = RGB( 0,  112, 204);
-static constexpr COLORREF C_SB_SEL_TXT = RGB(255, 255, 255);
-static constexpr COLORREF C_SB_HOV_BG  = RGB( 50,  50,  52);
+// ─── Colors (Discord-style settings nav) ───────────────────────────────────────
+static constexpr COLORREF C_SB_BG      = RGB(43,  45,  49);   // #2b2d31 sidebar
+static constexpr COLORREF C_SB_ITEM    = RGB(181, 186, 193);  // #b5bac1 idle item
+static constexpr COLORREF C_SB_SEL_BG  = RGB(64,  68,  75);   // #404249 selected pill
+static constexpr COLORREF C_SB_SEL_TXT = RGB(255, 255, 255);  // white selected text
+static constexpr COLORREF C_SB_HOV_BG  = RGB(57,  60,  66);   // #393c42 hover pill
+static constexpr COLORREF C_SB_HEADER  = RGB(148, 155, 164);  // #949ba4 section header
+static constexpr COLORREF C_SB_SEP     = RGB(30,  31,  34);   // #1e1f22 separator
 
 // ─── Fonts ────────────────────────────────────────────────────────────────────
-static HFONT gFont     = nullptr;
-static HFONT gBoldFont = nullptr;
+static HFONT gFont       = nullptr;
+static HFONT gBoldFont   = nullptr;
+static HFONT gHeaderFont = nullptr;   // small bold uppercase section headers
 
 static void EnsureFonts() {
     if (gFont) return;
@@ -36,6 +39,12 @@ static void EnsureFonts() {
     gFont = CreateFontIndirectW(&ncm.lfMessageFont);
     ncm.lfMessageFont.lfWeight = FW_SEMIBOLD;
     gBoldFont = CreateFontIndirectW(&ncm.lfMessageFont);
+    // Section header: a couple points smaller, bold, for the uppercase group
+    // labels (Discord uses ~12px all-caps grey headers).
+    LOGFONTW lf = ncm.lfMessageFont;
+    lf.lfWeight = FW_BOLD;
+    if (lf.lfHeight < 0) lf.lfHeight += 2; else if (lf.lfHeight > 0) lf.lfHeight -= 2;
+    gHeaderFont = CreateFontIndirectW(&lf);
 }
 
 static void ApplyFont(HWND h, bool bold = false) {
@@ -255,7 +264,7 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         FillRect(hdc, &sb, m_sidebarBrush);
         // Separator line
         RECT sep = { SB_W, 0, SB_W + 1, rc.bottom };
-        HBRUSH sepBr = CreateSolidBrush(RGB(70, 70, 70));
+        HBRUSH sepBr = CreateSolidBrush(C_SB_SEP);
         FillRect(hdc, &sep, sepBr);
         DeleteObject(sepBr);
         // Content + bottom — dark to match the rest of the launcher.
@@ -263,6 +272,10 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         FillRect(hdc, &ct, dark::BgBrush());
         return 1;
     }
+
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE) { Close(); return 0; }
+        break;
 
     case WM_CTLCOLORLISTBOX: {
         HWND ctrl = (HWND)lp;
@@ -318,7 +331,15 @@ LRESULT SettingsWindow::HandleMsg(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         if (id == ID_SIDEBAR && note == LBN_SELCHANGE) {
             int sel = (int)SendMessageW(m_sidebar, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR) SwitchPage(sel);
+            if (sel != LB_ERR) {
+                intptr_t page = (intptr_t)SendMessageW(m_sidebar, LB_GETITEMDATA, sel, 0);
+                if (page == ROW_HEADER) {
+                    // Section headers aren't selectable — snap back to the page.
+                    SendMessageW(m_sidebar, LB_SETCURSEL, RowForPage(m_currentPage), 0);
+                } else {
+                    SwitchPage((int)page);
+                }
+            }
             return 0;
         }
         HandlePageCommand(id);
@@ -499,30 +520,46 @@ void SettingsWindow::DrawSidebarItem(DRAWITEMSTRUCT* dis) {
     HDC  hdc = dis->hDC;
     RECT rc  = dis->rcItem;
     bool sel = (dis->itemState & ODS_SELECTED) != 0;
+    bool isHeader = (intptr_t)dis->itemData == ROW_HEADER;
 
-    // Background
-    COLORREF bg = sel ? C_SB_SEL_BG : C_SB_BG;
-    HBRUSH bgBr = CreateSolidBrush(bg);
-    FillRect(hdc, &rc, bgBr);
-    DeleteObject(bgBr);
-
-    // Left accent bar when selected
-    if (sel) {
-        RECT bar = { rc.left, rc.top + 5, rc.left + 3, rc.bottom - 5 };
-        HBRUSH barBr = CreateSolidBrush(C_SB_SEL_TXT);
-        FillRect(hdc, &bar, barBr);
-        DeleteObject(barBr);
-    }
-
-    // Item text
     wchar_t buf[256] = {};
     SendMessageW(dis->hwndItem, LB_GETTEXT, dis->itemID, (LPARAM)buf);
 
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, sel ? C_SB_SEL_TXT : C_SB_ITEM);
+    // Always paint the full row in the sidebar base colour first.
+    HBRUSH baseBr = CreateSolidBrush(C_SB_BG);
+    FillRect(hdc, &rc, baseBr);
+    DeleteObject(baseBr);
 
-    HFONT old = (HFONT)SelectObject(hdc, gFont);
-    RECT tr = { rc.left + 18, rc.top, rc.right - 4, rc.bottom };
+    SetBkMode(hdc, TRANSPARENT);
+
+    if (isHeader) {
+        // Uppercase grey section label, bottom-aligned with a little left pad so
+        // it reads as a group divider rather than a clickable row.
+        SetTextColor(hdc, C_SB_HEADER);
+        HFONT old = (HFONT)SelectObject(hdc, gHeaderFont ? gHeaderFont : gFont);
+        RECT tr = { rc.left + 16, rc.top, rc.right - 6, rc.bottom - 3 };
+        DrawTextW(hdc, buf, -1, &tr, DT_BOTTOM | DT_SINGLELINE | DT_LEFT | DT_NOPREFIX);
+        SelectObject(hdc, old);
+        return;
+    }
+
+    // Selectable page row: draw a rounded "pill" inset from the edges when
+    // selected (Discord-style), then the label on top.
+    if (sel) {
+        RECT pill = { rc.left + 8, rc.top + 2, rc.right - 8, rc.bottom - 2 };
+        HBRUSH pillBr = CreateSolidBrush(C_SB_SEL_BG);
+        HPEN   pen    = (HPEN)GetStockObject(NULL_PEN);
+        HGDIOBJ ob = SelectObject(hdc, pillBr);
+        HGDIOBJ op = SelectObject(hdc, pen);
+        RoundRect(hdc, pill.left, pill.top, pill.right, pill.bottom, 10, 10);
+        SelectObject(hdc, ob);
+        SelectObject(hdc, op);
+        DeleteObject(pillBr);
+    }
+
+    SetTextColor(hdc, sel ? C_SB_SEL_TXT : C_SB_ITEM);
+    HFONT old = (HFONT)SelectObject(hdc, sel ? gBoldFont : gFont);
+    RECT tr = { rc.left + 22, rc.top, rc.right - 8, rc.bottom };
     DrawTextW(hdc, buf, -1, &tr, DT_VCENTER | DT_SINGLELINE | DT_LEFT | DT_NOPREFIX);
     SelectObject(hdc, old);
 }
@@ -543,19 +580,68 @@ void SettingsWindow::CreateChrome(HWND hwnd) {
     Btn(hwnd, L"Cancel", ID_CANCEL, WIN_W - 178, BOT_Y + 12, 78, 26);
     Btn(hwnd, L"Apply",  ID_APPLY,  WIN_W - 92,  BOT_Y + 12, 78, 26);
 
+    // Subtle Discord-style "Esc" hint at the bottom-left of the content area.
+    HWND hint = CreateWindowExW(0, L"STATIC", L"Press Esc to close",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        CX, BOT_Y + 18, 200, 18, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ApplyFont(hint);
+
     RebuildSidebarItems();
 }
 
 void SettingsWindow::RebuildSidebarItems() {
     SendMessageW(m_sidebar, LB_RESETCONTENT, 0, 0);
-    static const wchar_t* fixed[] = {
-        L"General", L"Steam", L"Epic Games", L"GOG Galaxy",
-        L"Dolphin", L"Ryujinx", L"RPCS3", L"N64", L"NES", L"SNES",
-        L"PS1", L"PS2", L"Xbox 360", L"Xbox"
+
+    auto addHeader = [&](const wchar_t* label) {
+        int row = (int)SendMessageW(m_sidebar, LB_ADDSTRING, 0, (LPARAM)label);
+        SendMessageW(m_sidebar, LB_SETITEMDATA, row, (LPARAM)ROW_HEADER);
     };
-    for (auto* s : fixed)
-        SendMessageW(m_sidebar, LB_ADDSTRING, 0, (LPARAM)s);
-    SendMessageW(m_sidebar, LB_SETCURSEL, m_currentPage, 0);
+    auto addPage = [&](const wchar_t* label, int page) {
+        int row = (int)SendMessageW(m_sidebar, LB_ADDSTRING, 0, (LPARAM)label);
+        SendMessageW(m_sidebar, LB_SETITEMDATA, row, (LPARAM)(intptr_t)page);
+    };
+
+    addHeader(L"APP SETTINGS");
+    addPage(L"General", PAGE_GENERAL);
+
+    addHeader(L"GAME LIBRARY");
+    addPage(L"Steam",       PAGE_STEAM);
+    addPage(L"Epic Games",  PAGE_EPIC);
+    addPage(L"GOG Galaxy",  PAGE_GOG);
+
+    addHeader(L"EMULATORS");
+    addPage(L"Dolphin",  PAGE_DOLPHIN);
+    addPage(L"Ryujinx",  PAGE_RYUJINX);
+    addPage(L"RPCS3",    PAGE_RPCS3);
+    addPage(L"N64",      PAGE_N64);
+    addPage(L"NES",      PAGE_NES);
+    addPage(L"SNES",     PAGE_SNES);
+    addPage(L"PS1",      PAGE_PS1);
+    addPage(L"PS2",      PAGE_PS2);
+    addPage(L"Xbox 360", PAGE_XBOX360);
+    addPage(L"Xbox",     PAGE_XBOX);
+
+    // Custom libraries get their own section when present.
+    const auto& libs = m_work.libraries.customLibraries;
+    if (!libs.empty()) {
+        addHeader(L"MY LIBRARIES");
+        for (size_t i = 0; i < libs.size(); ++i) {
+            const std::wstring& nm = libs[i].name.empty() ? L"Library" : libs[i].name;
+            addPage(nm.c_str(), PAGE_CUSTOM0 + (int)i);
+        }
+    }
+
+    SendMessageW(m_sidebar, LB_SETCURSEL, RowForPage(m_currentPage), 0);
+}
+
+// Find the listbox row whose item-data is the given page index (-1 if none).
+int SettingsWindow::RowForPage(int page) const {
+    int n = (int)SendMessageW(m_sidebar, LB_GETCOUNT, 0, 0);
+    for (int i = 0; i < n; ++i) {
+        if ((intptr_t)SendMessageW(m_sidebar, LB_GETITEMDATA, i, 0) == (intptr_t)page)
+            return i;
+    }
+    return -1;
 }
 
 // ─── Page switching ───────────────────────────────────────────────────────────
@@ -564,7 +650,7 @@ void SettingsWindow::SwitchPage(int idx) {
     SaveCurrentPage();
     DestroyPageControls();
     m_currentPage = idx;
-    SendMessageW(m_sidebar, LB_SETCURSEL, idx, 0);
+    SendMessageW(m_sidebar, LB_SETCURSEL, RowForPage(idx), 0);
 
     switch (idx) {
     case PAGE_GENERAL: BuildGeneralPage(); break;
