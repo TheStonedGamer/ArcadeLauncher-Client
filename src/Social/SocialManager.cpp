@@ -7,6 +7,7 @@
 #include <chrono>
 #include <sstream>
 #include <cstring>
+#include <cwctype>     // towlower (attachment content-type guess)
 #include <algorithm>
 
 #pragma comment(lib, "winhttp.lib")
@@ -290,6 +291,7 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
         m.senderId   = v["senderId"].asUint();
         m.receiverId = v["receiverId"].asUint();
         m.messageText = Utf8ToWide(v["text"].asString());
+        m.attachmentId = v["attachmentId"].asUint();
         m.timestamp  = v["timestamp"].asInt();
         AtomicMax(m_lastMsgId, m.messageId);
         uint64_t self = m_selfId.load();
@@ -300,12 +302,19 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
             std::lock_guard<std::mutex> lk(m_mtx);
             Conversation& c = ConvLocked(peer);
             c.peerTyping = false;
-            // Replace a matching pending echo if present, else append.
+            // Replace a matching pending echo if present, else append. Match on
+            // attachment too so an attachment-only echo (empty text) resolves to
+            // the right server row.
             bool replaced = false;
             for (auto& em : c.messages) {
                 if (em.pending && em.senderId == m.senderId &&
-                    em.messageText == m.messageText) {
-                    em = m; replaced = true; break;
+                    em.messageText == m.messageText &&
+                    em.attachmentId == m.attachmentId) {
+                    // Preserve the local filename — the gateway frame omits it.
+                    std::wstring keepName = em.attachmentName;
+                    em = m;
+                    if (em.attachmentName.empty()) em.attachmentName = keepName;
+                    replaced = true; break;
                 }
             }
             if (!replaced) {
@@ -400,6 +409,7 @@ void SocialManager::HandleGatewayFrame(const std::string& utf8) {
                 m.senderId   = jm["senderId"].asUint();
                 m.receiverId = jm["receiverId"].asUint();
                 m.messageText = Utf8ToWide(jm["text"].asString());
+                m.attachmentId = jm["attachmentId"].asUint();
                 m.timestamp  = jm["timestamp"].asInt();
                 m.isRead     = jm["isRead"].asBool() || m.senderId == self;
                 AtomicMax(m_lastMsgId, m.messageId);
@@ -573,6 +583,50 @@ bool SocialManager::HttpPut(const std::wstring& path, const std::string& json, s
                                  (DWORD)json.size(), 0) && ReadAll(req, body);
     WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
     return ok;
+}
+
+int SocialManager::HttpPutBinaryAbsolute(const std::wstring& absoluteUrl,
+                                         const std::vector<char>& data,
+                                         const std::string& contentType) {
+    // Presigned MinIO URLs carry a long X-Amz query string, so crack path AND
+    // extra-info here (CrackAndOpen drops the query). No Authorization header —
+    // the signature is in the URL itself.
+    URL_COMPONENTS uc{};
+    uc.dwStructSize = sizeof(uc);
+    wchar_t host[256] = {}; wchar_t path[2048] = {}; wchar_t extra[2048] = {};
+    uc.lpszHostName = host;   uc.dwHostNameLength = 255;
+    uc.lpszUrlPath = path;    uc.dwUrlPathLength = 2047;
+    uc.lpszExtraInfo = extra; uc.dwExtraInfoLength = 2047;
+    uc.dwSchemeLength = (DWORD)-1;
+    if (!WinHttpCrackUrl(absoluteUrl.c_str(), 0, 0, &uc)) return 0;
+    bool secure = uc.nScheme == INTERNET_SCHEME_HTTPS;
+    std::wstring fullPath = std::wstring(path) + extra;  // path + "?X-Amz-..."
+
+    HINTERNET sess = WinHttpOpen(L"ArcadeLauncher/Social",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!sess) return 0;
+    HINTERNET conn = WinHttpConnect(sess, host, uc.nPort, 0);
+    if (!conn) { WinHttpCloseHandle(sess); return 0; }
+    HINTERNET req = WinHttpOpenRequest(conn, L"PUT", fullPath.c_str(), nullptr,
+        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
+    if (!req) { WinHttpCloseHandle(conn); WinHttpCloseHandle(sess); return 0; }
+
+    std::wstring hdr = L"Content-Type: " +
+        std::wstring(contentType.begin(), contentType.end()) + L"\r\n";
+    WinHttpAddRequestHeaders(req, hdr.c_str(), (DWORD)-1, WINHTTP_ADDREQ_FLAG_ADD);
+
+    int status = 0;
+    if (WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                           (LPVOID)data.data(), (DWORD)data.size(),
+                           (DWORD)data.size(), 0) &&
+        WinHttpReceiveResponse(req, nullptr)) {
+        DWORD code = 0, len = sizeof(code);
+        WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX);
+        status = (int)code;
+    }
+    WinHttpCloseHandle(req); WinHttpCloseHandle(conn); WinHttpCloseHandle(sess);
+    return status;
 }
 
 // ── Friends ─────────────────────────────────────────────────────────────────
@@ -1148,6 +1202,7 @@ void SocialManager::OpenConversation(uint64_t peerId) {
                 cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
                 cm.editedAt   = m["editedAt"].asInt();   // 0/null when never edited
                 cm.deleted    = m["deleted"].asBool();
+                cm.attachmentId = m["attachmentId"].asUint();  // 0 when none (1.3)
                 AtomicMax(m_lastMsgId, cm.messageId);
                 hist.push_back(std::move(cm));
             }
@@ -1280,6 +1335,7 @@ void SocialManager::LoadOlderHistory(uint64_t peerId) {
                 cm.isRead     = m["isRead"].asBool() || cm.senderId == self;
                 cm.editedAt   = m["editedAt"].asInt();
                 cm.deleted    = m["deleted"].asBool();
+                cm.attachmentId = m["attachmentId"].asUint();
                 older.push_back(std::move(cm));
             }
         }
@@ -1322,6 +1378,131 @@ void SocialManager::SendChat(uint64_t peerId, const std::wstring& text) {
     os << "{\"type\":\"chat\",\"to\":" << peerId << ",\"text\":\""
        << JsonEscape(WideToUtf8(text)) << "\"}";
     SendGatewayJson(os.str());
+}
+
+// Guess a MIME type from a filename extension. Falls back to a generic binary
+// type — MinIO stores whatever we send and the browser sniffs on download.
+static std::string GuessContentType(const std::wstring& name) {
+    auto dot = name.find_last_of(L'.');
+    std::wstring ext = (dot == std::wstring::npos) ? L"" : name.substr(dot + 1);
+    for (auto& c : ext) c = (wchar_t)towlower(c);
+    if (ext == L"png")  return "image/png";
+    if (ext == L"jpg" || ext == L"jpeg") return "image/jpeg";
+    if (ext == L"gif")  return "image/gif";
+    if (ext == L"webp") return "image/webp";
+    if (ext == L"bmp")  return "image/bmp";
+    if (ext == L"mp4")  return "video/mp4";
+    if (ext == L"webm") return "video/webm";
+    if (ext == L"mp3")  return "audio/mpeg";
+    if (ext == L"txt" || ext == L"log") return "text/plain";
+    if (ext == L"pdf")  return "application/pdf";
+    if (ext == L"zip")  return "application/zip";
+    return "application/octet-stream";
+}
+
+void SocialManager::SendAttachment(uint64_t peerId, const std::wstring& filePath,
+                                   const std::wstring& caption) {
+    if (filePath.empty() || peerId == 0) return;
+    std::wstring path = filePath, cap = caption;
+    std::thread([this, peerId, path, cap]() {
+        // 1. Read the file fully into memory.
+        std::ifstream f(path, std::ios::binary | std::ios::ate);
+        if (!f) {
+            Notify(NotifKind::System, peerId, L"Attachment", L"Could not open file");
+            return;
+        }
+        std::streamoff size = f.tellg();
+        if (size <= 0 || size > 25LL * 1024 * 1024) {
+            Notify(NotifKind::System, peerId, L"Attachment",
+                   size <= 0 ? L"File is empty" : L"File exceeds 25 MB limit");
+            return;
+        }
+        std::vector<char> bytes((size_t)size);
+        f.seekg(0);
+        f.read(bytes.data(), size);
+        f.close();
+
+        std::wstring fname = path.substr(path.find_last_of(L"/\\") + 1);
+        std::string ct = GuessContentType(fname);
+
+        // 2. Optimistic "Uploading…" echo so the user sees instant feedback.
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            ChatMessage m;
+            m.senderId = m_selfId.load();
+            m.receiverId = peerId;
+            m.messageText = cap;
+            m.attachmentName = fname;
+            m.attachmentId = 0;          // filled in after presign
+            m.timestamp = NowSecs();
+            m.isRead = true;
+            m.pending = true;
+            ConvLocked(peerId).messages.push_back(std::move(m));
+        }
+        FireChanged();
+
+        auto markFailed = [&](const std::wstring& why) {
+            {
+                std::lock_guard<std::mutex> lk(m_mtx);
+                Conversation& c = ConvLocked(peerId);
+                for (auto it = c.messages.rbegin(); it != c.messages.rend(); ++it) {
+                    if (it->pending && it->attachmentId == 0 &&
+                        it->attachmentName == fname) { c.messages.erase(std::next(it).base()); break; }
+                }
+            }
+            FireChanged();
+            Notify(NotifKind::System, peerId, L"Attachment", why);
+        };
+
+        // 3. Ask the server for a presigned PUT (also registers the row).
+        std::ostringstream pres;
+        pres << "{\"filename\":\"" << JsonEscape(WideToUtf8(fname))
+             << "\",\"contentType\":\"" << JsonEscape(ct)
+             << "\",\"size\":" << (long long)size << "}";
+        std::string body;
+        if (!HttpPostJson(L"/api/social/attachments/presign", pres.str(), body)) {
+            markFailed(L"Upload not available"); return;
+        }
+        JsonValue pv = JsonValue::Parse(body);
+        uint64_t attId = pv["attachmentId"].asUint();
+        std::wstring uploadUrl = Utf8ToWide(pv["uploadUrl"].asString());
+        if (attId == 0 || uploadUrl.empty()) { markFailed(L"Upload rejected"); return; }
+
+        // Stamp the echo with the real id so the gateway ack resolves to it.
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            Conversation& c = ConvLocked(peerId);
+            for (auto it = c.messages.rbegin(); it != c.messages.rend(); ++it) {
+                if (it->pending && it->attachmentId == 0 &&
+                    it->attachmentName == fname) { it->attachmentId = attId; break; }
+            }
+        }
+
+        // 4. PUT the bytes straight to MinIO via the presigned URL.
+        int status = HttpPutBinaryAbsolute(uploadUrl, bytes, ct);
+        if (status < 200 || status >= 300) { markFailed(L"Upload failed"); return; }
+
+        // 5. Send the DM carrying the linked attachment id (+ optional caption).
+        std::ostringstream os;
+        os << "{\"type\":\"chat\",\"to\":" << peerId
+           << ",\"text\":\"" << JsonEscape(WideToUtf8(cap))
+           << "\",\"attachmentId\":" << attId << "}";
+        SendGatewayJson(os.str());
+    }).detach();
+}
+
+void SocialManager::OpenAttachment(uint64_t attachmentId) {
+    if (attachmentId == 0) return;
+    std::thread([this, attachmentId]() {
+        std::string body;
+        if (!HttpGet(L"/api/social/attachments/" + std::to_wstring(attachmentId), body))
+            return;
+        JsonValue v = JsonValue::Parse(body);
+        std::wstring url = Utf8ToWide(v["downloadUrl"].asString());
+        if (url.empty()) return;
+        // Our own MinIO, URL minted by our server — open in the default browser.
+        ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }).detach();
 }
 
 void SocialManager::NotifyTyping(uint64_t peerId) {

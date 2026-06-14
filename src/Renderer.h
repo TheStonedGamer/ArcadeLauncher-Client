@@ -149,6 +149,8 @@ struct RenderState {
         bool         deleted = false;  // render as italic "message deleted" (1.2a)
         bool         read    = false;  // my message has been read by the peer (1.2a)
         uint64_t     msgId   = 0;      // server message id (0 = pending/local)
+        uint64_t     attachmentId = 0; // linked attachment (1.3), 0 = none
+        std::wstring attachmentName;   // original filename, for the chip label
     };
     bool         chatOpen = false;
     uint64_t     chatPeerId = 0;
@@ -243,7 +245,9 @@ public:
     // Chat window hit testing. Geometry comes from rects cached during the last
     // DrawChatWindow. Kind tells App which control was clicked.
     struct ChatHit {
-        enum Kind { None, Close, Input, Send, Call, Mute, EndCall, Accept, Decline } kind = None;
+        enum Kind { None, Close, Input, Send, Call, Mute, EndCall, Accept, Decline,
+                    Attach, Attachment } kind = None;
+        uint64_t attachmentId = 0;   // set when kind == Attachment
     };
     ChatHit HitTestChatWindow(float x, float y) const;
     bool    PointInChatWindow(float x, float y) const;
@@ -405,6 +409,9 @@ private:
     D2D1_RECT_F m_chatEndRect{};
     D2D1_RECT_F m_chatAcceptRect{};
     D2D1_RECT_F m_chatDeclineRect{};
+    D2D1_RECT_F m_chatAttachRect{};   // "+" upload button in the input bar (1.3)
+    // Clickable attachment chips drawn this frame -> their attachment id (1.3).
+    std::vector<std::pair<D2D1_RECT_F, uint64_t>> m_chatAttachmentHits;
     float m_chatContentH = 0.0f;
 
     // Toast notifications (bottom-right). Animation timers in ms via GetTickCount64.

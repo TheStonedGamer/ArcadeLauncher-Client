@@ -56,6 +56,9 @@ struct ChatMessage {
     bool         deleted = false;   // tombstoned — render as "message deleted" (1.2a)
     // Reactions (1.2b): emoji -> set of account ids that reacted with it.
     std::map<std::wstring, std::vector<uint64_t>> reactions;
+    // Attachment (1.3): id of an uploaded object linked to this message, 0 = none.
+    uint64_t     attachmentId = 0;
+    std::wstring attachmentName;    // original filename, for display (may be empty)
 };
 
 // Per-peer conversation: ordered message history + unread/typing state.

@@ -9,6 +9,7 @@
 #include "LibraryDialog.h"
 #include "DarkTheme.h"
 #include <commctrl.h>
+#include <commdlg.h>     // GetOpenFileNameW (attachment picker)
 #include <shlobj.h>      // SHGetKnownFolderPath, IShellLinkW
 #include <shobjidl.h>
 
@@ -1829,6 +1830,29 @@ void App::ChatSendCurrent() {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+void App::ChatPickAndSendAttachment() {
+    auto& s = m_renderState;
+    if (!s.chatOpen || s.chatPeerId == 0 || !m_social.IsRunning()) return;
+    wchar_t buf[MAX_PATH]{};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner   = m_hwnd;
+    ofn.lpstrFilter = L"All Files\0*.*\0Images\0*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp\0";
+    ofn.lpstrFile   = buf;
+    ofn.nMaxFile    = MAX_PATH;
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle  = L"Send attachment";
+    if (!GetOpenFileNameW(&ofn) || buf[0] == 0) return;
+    // Use whatever's typed in the box as the caption, then clear it.
+    std::wstring caption = s.chatInput;
+    while (!caption.empty() && (caption.back() == L' ' || caption.back() == L'\t'))
+        caption.pop_back();
+    m_social.SendAttachment(s.chatPeerId, buf, caption);
+    s.chatInput.clear();
+    s.chatScroll = 0.0f;  // jump to latest
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
 bool App::HandleChatClick(float x, float y) {
     if (!m_renderState.chatOpen) return false;
     auto hit = m_renderer.HitTestChatWindow(x, y);
@@ -1837,6 +1861,10 @@ bool App::HandleChatClick(float x, float y) {
     switch (hit.kind) {
         case CH::Close:   CloseChat(); return true;
         case CH::Send:    ChatSendCurrent(); return true;
+        case CH::Attach:  ChatPickAndSendAttachment(); return true;
+        case CH::Attachment:
+            if (hit.attachmentId) m_social.OpenAttachment(hit.attachmentId);
+            return true;
         case CH::Input:   return true;  // focus stays on chat; consume
         case CH::Call:    m_social.StartVoiceCall(peer); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
         case CH::Accept:  m_social.AcceptVoiceCall(peer); InvalidateRect(m_hwnd, nullptr, FALSE); return true;
@@ -1938,6 +1966,8 @@ void App::SyncSocialRenderState() {
             mv.deleted = m.deleted;
             mv.read    = m.isRead;
             mv.msgId   = m.messageId;
+            mv.attachmentId   = m.attachmentId;
+            mv.attachmentName = m.attachmentName;
             m_renderState.chatMessages.push_back(std::move(mv));
         }
         m_renderState.chatPeerTyping = conv.peerTyping;

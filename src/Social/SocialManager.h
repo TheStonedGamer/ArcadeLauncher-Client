@@ -102,6 +102,16 @@ public:
     Conversation GetConversation(uint64_t peerId) const;
     int  TotalUnread() const;
 
+    // ── Chat 1.3 — attachments ────────────────────────────────────────────────
+    // Upload a local file to MinIO via a presigned PUT, then send a DM carrying
+    // the linked attachment id (optional caption). Runs entirely on a worker
+    // thread; shows an optimistic "Uploading…" echo. No-op if file unreadable.
+    void SendAttachment(uint64_t peerId, const std::wstring& filePath,
+                        const std::wstring& caption = L"");
+    // Resolve an attachment id to a short-lived download URL and open it in the
+    // user's browser. Worker thread; no-op if the server returns no url.
+    void OpenAttachment(uint64_t attachmentId);
+
     // ── Chat 1.2a — read receipts, edit/delete, scrollback ────────────────────
     // Tell the peer we've read their messages up to now ({"type":"read"}).
     void MarkConversationRead(uint64_t peerId);
@@ -139,6 +149,12 @@ private:
     bool HttpGet(const std::wstring& path, std::string& body);
     bool HttpPostJson(const std::wstring& path, const std::string& json, std::string& body);
     bool HttpPut(const std::wstring& path, const std::string& json, std::string& body);
+    // Raw binary PUT to an absolute URL (the presigned MinIO upload target). No
+    // Authorization header — the signature is in the query string. Returns the
+    // HTTP status code (0 on transport failure).
+    int  HttpPutBinaryAbsolute(const std::wstring& absoluteUrl,
+                               const std::vector<char>& data,
+                               const std::string& contentType);
     std::wstring WsUrl() const;   // derives ws(s)://.../ws/social?token=...
 
     void FireChanged();

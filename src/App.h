@@ -61,6 +61,7 @@ private:
     bool HandleChatClick(float x, float y);
     bool ChatInputChar(wchar_t ch);     // returns true if consumed
     void ChatSendCurrent();
+    void ChatPickAndSendAttachment();   // file picker → upload → send (1.3)
     void OnTimer(UINT timerId);
     void OnMouseMove(float x, float y);
     void OnLButtonDown(float x, float y);

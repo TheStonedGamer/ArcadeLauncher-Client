@@ -2020,6 +2020,11 @@ Renderer::ChatHit Renderer::HitTestChatWindow(float x, float y) const {
     if (in(m_chatMuteRect))    { h.kind = ChatHit::Mute;    return h; }
     if (in(m_chatCallRect))    { h.kind = ChatHit::Call;    return h; }
     if (in(m_chatSendRect))    { h.kind = ChatHit::Send;    return h; }
+    if (in(m_chatAttachRect))  { h.kind = ChatHit::Attach;  return h; }
+    // Attachment chips in the message list (newest entries last; order doesn't matter).
+    for (const auto& a : m_chatAttachmentHits) {
+        if (in(a.first)) { h.kind = ChatHit::Attachment; h.attachmentId = a.second; return h; }
+    }
     if (in(m_chatInputRect))   { h.kind = ChatHit::Input;   return h; }
     return h;
 }
@@ -2148,13 +2153,19 @@ void Renderer::DrawChatWindow(RenderState& state) {
         if (state.chatMessages[i].mine && state.chatMessages[i].read && !state.chatMessages[i].deleted)
             lastReadMine = (int)i;
 
+    const float kAttachChipH = 28.0f;   // height reserved for an attachment chip (1.3)
+    m_chatAttachmentHits.clear();
     float total = 6.0f;
     std::vector<float> heights;
     heights.reserve(state.chatMessages.size());
     for (size_t i = 0; i < state.chatMessages.size(); ++i) {
         const auto& m = state.chatMessages[i];
-        float h = DrawWrapped(displayText(m), m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
-        h = std::max(h, 18.0f) + 14.0f;   // bubble padding
+        std::wstring dt = displayText(m);
+        float th = dt.empty() ? 0.0f
+                 : DrawWrapped(dt, m_fmtSummary.Get(), 0, 0, bubbleMax - 20.0f, m_brushText.Get(), false);
+        float h = std::max(th, 18.0f) + 14.0f;   // bubble padding
+        bool hasChip = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
+        if (hasChip) h += kAttachChipH;   // room for the chip
         if ((int)i == lastReadMine) h += 14.0f;   // room for the read receipt line
         heights.push_back(h);
         total += h + 6.0f;
@@ -2191,6 +2202,33 @@ void Renderer::DrawChatWindow(RenderState& state) {
                 DrawWrapped(shown, m_fmtSummary.Get(), bub.left + 10, y + 7, bw - 20.0f,
                             m.deleted ? m_brushSubtext.Get() : m_brushText.Get(), true);
             }
+            // Attachment chip (1.3): a pill the user clicks to download/open. While
+            // the upload is in flight (attachmentId still 0) it shows "Uploading…"
+            // and isn't yet clickable.
+            bool hasChip = (m.attachmentId || !m.attachmentName.empty()) && !m.deleted;
+            if (hasChip) {
+                float recv = ((int)i == lastReadMine) ? 14.0f : 0.0f;
+                D2D1_RECT_F chip = D2D1::RectF(bub.left + 8.0f, y + h - recv - 26.0f,
+                                               bub.right - 8.0f, y + h - recv - 4.0f);
+                // Contrasting fill: dark overlay on the accent (mine) bubble, a
+                // lighter accent tint on the peer bubble.
+                if (m.mine)
+                    m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6, 6), m_brushOverlay.Get());
+                else {
+                    m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.18f));
+                    m_rt->FillRoundedRectangle(D2D1::RoundedRect(chip, 6, 6), m_brushAccent.Get());
+                    m_brushAccent->SetColor(C_ACCENT);
+                }
+                bool uploading = (m.attachmentId == 0);
+                std::wstring nm = m.attachmentName.empty() ? L"Attachment" : m.attachmentName;
+                std::wstring label = uploading ? (L"↑ " + nm + L" — uploading…")
+                                               : (L"\U0001F4CE " + nm);
+                D2D1_RECT_F tr2 = D2D1::RectF(chip.left + 8, chip.top, chip.right - 6, chip.bottom);
+                m_rt->DrawText(label.c_str(), (UINT32)label.size(), m_fmtCardSub.Get(), tr2,
+                               m.mine ? m_brushWhite.Get() : m_brushText.Get(),
+                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                if (m.attachmentId) m_chatAttachmentHits.push_back({ chip, m.attachmentId });
+            }
             // Read receipt under the last of my messages the peer has read.
             if ((int)i == lastReadMine) {
                 D2D1_RECT_F rr = D2D1::RectF(bub.left, y + h - 14.0f, bub.right, y + h);
@@ -2217,8 +2255,16 @@ void Renderer::DrawChatWindow(RenderState& state) {
 
     // ── Input bar ───────────────────────────────────────────────────────────────
     float ib = top + winH - inputH;
-    m_chatSendRect  = D2D1::RectF(left + winW - 70.0f, ib + 8.0f, left + winW - 10.0f, ib + inputH - 8.0f);
-    m_chatInputRect = D2D1::RectF(left + 10.0f, ib + 8.0f, m_chatSendRect.left - 8.0f, ib + inputH - 8.0f);
+    m_chatSendRect   = D2D1::RectF(left + winW - 70.0f, ib + 8.0f, left + winW - 10.0f, ib + inputH - 8.0f);
+    // Attachment "+" button on the far left of the input row (1.3).
+    m_chatAttachRect = D2D1::RectF(left + 10.0f, ib + 8.0f, left + 44.0f, ib + inputH - 8.0f);
+    m_chatInputRect  = D2D1::RectF(m_chatAttachRect.right + 8.0f, ib + 8.0f, m_chatSendRect.left - 8.0f, ib + inputH - 8.0f);
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatAttachRect, 6, 6), m_brushCard.Get());
+    m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
+    m_rt->DrawRoundedRectangle(D2D1::RoundedRect(m_chatAttachRect, 6, 6), m_brushAccent.Get(), 1.0f);
+    m_brushAccent->SetColor(C_ACCENT);
+    m_rt->DrawText(L"+", 1, m_fmtCardSub.Get(), m_chatAttachRect, m_brushAccent.Get(),
+                   D2D1_DRAW_TEXT_OPTIONS_NONE);
     m_rt->FillRoundedRectangle(D2D1::RoundedRect(m_chatInputRect, 6, 6), m_brushCard.Get());
     m_brushAccent->SetColor(D2D1::ColorF(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.5f));
     m_rt->DrawRoundedRectangle(D2D1::RoundedRect(m_chatInputRect, 6, 6), m_brushAccent.Get(), 1.0f);
