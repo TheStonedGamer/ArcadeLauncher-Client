@@ -9,9 +9,9 @@
 
 #include "../Social/SocialJson.h"
 #include "../QrCode.h"
-#include "../platform/Text.h"
-#include "../platform/Crypto.h"
-#include "../platform/Paths.h"
+#include "../Platform/Text.h"
+#include "../Platform/Crypto.h"
+#include "../Platform/Paths.h"
 
 #include <cassert>
 #include <string>

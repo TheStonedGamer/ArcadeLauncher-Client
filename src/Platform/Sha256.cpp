@@ -1,6 +1,6 @@
 // platform/Sha256.cpp — vendored, portable SHA-256 (Linux port L1).
 // Standard FIPS 180-4 implementation; no external dependencies.
-#include "platform/Crypto.h"
+#include "Platform/Crypto.h"
 
 namespace platform {
 

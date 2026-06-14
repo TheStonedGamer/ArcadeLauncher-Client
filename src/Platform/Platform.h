@@ -7,13 +7,13 @@
 // L1 lands the boundary + the portable utilities (Text, Crypto, Paths) and wraps
 // existing Windows code; later phases add the Linux impls.
 
-#include "platform/Text.h"
-#include "platform/Crypto.h"
-#include "platform/Paths.h"
-#include "platform/Net.h"
-#include "platform/Window.h"
-#include "platform/Renderer2D.h"
-#include "platform/AudioIO.h"
+#include "Platform/Text.h"
+#include "Platform/Crypto.h"
+#include "Platform/Paths.h"
+#include "Platform/Net.h"
+#include "Platform/Window.h"
+#include "Platform/Renderer2D.h"
+#include "Platform/AudioIO.h"
 
 namespace platform {
 

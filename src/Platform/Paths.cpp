@@ -1,6 +1,6 @@
 // platform/Paths.cpp — application directories per platform (Linux port L1).
-#include "platform/Paths.h"
-#include "platform/Text.h"
+#include "Platform/Paths.h"
+#include "Platform/Text.h"
 
 #include <cstdlib>
 

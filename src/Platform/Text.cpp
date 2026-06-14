@@ -1,5 +1,5 @@
 // platform/Text.cpp — portable UTF-8 ↔ UTF-16 codec (Linux port L1).
-#include "platform/Text.h"
+#include "Platform/Text.h"
 
 namespace platform {
 
