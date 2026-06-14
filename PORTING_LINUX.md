@@ -103,8 +103,12 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   exercising `SocialJson.h`) + a `core_selfcheck` driver. `pch.h` is now
   cross-platform (Win stack behind `#ifdef _WIN32`; Windows MSI build unchanged).
   Verified on Debian 12 / g++ 12 / cmake 3.25: compiles, links, `core_selfcheck`
-  exits 0. (Validated on the existing app CT toolchain; dedicated `10.0.0.221`
-  build CT still to be provisioned as the standing CI box.)
+  exits 0. Dedicated **build CT provisioned: VMID 128 `arcade-linux-build` @
+  `10.0.0.221`** (Debian 12, 4c/4G/20G, unprivileged+nesting, onboot). Toolchain
+  installed: build-essential, cmake, git, pkg-config, and the L2–L5 dev libs
+  (libsdl2-dev, libgl1-mesa-dev, libcurl4-openssl-dev, libssl-dev,
+  libfontconfig1-dev, libasound2-dev). End-to-end verified: clone from GitHub →
+  cmake → build → `core_selfcheck` exits 0.
 
 **Phase L1 — Platform interfaces + Windows wrappers**
 - Land `src/platform/*.h`. Wrap existing Win32/Direct2D/WinHTTP/WASAPI behind
