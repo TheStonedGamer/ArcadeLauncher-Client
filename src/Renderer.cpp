@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Renderer.h"
 #include "Version.h"
+#include "GridLayout.h"   // shared (cross-platform) catalog-grid geometry
 #include <ctime>
 #include <cwctype>
 #include <cstdio>
@@ -124,13 +125,16 @@ void Renderer::Resize(UINT w, UINT h) {
     m_width = w; m_height = h;
     if (m_rt) m_rt->Resize(D2D1::SizeU(w, h));
 
-    m_sidebarW = std::clamp((float)w * 0.22f, 176.0f, 220.0f);
-    m_tileW = std::clamp(((float)w - m_sidebarW - 64.0f) / 4.0f, 150.0f, 190.0f);
-    m_tileH = m_tileW * 1.44f;
-
-    // Recompute grid columns
-    float gridW = (float)w - m_sidebarW;
-    m_cols = std::max(1, (int)((gridW + m_tileGap) / (m_tileW + m_tileGap)));
+    // Grid metrics come from the shared, cross-platform geometry (GridLayout) so
+    // the Direct2D grid here and the Linux nanovg grid stay identical. The values
+    // are mirrored into the existing members the rest of Renderer.cpp reads.
+    grid::Metrics gm = grid::Metrics::forViewport((int)w, (int)h);
+    m_sidebarW = gm.sidebarW;
+    m_topbarH  = gm.topbarH;
+    m_tileGap  = gm.tileGap;
+    m_tileW    = gm.tileW;
+    m_tileH    = gm.tileH;
+    m_cols     = gm.cols;
 
     // Right-aligned topbar action buttons. The profile button occupies the
     // far-right slot; everything else is shifted left one slot (46px each) to
@@ -612,20 +616,14 @@ void Renderer::DrawGrid(const std::vector<const Game*>& games, RenderState& stat
                                     (float)m_width, (float)m_height);
     m_rt->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
 
-    float startX = m_sidebarW + m_tileGap;
-    float startY = m_topbarH + m_tileGap - state.scrollOffset;
+    grid::Metrics gm = grid::Metrics::forViewport(m_width, m_height);
 
-    int rows = ((int)games.size() + m_cols - 1) / m_cols;
     for (int i = 0; i < (int)games.size(); ++i) {
-        int col = i % m_cols;
-        int row = i / m_cols;
-        float x = startX + col * (m_tileW + m_tileGap);
-        float y = startY + row * (m_tileH + m_tileGap + 22.0f); // +22 for title below
+        // Tile placement + off-screen cull via the shared geometry.
+        if (!grid::tileVisible(gm, i, state.scrollOffset, m_height)) continue;
+        grid::Rect g = grid::tileRect(gm, i, state.scrollOffset);
 
-        // Skip if off-screen
-        if (y + m_tileH + 22 < m_topbarH || y > (float)m_height) continue;
-
-        D2D1_RECT_F rect = D2D1::RectF(x, y, x + m_tileW, y + m_tileH);
+        D2D1_RECT_F rect = D2D1::RectF(g.x, g.y, g.x + g.w, g.y + g.h);
         bool multiSelected = state.selectedGameIds.count(games[i]->id) > 0;
         DrawCard(*games[i], rect, state.hoveredIndex == i, state.selectedIndex == i,
                  state.selectionMode, multiSelected);
@@ -1378,30 +1376,24 @@ ID2D1Bitmap* Renderer::GetAttachmentImage(uint64_t attachmentId) const {
 
 int Renderer::HitTestGrid(float x, float y, const RenderState& state,
                            size_t gameCount) const {
+    // Sidebar/topbar regions are routed by the caller; the grid itself is the
+    // shared geometry. (Belt-and-suspenders: keep the explicit early-out so a
+    // shallow click in the sidebar band can't truncate onto tile 0.)
     if (x < m_sidebarW || y < m_topbarH) return -1;
-    float gx = x - m_sidebarW - m_tileGap;
-    float gy = y - m_topbarH - m_tileGap + state.scrollOffset;
-    int col = (int)(gx / (m_tileW + m_tileGap));
-    int row = (int)(gy / (m_tileH + m_tileGap + 22.0f));
-    if (col < 0 || col >= m_cols || row < 0) return -1;
-    // Check we're actually inside a tile (not in the gap)
-    float localX = fmodf(gx, m_tileW + m_tileGap);
-    float localY = fmodf(gy, m_tileH + m_tileGap + 22.0f);
-    if (localX > m_tileW || localY > m_tileH) return -1;
-    int idx = row * m_cols + col;
-    return (idx < (int)gameCount) ? idx : -1;
+    grid::Metrics gm = grid::Metrics::forViewport(m_width, m_height);
+    int idx = grid::hitTest(gm, x, y, state.scrollOffset);
+    return (idx >= 0 && idx < (int)gameCount) ? idx : -1;
 }
 
 int Renderer::HitTestCardMenuButton(float x, float y, const RenderState& state,
                                      size_t gameCount) const {
     int idx = HitTestGrid(x, y, state, gameCount);
     if (idx < 0 || idx != state.hoveredIndex || state.selectionMode) return -1;
-    int col = idx % m_cols, row = idx / m_cols;
-    float startX = m_sidebarW + m_tileGap;
-    float startY = m_topbarH + m_tileGap - state.scrollOffset;
-    float rRight  = startX + col * (m_tileW + m_tileGap) + m_tileW;
+    grid::Metrics gm = grid::Metrics::forViewport(m_width, m_height);
+    grid::Rect g = grid::tileRect(gm, idx, state.scrollOffset);
+    float rRight  = g.x + g.w;
     float lift    = (idx == state.selectedIndex) ? 2.0f : 4.0f;  // hovered cards lift
-    float rBottom = startY + row * (m_tileH + m_tileGap + 22.0f) + m_tileH - lift;
+    float rBottom = g.y + g.h - lift;
     float cx = rRight - 16.0f, cy = rBottom - 16.0f, r = 15.0f;
     return (fabsf(x - cx) <= r && fabsf(y - cy) <= r) ? idx : -1;
 }
@@ -2636,23 +2628,7 @@ bool Renderer::HitTestEmptyStateBtn(float x, float y) const {
 }
 
 float Renderer::ScrollForSelected(int idx, float currentScroll, float viewportH) const {
-    if (idx < 0 || m_cols <= 0) return currentScroll;
-    int row = idx / m_cols;
-    float rowH   = m_tileH + m_tileGap + 22.0f;
-    // On-screen top of this card:  m_topbarH + m_tileGap + row*rowH - scroll
-    float cardTop    = m_topbarH + m_tileGap + (float)row * rowH;
-    float cardBottom = cardTop + m_tileH;
-
-    float screenTop    = cardTop    - currentScroll;
-    float screenBottom = cardBottom - currentScroll;
-
-    if (screenTop < m_topbarH + 4.0f) {
-        // Card is above viewport — scroll up so it appears at top
-        return std::max(0.0f, cardTop - m_topbarH - m_tileGap);
-    }
-    if (screenBottom > viewportH - 4.0f) {
-        // Card is below viewport — scroll down so it appears at bottom
-        return cardBottom - viewportH + m_tileGap;
-    }
-    return currentScroll;
+    // Shared scroll-into-view geometry (matches the Linux grid).
+    grid::Metrics gm = grid::Metrics::forViewport(m_width, m_height);
+    return grid::scrollForIndex(gm, idx, currentScroll, viewportH);
 }

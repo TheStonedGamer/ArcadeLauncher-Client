@@ -98,6 +98,11 @@
     <ClCompile Include="src\App.cpp" />
     <ClCompile Include="src\DarkTheme.cpp" />
     <ClCompile Include="src\Renderer.cpp" />
+    <!-- Portable (cross-platform) grid geometry, shared with the Linux build;
+         no pch.h so it stays buildable by CMake too. -->
+    <ClCompile Include="src\GridLayout.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\GameLibrary.cpp" />
     <ClCompile Include="src\Config.cpp" />
     <ClCompile Include="src\DolphinConfig.cpp" />
@@ -149,6 +154,7 @@
     <ClInclude Include="src\App.h" />
     <ClInclude Include="src\DarkTheme.h" />
     <ClInclude Include="src\Renderer.h" />
+    <ClInclude Include="src\GridLayout.h" />
     <ClInclude Include="src\GameLibrary.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\DolphinConfig.h" />

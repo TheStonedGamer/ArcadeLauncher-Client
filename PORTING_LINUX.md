@@ -209,12 +209,22 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   math. Windows `Renderer.cpp` is untouched — it adopts these functions in a
   later slice. Verified in WSLg: clean build, `ctest` all 8 green; CI gains a
   `grid_selfcheck` gate.
-- **Next (L3d-b-2):** the heavy tail — have Windows `Renderer.cpp` call
-  `grid::GridLayout` (delete its duplicated math), then migrate the tile/detail
-  *drawing* off `ID2D1RenderTarget` onto `IRenderer2D` so the production
-  renderer (not `gui_demo`) paints the grid, then migrate `GameLibrary` to UTF-8
-  and wire `App.cpp`'s message loop to `IWindow`. File-by-file, Windows green
-  (the Win impls of `IWindow`/`IRenderer2D` come in L1b).
+- **Done (L3d-b-2): Windows Renderer.cpp adopts the shared geometry.** Windows
+  `Renderer.cpp` now drives its Direct2D grid through `grid::GridLayout` instead
+  of its own copy of the math: `Resize` populates the `m_sidebarW/tileW/tileH/
+  cols` members from `grid::Metrics::forViewport`; `DrawGrid` places + culls
+  tiles via `grid::tileRect`/`tileVisible`; `HitTestGrid`, `HitTestCardMenuButton`
+  and `ScrollForSelected` delegate to `grid::hitTest`/`tileRect`/`scrollForIndex`.
+  The duplicated formulas are deleted — both platforms now share **one** layout
+  source of truth, verified by `grid_selfcheck`. `GridLayout.{h,cpp}` added to
+  the vcxproj (no-pch, like the other portable TUs). **Windows build green: 0
+  warnings / 0 errors**, exe builds; geometry is identical (delegation is
+  verbatim) so there's no visual change.
+- **Next (L3d-b-3):** migrate the tile/detail *drawing* off `ID2D1RenderTarget`
+  onto `IRenderer2D` so the production renderer (not `gui_demo`) paints the grid;
+  then migrate `GameLibrary` to UTF-8 and wire `App.cpp`'s message loop to
+  `IWindow`. File-by-file, Windows green (the Win impls of `IWindow`/
+  `IRenderer2D` come in L1b).
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs
