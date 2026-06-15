@@ -306,14 +306,32 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   `src/GameSearch.{h,cpp}` (arcade_core, UTF-8). Windows `Search` builds a
   `gamesearch::Fields` by narrowing each field (year via `gmtime`) and delegates.
   Locked by `search_selfcheck`. `ctest` 11/11, launcher 0/0, CI gate added.
-- **Next (GameLibrary UTF-8 cont. / L1b-rest):** keep peeling pure logic off the
-  wstring `Game`/`GameLibrary` the same way (filter/sort predicates next), then
-  the data fields themselves with `narrow`/`widen` at Win32 call sites; in
-  parallel wrap the Win32 window/message loop behind `IWindow` and route
-  `App.cpp` through it. File-by-file, Windows green, each step KAT-locked.
-  ⚠️ The remaining `Game`-field migration touches ~1600 `std::wstring` sites
-  across ~83 files and has **no Windows GUI runtime self-check** — do it
-  incrementally with the user watching diffs, not as a big-bang.
+- **Decision (revised): do NOT big-bang `Game` to UTF-8.** Examining the call
+  graph: the Linux app already reads the catalog through the UTF-8 `catalog::`
+  reader, and the *shared* logic (GridLayout, gridview, Controller, `variants::`,
+  `gamesearch::`) is portable UTF-8 that both OSes call. Windows converts at the
+  boundary (as `Game::Variant*` and `Search` now do). Rewriting the ~1600
+  `std::wstring` field sites across ~83 files would be a large, runtime-unverified
+  change that auto-ships to users — and buys the port **nothing**, since Windows
+  can keep its `wstring` storage and convert at the edge. So the unification
+  strategy stays: **share portable logic; Windows adapts at its boundary.** The
+  wstring `Game` storage stays as-is.
+- **Done (safety net): GameLibrary Save/Load round-trip KAT.** The user's real
+  library (every game owned) persists through `GameLibrary::Save`/`Load`; a
+  regression there would silently lose/corrupt entries, and there was no test.
+  `src/core/GameLibrarySelfCheckMain.cpp` + `scripts/build-gamelib-selfcheck.cmd`
+  (standalone `cl`, `/utf-8`) build a library with the awkward cases (Unicode
+  title, Windows path w/ backslashes + ROM tags, summary with quotes+newlines,
+  multiple collections, numbers/bools/install-state), Save → Load → assert every
+  field survives, and confirm `Search` still finds the reloaded game. **Local
+  pre-push gate** (Windows-only, like `d2d_selfcheck`); run it before any change
+  touching persistence. Verified OK.
+- **Next (Linux app shell / L1b-rest):** the highest-leverage remaining port work
+  is on the LINUX side, not rewriting Windows: grow the Linux `gui_demo` into a
+  real app shell (wire `gamesearch::`/sort + sidebar filtering onto the live
+  catalog; extend `catalog::Game` with the fields the shared logic wants), then
+  L4 widgets (settings/dialogs on nanovg) → L5 audio → L6 XDG/integrations → L7
+  AppImage + auto-update. Windows stays green and unchanged; each step verified.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs
