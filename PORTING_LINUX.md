@@ -419,11 +419,24 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   toggle, disabled inert, visualState). `gui_demo --widgets` now also drives a
   checkbox (synthetic click → checked) and draws it; `--hold` toggles it live.
   `ctest` 20/20, Windows launcher 0/0.
-- **Next:** label + text-edit (caret/selection/clipboard), then combo and
-  listbox/scroll — each a portable state machine + IRenderer2D drawing + KAT +
-  `gui_demo` gate. Then assemble a first real panel (a slice of SettingsWindow)
-  off these, shared by both platforms. Windows stays green; each step verified on
-  both OSes.
+- **Done (L4-c): single-line text field.** `widgets::TextEdit` holds a pure,
+  UTF-8-correct editing model (content + caret/anchor byte offsets); `handle()`
+  maps TextInput→insert (replacing any selection), Backspace/Delete, and
+  Left/Right/Home/End caret moves with Shift extending the selection.
+  `prevCharBoundary`/`nextCharBoundary` keep every edit on codepoint boundaries
+  (a 2-byte 'é' inserts/deletes whole). Mouse focus + caret placement live in the
+  view (they need glyph metrics): `widgetview::drawTextEdit` paints the box
+  (accent border when focused), selection highlight, clipped text and caret, and
+  `caretIndexFromX` maps a click to a caret offset via `measureText`.
+  `widgets_selfcheck` grew 5 text-edit cases (type/backspace, caret+delete,
+  shift-select+replace, UTF-8 whole-char, unfocused/disabled inert). `gui_demo
+  --widgets` types "Hello" into a field through the shared model and draws it;
+  `--hold` lets you click to focus/place caret and type live. `ctest` 20/20,
+  Windows launcher 0/0. (Clipboard cut/copy/paste deferred — needs the window
+  clipboard + letter keycodes the platform Key enum doesn't yet carry.)
+- **Next:** combo (dropdown) and listbox/scroll, then assemble a first real panel
+  (a slice of SettingsWindow) off these, shared by both platforms. Windows stays
+  green; each step verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

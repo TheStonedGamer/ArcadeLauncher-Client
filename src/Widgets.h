@@ -77,4 +77,41 @@ InputResult handle(Checkbox& c, const platform::Event& ev);
 // Runtime state → Visual, same mapping as the button.
 Visual visualState(const Checkbox& c);
 
+// ── Text edit ────────────────────────────────────────────────────────────────
+// A single-line text input. The *editing* model (content, caret, selection) is
+// pure and UTF-8-correct and lives here; mouse focus and click-to-caret are the
+// view's job (they need glyph metrics). `caret`/`anchor` are byte offsets into
+// `text`; the selection is the half-open byte range [min(caret,anchor),
+// max(caret,anchor)). When caret == anchor there is no selection.
+struct TextEdit {
+    Rect        bounds;
+    std::string text;            // UTF-8 content
+    bool        enabled = true;
+    bool        focused = false; // receives keyboard input + draws a caret
+    bool        hover   = false;
+    size_t      caret   = 0;     // byte offset of the caret
+    size_t      anchor  = 0;     // selection anchor (byte offset)
+};
+
+// UTF-8 boundary helpers: the byte offset of the char boundary before / after
+// `byteIdx` (clamped to [0, size]). Exposed so the view can place the caret on a
+// click without splitting a multibyte character.
+size_t prevCharBoundary(const std::string& s, size_t byteIdx);
+size_t nextCharBoundary(const std::string& s, size_t byteIdx);
+
+// True when the field has a non-empty selection.
+bool hasSelection(const TextEdit& t);
+// The currently selected substring ("" when there is no selection).
+std::string selectedText(const TextEdit& t);
+// Set the caret to `byteIdx` (snapped to a char boundary); `extend` keeps the
+// anchor (growing the selection) instead of collapsing it. For the view's
+// click/drag caret placement.
+void setCaret(TextEdit& t, size_t byteIdx, bool extend);
+
+// Feed one event to a focused, enabled field: TextInput inserts at the caret
+// (replacing any selection); Backspace/Delete edit; Left/Right/Home/End move the
+// caret, with Shift extending the selection. Returns consumed=true when the field
+// handled the event. Mouse events are ignored here (the view drives focus/caret).
+InputResult handle(TextEdit& t, const platform::Event& ev);
+
 } // namespace widgets

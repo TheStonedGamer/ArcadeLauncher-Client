@@ -95,4 +95,65 @@ void drawCheckbox(platform::IRenderer2D& r, const widgets::Checkbox& c, const Th
     }
 }
 
+namespace {
+constexpr float kTextPadX = 8.0f;  // inner horizontal padding for text fields
+}
+
+void drawTextEdit(platform::IRenderer2D& r, const widgets::TextEdit& t, const Theme& th) {
+    r.fillRoundedRect(t.bounds, th.radius, t.enabled ? th.normal : th.disabled);
+
+    const float textLeft = t.bounds.x + kTextPadX;
+    const float ty = t.bounds.y + (t.bounds.h - th.fontPx) * 0.5f;
+
+    if (th.font) {
+        // Selection highlight (drawn under the text).
+        if (widgets::hasSelection(t) && t.enabled) {
+            const size_t lo = t.caret < t.anchor ? t.caret : t.anchor;
+            const size_t hi = t.caret < t.anchor ? t.anchor : t.caret;
+            const float xlo = textLeft + r.measureText(th.font, t.text.substr(0, lo));
+            const float xhi = textLeft + r.measureText(th.font, t.text.substr(0, hi));
+            Color sel = th.accent; sel.a = 0.35f;
+            r.fillRect({xlo, t.bounds.y + 4.0f, xhi - xlo, t.bounds.h - 8.0f}, sel);
+        }
+
+        // Clip text to the inner box so a long string can't spill past the border.
+        r.pushClip({t.bounds.x + 1.0f, t.bounds.y + 1.0f,
+                    t.bounds.w - 2.0f, t.bounds.h - 2.0f});
+        if (!t.text.empty())
+            r.drawText(th.font, t.text, textLeft, ty,
+                       t.enabled ? th.text : th.textDisabled, platform::TextAlign::Left);
+
+        // Caret (only when focused + enabled).
+        if (t.focused && t.enabled) {
+            const float cx = textLeft + r.measureText(th.font, t.text.substr(0, t.caret));
+            r.drawLine(cx, t.bounds.y + 5.0f, cx, t.bounds.y + t.bounds.h - 5.0f,
+                       th.text, 1.0f);
+        }
+        r.popClip();
+    }
+
+    const bool emphasize = t.focused && t.enabled;
+    r.strokeRoundedRect(t.bounds, th.radius, emphasize ? th.accent : th.border,
+                        emphasize ? 1.5f : 1.0f);
+}
+
+size_t caretIndexFromX(platform::IRenderer2D& r, const widgets::TextEdit& t,
+                       const Theme& th, float xPx) {
+    if (!th.font || t.text.empty()) return t.text.empty() ? 0 : t.text.size();
+    const float target = xPx - (t.bounds.x + kTextPadX);
+    if (target <= 0) return 0;
+    // Walk char boundaries; return the boundary whose glyph midpoint the click
+    // falls before (so clicking the left half of a glyph lands before it).
+    size_t i = 0;
+    float prevW = 0.0f;
+    while (i < t.text.size()) {
+        const size_t n = widgets::nextCharBoundary(t.text, i);
+        const float w = r.measureText(th.font, t.text.substr(0, n));
+        if (target < (prevW + w) * 0.5f) return i;
+        prevW = w;
+        i = n;
+    }
+    return t.text.size();
+}
+
 } // namespace widgetview

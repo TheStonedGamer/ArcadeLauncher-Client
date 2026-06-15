@@ -38,4 +38,16 @@ void drawButton(platform::IRenderer2D& r, const widgets::Button& b, const Theme&
 // the right. Uses the same Theme (accent box reuses `border`/`text`).
 void drawCheckbox(platform::IRenderer2D& r, const widgets::Checkbox& c, const Theme& th);
 
+// Draw a single-line text field: rounded box (accent border when focused), the
+// selection highlight, the text clipped to the inner area, and a caret when
+// focused. Glyph metrics come from the renderer, so the caret/selection line up
+// with what's drawn.
+void drawTextEdit(platform::IRenderer2D& r, const widgets::TextEdit& t, const Theme& th);
+
+// Map a click x (pixels) to a caret byte offset within `t`, using the same font
+// metrics drawTextEdit uses (snaps to char boundaries). For the view's MouseDown
+// focus + caret placement.
+size_t caretIndexFromX(platform::IRenderer2D& r, const widgets::TextEdit& t,
+                       const Theme& th, float xPx);
+
 } // namespace widgetview

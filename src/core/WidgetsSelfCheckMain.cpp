@@ -12,8 +12,10 @@ namespace {
 using platform::Event;
 using platform::EventType;
 using platform::MouseButton;
+using platform::Key;
 using widgets::Button;
 using widgets::Checkbox;
+using widgets::TextEdit;
 using widgets::Visual;
 
 int g_fail = 0;
@@ -30,6 +32,12 @@ Event down(float x, float y, MouseButton b = MouseButton::Left) {
 }
 Event up(float x, float y, MouseButton b = MouseButton::Left) {
     Event e; e.type = EventType::MouseUp; e.x = x; e.y = y; e.button = b; return e;
+}
+Event typeText(const char* s) {
+    Event e; e.type = EventType::TextInput; e.text = s; return e;
+}
+Event keyDown(Key k, bool shift = false) {
+    Event e; e.type = EventType::KeyDown; e.key = k; e.shift = shift; return e;
 }
 
 Button makeButton() {
@@ -161,8 +169,83 @@ int main() {
         check(widgets::visualState(c) == Visual::Pressed, "checkbox armed -> Pressed");
     }
 
+    // ── TextEdit: pure UTF-8 editing model.
+    auto eqs = [](const char* what, const std::string& got, const std::string& want) {
+        if (got != want) {
+            std::printf("  FAIL %s: got \"%s\" want \"%s\"\n", what, got.c_str(),
+                        want.c_str());
+            ++g_fail;
+        }
+    };
+    auto focused = []() { TextEdit t; t.focused = true; return t; };
+
+    // 12. Typing inserts at the caret; backspace deletes the char before it.
+    {
+        TextEdit t = focused();
+        widgets::handle(t, typeText("a"));
+        widgets::handle(t, typeText("b"));
+        widgets::handle(t, typeText("c"));
+        eqs("typing", t.text, "abc");
+        check(t.caret == 3, "caret at end after typing");
+        widgets::handle(t, keyDown(Key::Backspace));
+        eqs("backspace", t.text, "ab");
+        check(t.caret == 2, "caret follows backspace");
+    }
+
+    // 13. Caret movement + Delete in the middle.
+    {
+        TextEdit t = focused();
+        widgets::handle(t, typeText("abcd"));
+        widgets::handle(t, keyDown(Key::Left));
+        widgets::handle(t, keyDown(Key::Left));   // caret between b and c (idx 2)
+        check(t.caret == 2, "two Lefts -> caret 2");
+        widgets::handle(t, keyDown(Key::Delete));  // removes 'c'
+        eqs("delete forward", t.text, "abd");
+        widgets::handle(t, keyDown(Key::Home));
+        check(t.caret == 0, "Home -> caret 0");
+        widgets::handle(t, keyDown(Key::End));
+        check(t.caret == t.text.size(), "End -> caret at size");
+    }
+
+    // 14. Shift+Left selects; typing replaces the selection.
+    {
+        TextEdit t = focused();
+        widgets::handle(t, typeText("hello"));
+        widgets::handle(t, keyDown(Key::Left, true));
+        widgets::handle(t, keyDown(Key::Left, true));  // select last "lo"
+        check(widgets::hasSelection(t), "shift+left makes a selection");
+        eqs("selected text", widgets::selectedText(t), "lo");
+        widgets::handle(t, typeText("p"));             // replace selection
+        eqs("type over selection", t.text, "help");
+        check(!widgets::hasSelection(t), "selection cleared after replace");
+    }
+
+    // 15. UTF-8: a 2-byte char is inserted and removed whole (no split).
+    {
+        TextEdit t = focused();
+        widgets::handle(t, typeText("a"));
+        widgets::handle(t, typeText("\xC3\xA9"));  // 'é' (U+00E9, 2 bytes)
+        widgets::handle(t, typeText("b"));
+        eqs("utf8 insert", t.text, "a\xC3\xA9" "b");
+        check(t.caret == 4, "caret counts bytes (1+2+1)");
+        widgets::handle(t, keyDown(Key::Left));     // move before 'b'
+        widgets::handle(t, keyDown(Key::Backspace)); // delete whole 'é'
+        eqs("utf8 backspace removes whole char", t.text, "ab");
+        check(t.caret == 1, "caret moved back by 2 bytes");
+    }
+
+    // 16. An unfocused or disabled field ignores input.
+    {
+        TextEdit t;  // not focused
+        auto r = widgets::handle(t, typeText("x"));
+        check(!r.consumed && t.text.empty(), "unfocused field ignores typing");
+        TextEdit d = focused(); d.enabled = false;
+        widgets::handle(d, typeText("x"));
+        check(d.text.empty(), "disabled field ignores typing");
+    }
+
     if (g_fail == 0)
-        std::printf("widgets self-check: OK — all push-button + checkbox KATs passed\n");
+        std::printf("widgets self-check: OK — button + checkbox + textedit KATs passed\n");
     else
         std::printf("widgets self-check: FAILED (%d)\n", g_fail);
     return g_fail == 0 ? 0 : 1;

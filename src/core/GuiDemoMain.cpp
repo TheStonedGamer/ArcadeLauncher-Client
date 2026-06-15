@@ -169,6 +169,10 @@ int main(int argc, char** argv) {
         chk.bounds = {80, 160, 240, 28};
         chk.label = "Enable fancy mode";
 
+        widgets::TextEdit field;
+        field.bounds = {80, 210, 340, 34};
+        field.focused = true;  // focused so the gate can type into it
+
         // Drive copies through a synthetic click (no display needed for the
         // logic): press+release inside each. OK should click; disabled Cancel
         // must not. The drawn `ok`/`cancel` stay in their resting state so the
@@ -196,6 +200,20 @@ int main(int argc, char** argv) {
             chkToggledOn = cc.checked;
         }
 
+        // Type into a copy of the field through the shared editing model.
+        bool fieldTyped = false;
+        {
+            widgets::TextEdit f = field;
+            for (const char* s : {"H", "e", "l", "l", "o"}) {
+                Event e; e.type = EventType::TextInput; e.text = s;
+                widgets::handle(f, e);
+            }
+            fieldTyped = (f.text == "Hello" && f.caret == 5);
+            field.text = f.text;  // show the typed text in the drawn field
+            field.caret = f.caret;
+            field.anchor = f.caret;
+        }
+
         int w = W, h = H; win->size(w, h);
         const Color bg = {0.07f, 0.08f, 0.09f, 1.0f};
         auto drawScene = [&]() {
@@ -204,6 +222,7 @@ int main(int argc, char** argv) {
             widgetview::drawButton(*r, ok, wth);
             widgetview::drawButton(*r, cancel, wth);
             widgetview::drawCheckbox(*r, chk, wth);
+            widgetview::drawTextEdit(*r, field, wth);
             r->endFrame();
         };
         bool wquit = false;
@@ -226,13 +245,13 @@ int main(int argc, char** argv) {
         int er = (int)(wth.normal.r * 255 + 0.5f), eg = (int)(wth.normal.g * 255 + 0.5f),
             eb = (int)(wth.normal.b * 255 + 0.5f);
         bool rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
-        bool wok = okClicked && !cancelClicked && chkToggledOn && rendered;
+        bool wok = okClicked && !cancelClicked && chkToggledOn && fieldTyped && rendered;
         std::printf("gui demo: %s — widgets: OK clicked=%d, Cancel(disabled) clicked=%d, "
-                    "checkbox toggled=%d; OK fill (%d,%d,%d) expected ~(%d,%d,%d); "
-                    "wrote %s\n",
+                    "checkbox toggled=%d, field typed=%d (\"%s\"); OK fill (%d,%d,%d) "
+                    "expected ~(%d,%d,%d); wrote %s\n",
                     wok ? "OK" : "FAILED", okClicked ? 1 : 0, cancelClicked ? 1 : 0,
-                    chkToggledOn ? 1 : 0, gr, gg, gb, er, eg, eb,
-                    wrote ? "gui_demo.ppm" : "<ppm failed>");
+                    chkToggledOn ? 1 : 0, fieldTyped ? 1 : 0, field.text.c_str(),
+                    gr, gg, gb, er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
 
         if (hold) {
             std::printf("gui demo: interactive widgets — click OK (Cancel is "
@@ -246,10 +265,26 @@ int main(int argc, char** argv) {
                         wquit = true;
                     else if (ev.type == EventType::Resize) { w = ev.width; h = ev.height; }
                     else {
+                        // Buttons/checkbox track hover + clicks.
                         if (widgets::handle(ok, ev).clicked) std::printf("OK clicked\n");
                         widgets::handle(cancel, ev);
                         if (widgets::handle(chk, ev).clicked)
                             std::printf("checkbox -> %s\n", chk.checked ? "on" : "off");
+                        // A left click focuses the field (placing the caret via
+                        // glyph metrics) or blurs it.
+                        if (ev.type == EventType::MouseDown &&
+                            ev.button == MouseButton::Left) {
+                            if (widgets::contains(field.bounds, ev.x, ev.y)) {
+                                field.focused = true;
+                                size_t ci = widgetview::caretIndexFromX(*r, field, wth, ev.x);
+                                widgets::setCaret(field, ci, ev.shift);
+                            } else {
+                                field.focused = false;
+                            }
+                        }
+                        // Keyboard/text routing: the focused field consumes it
+                        // (handle ignores mouse events).
+                        widgets::handle(field, ev);
                     }
                 }
                 drawScene();
