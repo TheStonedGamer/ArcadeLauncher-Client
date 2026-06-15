@@ -128,7 +128,7 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Direct2D Renderer (→IRenderer2D), WASAPI VoiceEngine (→IAudioIn/Out); then route
   the app through the interfaces with no visual change.
 
-**Phase L2 — Net + Crypto on Linux** — 🚧 **HTTP + crypto landed; WS pending**
+**Phase L2 — Net + Crypto on Linux** — ✅ **HTTP + WS + crypto landed**
 - libcurl `IHttpClient`, IXWebSocket `IWebSocket`, vendored sha256. Headless test:
   log in, hit `/api/health`, open the social gateway from Linux. (No UI yet.)
 - **Done (L2a):** `src/Platform/linux/HttpClientCurl.cpp` — libcurl-backed
@@ -140,9 +140,18 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   already shipped in L1 (`Sha256.cpp`). Verified in WSL (Ubuntu 26.04, g++ 15.2,
   libcurl4-openssl-dev) on ext4: clean build, `net_selfcheck` → `OK (HTTP 200)`
   against the live server through nginx/TLS.
-- **Next (L2b):** IXWebSocket `IWebSocket` impl for the social gateway (text/
-  binary frames + the app-level `{"type":"ping"}` heartbeat), then a headless
-  gateway-connect test from Linux.
+- **Done (L2b):** `src/Platform/linux/WebSocketIx.cpp` — IXWebSocket-backed
+  `platform::IWebSocket` / `makeWebSocket()` for the social gateway: text/binary
+  frames + lifecycle callbacks, TLS via OpenSSL. Mirrors the Windows pump's
+  contract — it's a dumb frame pipe; the `{"type":"ping"}` heartbeat and
+  reconnect/backoff stay in `SocialManager`. IXWebSocket is pulled via CMake
+  `FetchContent` (tag v11.4.5; opt out with `-DARCADE_WITH_WS=OFF`). New
+  `ws_selfcheck` driver logs in via `/api/login` (creds from `ARCADE_USER`/
+  `ARCADE_PASS` env) and opens `wss://…/ws/social?token=…`, asserting the
+  server's `hello` frame; with no creds it does an unauthenticated handshake and
+  asserts the gateway answers (401), proving the WSS transport reaches the server.
+  Verified in WSL (libssl-dev): clean build, `ws_selfcheck` → `OK — gateway
+  responded (code 401)` against the live gateway through nginx/TLS.
 
 **Phase L3 — Window + Renderer2D on Linux**
 - SDL2 window + GL context; nanovg `Renderer2D`. Port the main grid/detail

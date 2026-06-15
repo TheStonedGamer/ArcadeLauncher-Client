@@ -64,5 +64,6 @@ public:
 };
 
 std::unique_ptr<IHttpClient> makeHttpClient();   // provided by the platform impl
+std::unique_ptr<IWebSocket>  makeWebSocket();    // provided by the platform impl
 
 } // namespace platform

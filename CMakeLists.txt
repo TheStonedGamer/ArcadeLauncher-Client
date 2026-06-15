@@ -55,16 +55,48 @@ target_link_libraries(core_selfcheck PRIVATE arcade_core)
 if(NOT MSVC)
   find_package(CURL QUIET)
   if(CURL_FOUND)
-    add_library(arcade_net STATIC
-      src/Platform/linux/HttpClientCurl.cpp
-    )
+    set(ARCADE_NET_SRC src/Platform/linux/HttpClientCurl.cpp)
+
+    # IXWebSocket for the social gateway (Phase L2b). Pulled via FetchContent so
+    # the build is self-contained; needs OpenSSL (TLS) + zlib. Opt out with
+    # -DARCADE_WITH_WS=OFF for a HTTP-only core build.
+    option(ARCADE_WITH_WS "Build the IXWebSocket gateway client (L2b)" ON)
+    if(ARCADE_WITH_WS)
+      find_package(OpenSSL QUIET)
+      if(OpenSSL_FOUND)
+        include(FetchContent)
+        set(USE_TLS ON CACHE BOOL "" FORCE)
+        set(USE_OPEN_SSL ON CACHE BOOL "" FORCE)
+        set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(ixwebsocket
+          GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+          GIT_TAG        v11.4.5
+          GIT_SHALLOW    TRUE)
+        FetchContent_MakeAvailable(ixwebsocket)
+        list(APPEND ARCADE_NET_SRC src/Platform/linux/WebSocketIx.cpp)
+      else()
+        message(STATUS "OpenSSL not found — skipping IXWebSocket gateway (L2b).")
+        set(ARCADE_WITH_WS OFF)
+      endif()
+    endif()
+
+    add_library(arcade_net STATIC ${ARCADE_NET_SRC})
     target_include_directories(arcade_net PUBLIC src)
     target_link_libraries(arcade_net PUBLIC CURL::libcurl)
     target_compile_options(arcade_net PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    if(ARCADE_WITH_WS)
+      target_link_libraries(arcade_net PUBLIC ixwebsocket)
+    endif()
 
     add_executable(net_selfcheck src/core/NetSelfCheckMain.cpp)
     target_link_libraries(net_selfcheck PRIVATE arcade_net arcade_core)
     add_test(NAME net_selfcheck COMMAND net_selfcheck)
+
+    if(ARCADE_WITH_WS)
+      add_executable(ws_selfcheck src/core/WsSelfCheckMain.cpp)
+      target_link_libraries(ws_selfcheck PRIVATE arcade_net arcade_core)
+      add_test(NAME ws_selfcheck COMMAND ws_selfcheck)
+    endif()
   else()
     message(STATUS "CURL not found — skipping arcade_net/net_selfcheck (L2).")
   endif()
