@@ -220,11 +220,23 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   the vcxproj (no-pch, like the other portable TUs). **Windows build green: 0
   warnings / 0 errors**, exe builds; geometry is identical (delegation is
   verbatim) so there's no visual change.
-- **Next (L3d-b-3):** migrate the tile/detail *drawing* off `ID2D1RenderTarget`
-  onto `IRenderer2D` so the production renderer (not `gui_demo`) paints the grid;
-  then migrate `GameLibrary` to UTF-8 and wire `App.cpp`'s message loop to
-  `IWindow`. File-by-file, Windows green (the Win impls of `IWindow`/
-  `IRenderer2D` come in L1b).
+- **Done (L3d-b-3a): shared portable grid *drawing*.** `src/CatalogGridView.
+  {h,cpp}` — `gridview::drawCard` / `drawGrid` paint the catalog grid entirely
+  through `platform::IRenderer2D` (rounded cards, cover-art clip, platform pill,
+  title, hover/selection ring), with tiles placed + culled by `GridLayout`. This
+  is the cross-platform replacement for Renderer.cpp's `ID2D1` `DrawCard`. It
+  depends only on the `IRenderer2D` interface + `GridLayout`, so it links into
+  both `arcade_gui` (Linux, today) and the Windows build (once the wrapper
+  lands). `gui_demo` now renders through `gridview::drawGrid` instead of its
+  bespoke scene — verified in WSLg + `ctest` (all 8 green): demo tile0 center
+  matches its placeholder exactly, and a real `library.json` renders (hidden
+  games skipped, covers decoded).
+- **Next (L3d-b-3b):** **L1b** — a Windows `platform::IRenderer2D` that wraps
+  `ID2D1RenderTarget`/DirectWrite (+ `IWindow` over the Win32 window/loop), then
+  point Renderer.cpp's grid drawing at `gridview::drawGrid` through it so the
+  production renderer paints via the shared path on both OSes. After that:
+  migrate `GameLibrary` to UTF-8 and wire `App.cpp`'s message loop to `IWindow`.
+  File-by-file, Windows green.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

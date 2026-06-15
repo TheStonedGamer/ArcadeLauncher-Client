@@ -111,7 +111,9 @@ if(NOT MSVC)
   find_package(SDL2 QUIET)
   find_package(OpenGL QUIET)
   if(SDL2_FOUND AND OpenGL_FOUND)
-    set(ARCADE_GUI_SRC src/Platform/linux/WindowSdl.cpp)
+    set(ARCADE_GUI_SRC
+      src/Platform/linux/WindowSdl.cpp
+      src/CatalogGridView.cpp)   # portable grid drawing (shared with Windows)
 
     # nanovg Renderer2D (Phase L3b). GLEW loads GL3 entry points; nanovg has no
     # upstream CMake, so we fetch the source and compile nanovg.c ourselves.
