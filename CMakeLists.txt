@@ -13,7 +13,7 @@
 #   ./build/core_selfcheck   # exits 0 on success
 
 cmake_minimum_required(VERSION 3.16)
-project(ArcadeLauncherClient LANGUAGES CXX)
+project(ArcadeLauncherClient LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -109,16 +109,54 @@ if(NOT MSVC)
   find_package(SDL2 QUIET)
   find_package(OpenGL QUIET)
   if(SDL2_FOUND AND OpenGL_FOUND)
-    add_library(arcade_gui STATIC
-      src/Platform/linux/WindowSdl.cpp
-    )
+    set(ARCADE_GUI_SRC src/Platform/linux/WindowSdl.cpp)
+
+    # nanovg Renderer2D (Phase L3b). GLEW loads GL3 entry points; nanovg has no
+    # upstream CMake, so we fetch the source and compile nanovg.c ourselves.
+    # Opt out with -DARCADE_WITH_RENDERER=OFF for a window-only GUI build.
+    option(ARCADE_WITH_RENDERER "Build the nanovg Renderer2D (L3b)" ON)
+    set(_have_renderer OFF)
+    if(ARCADE_WITH_RENDERER)
+      find_package(GLEW QUIET)
+      if(GLEW_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(nanovg
+          GIT_REPOSITORY https://github.com/memononen/nanovg.git
+          GIT_TAG        ce3bf745eb2d2dbc14a50bf2446783f691ac4353)
+        FetchContent_GetProperties(nanovg)
+        if(NOT nanovg_POPULATED)
+          FetchContent_Populate(nanovg)
+        endif()
+        list(APPEND ARCADE_GUI_SRC
+          ${nanovg_SOURCE_DIR}/src/nanovg.c
+          src/Platform/linux/RendererNanovg.cpp)
+        set(_have_renderer ON)
+      else()
+        message(STATUS "GLEW not found — skipping nanovg Renderer2D (L3b).")
+      endif()
+    endif()
+
+    add_library(arcade_gui STATIC ${ARCADE_GUI_SRC})
     target_include_directories(arcade_gui PUBLIC src ${SDL2_INCLUDE_DIRS})
     target_link_libraries(arcade_gui PUBLIC ${SDL2_LIBRARIES} OpenGL::GL)
     target_compile_options(arcade_gui PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    if(_have_renderer)
+      target_include_directories(arcade_gui PUBLIC ${nanovg_SOURCE_DIR}/src)
+      target_link_libraries(arcade_gui PUBLIC GLEW::GLEW)
+      # nanovg.c is C and trips -Wall as C++; keep its warnings quiet.
+      set_source_files_properties(${nanovg_SOURCE_DIR}/src/nanovg.c
+        PROPERTIES COMPILE_OPTIONS "-w")
+    endif()
 
     add_executable(gui_smoke src/core/GuiSmokeMain.cpp)
     target_link_libraries(gui_smoke PRIVATE arcade_gui arcade_core)
     add_test(NAME gui_smoke COMMAND gui_smoke)
+
+    if(_have_renderer)
+      add_executable(gui_demo src/core/GuiDemoMain.cpp)
+      target_link_libraries(gui_demo PRIVATE arcade_gui arcade_core)
+      add_test(NAME gui_demo COMMAND gui_demo)
+    endif()
   else()
     message(STATUS "SDL2/OpenGL not found — skipping arcade_gui/gui_smoke (L3).")
   endif()

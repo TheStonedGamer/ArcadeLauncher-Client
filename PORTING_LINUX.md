@@ -153,7 +153,7 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Verified in WSL (libssl-dev): clean build, `ws_selfcheck` → `OK — gateway
   responded (code 401)` against the live gateway through nginx/TLS.
 
-**Phase L3 — Window + Renderer2D on Linux** — 🚧 **window + GL up; renderer next**
+**Phase L3 — Window + Renderer2D on Linux** — 🚧 **window + nanovg renderer up; Renderer.cpp migration next**
 - SDL2 window + GL context; nanovg `Renderer2D`. Port the main grid/detail
   renderer (Renderer.cpp) to `Renderer2D`. First pixels on Linux.
 - **Done (L3a):** `src/Platform/linux/WindowSdl.cpp` — SDL2-backed
@@ -166,9 +166,21 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   verified in WSLg (SDL2 2.32, Mesa llvmpipe GL 4.5) — `gui_smoke` → `OK
   (32,34,48)` and the PPM shows the rendered frame. CI runs it headless under
   `xvfb` + software GL. `--hold` keeps the window open for manual inspection.
-- **Next (L3b):** nanovg `Renderer2D` over GL3, then migrate `Renderer.cpp`'s grid/
-  detail drawing onto `IRenderer2D` (rounded-rect tiles, cover art via stb_image,
-  text via nanovg/fontconfig) so the real catalog UI paints on Linux.
+- **Done (L3b):** `src/Platform/linux/RendererNanovg.cpp` — nanovg/GL3
+  `platform::IRenderer2D` / `makeRenderer(IWindow*)`: rounded/filled/stroked rects,
+  ellipses, lines, linear gradients, images (`nvgImagePattern`), UTF-8 text with
+  alignment + `measureText`, and a nested scissor clip stack. GL entry points via
+  GLEW; nanovg fetched with CMake `FetchContent` and compiled from source (pinned
+  commit; `LANGUAGES C CXX` so `nanovg.c` builds; opt out with
+  `-DARCADE_WITH_RENDERER=OFF`). New `gui_demo` draws a full catalog grid through
+  the interface — gradient top bar, sidebar tabs, 8 rounded-rect game tiles with
+  platform pills + titles — and verifies a tile's center pixel deterministically.
+  Verified in WSLg (Mesa llvmpipe) and via `ctest` (all 5 self-checks green); CI
+  runs both GUI checks headless under `xvfb`. `--hold` opens it interactively.
+- **Next (L3c):** migrate the real `Renderer.cpp` grid/detail drawing off
+  `ID2D1RenderTarget` onto `IRenderer2D`, and decode cover art with stb_image, so
+  the production catalog (not a demo scene) paints on Linux. Then wire
+  `App.cpp`'s loop to `IWindow` to stand up the actual Linux app shell.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

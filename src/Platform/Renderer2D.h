@@ -56,4 +56,11 @@ public:
     virtual void popClip() = 0;
 };
 
+class IWindow;  // fwd — the renderer presents to a window's GL surface.
+
+// Create the 2D renderer bound to the window's GL context (nanovg/GL on Linux;
+// Direct2D on Windows, L-later). Returns nullptr on failure. The window's GL
+// context must already be current. Provided by the platform impl.
+std::unique_ptr<IRenderer2D> makeRenderer(IWindow* window);
+
 } // namespace platform
