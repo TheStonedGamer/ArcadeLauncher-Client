@@ -39,6 +39,7 @@ add_library(arcade_core STATIC
   src/GameSort.cpp
   src/GameFilter.cpp
   src/SidebarModel.cpp
+  src/Widgets.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -119,7 +120,8 @@ if(NOT MSVC)
   if(SDL2_FOUND AND OpenGL_FOUND)
     set(ARCADE_GUI_SRC
       src/Platform/linux/WindowSdl.cpp
-      src/CatalogGridView.cpp)   # portable grid drawing (shared with Windows)
+      src/CatalogGridView.cpp    # portable grid drawing (shared with Windows)
+      src/WidgetView.cpp)        # portable widget drawing (shared with Windows)
 
     # nanovg Renderer2D (Phase L3b). GLEW loads GL3 entry points; nanovg has no
     # upstream CMake, so we fetch the source and compile nanovg.c ourselves.
@@ -185,6 +187,9 @@ if(NOT MSVC)
       # Dynamic sidebar entry model through the shared sidebar:: builder: the
       # tab list is built from the demo catalog (fixed tabs + platforms present).
       add_test(NAME gui_demo_sidebar COMMAND gui_demo --sidebar)
+      # Retained widget set (L4): drive a button through the shared widgets::
+      # state machine and draw it via widgetview:: (button fill rendered).
+      add_test(NAME gui_demo_widgets COMMAND gui_demo --widgets)
 
       # Headless image-codec round-trip (no display/GL needed at runtime).
       add_executable(image_selfcheck src/core/ImageSelfCheckMain.cpp)
@@ -225,6 +230,9 @@ target_link_libraries(filter_selfcheck PRIVATE arcade_core)
 add_executable(sidebar_selfcheck src/core/SidebarSelfCheckMain.cpp)
 target_link_libraries(sidebar_selfcheck PRIVATE arcade_core)
 
+add_executable(widgets_selfcheck src/core/WidgetsSelfCheckMain.cpp)
+target_link_libraries(widgets_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
@@ -235,3 +243,4 @@ add_test(NAME search_selfcheck COMMAND search_selfcheck)
 add_test(NAME sort_selfcheck COMMAND sort_selfcheck)
 add_test(NAME filter_selfcheck COMMAND filter_selfcheck)
 add_test(NAME sidebar_selfcheck COMMAND sidebar_selfcheck)
+add_test(NAME widgets_selfcheck COMMAND widgets_selfcheck)

@@ -10,6 +10,7 @@
 //   ./gui_demo --hold <library.json> # interactive, real catalog
 //   ./gui_demo --sidebar             # gate the dynamic sidebar:: entry model
 //   ./gui_demo --tab <label>         # gate one sidebar tab's filter
+//   ./gui_demo --widgets             # gate the retained widget set (L4 button)
 //
 // With no path it draws the demo scene and verifies a known tile color. With a
 // library.json it parses the real catalog (catalog::loadFile), decodes cover art
@@ -27,6 +28,8 @@
 #include "GameSort.h"
 #include "GameFilter.h"
 #include "SidebarModel.h"
+#include "Widgets.h"
+#include "WidgetView.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -111,8 +114,10 @@ int main(int argc, char** argv) {
     bool doTab = false;        // --tab <label>: sidebar filter (shared gamefilter::)
     std::string tabLabel;
     bool doSidebar = false;    // --sidebar: gate the dynamic sidebar entry model
+    bool doWidgets = false;    // --widgets: gate the retained widget set (L4)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
+        else if (std::strcmp(argv[i], "--widgets") == 0) doWidgets = true;
         else if (std::strcmp(argv[i], "--sidebar") == 0) doSidebar = true;
         else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
             searchQuery = argv[++i];
@@ -142,6 +147,96 @@ int main(int argc, char** argv) {
     gridview::Theme theme = gridview::darkTheme();
     theme.titleFont = r->loadFont("", 22, true);
     theme.bodyFont  = r->loadFont("", 15, false);
+
+    // L4-a: isolated widget-set scene. Drives a push button through the SHARED
+    // widgets:: state machine and draws it via widgetview::, separate from the
+    // grid gates. Verifies the pure click contract (enabled OK clicks, disabled
+    // Cancel does not) AND that the button fill actually rendered.
+    if (doWidgets) {
+        widgetview::Theme wth = widgetview::darkTheme();
+        wth.font = r->loadFont("", 15, false);
+        wth.fontPx = 15.0f;
+
+        widgets::Button ok;
+        ok.bounds = {80, 90, 160, 44};
+        ok.label = "OK";
+        widgets::Button cancel;
+        cancel.bounds = {260, 90, 160, 44};
+        cancel.label = "Cancel";
+        cancel.enabled = false;
+
+        // Drive copies through a synthetic click (no display needed for the
+        // logic): press+release inside each. OK should click; disabled Cancel
+        // must not. The drawn `ok`/`cancel` stay in their resting state so the
+        // pixel check sees a predictable fill.
+        auto synthClick = [](widgets::Button b) {
+            const float cx = b.bounds.x + b.bounds.w * 0.5f;
+            const float cy = b.bounds.y + b.bounds.h * 0.5f;
+            Event d; d.type = EventType::MouseDown; d.x = cx; d.y = cy;
+            Event u; u.type = EventType::MouseUp;   u.x = cx; u.y = cy;
+            widgets::handle(b, d);
+            return widgets::handle(b, u).clicked;
+        };
+        const bool okClicked = synthClick(ok);
+        const bool cancelClicked = synthClick(cancel);
+
+        int w = W, h = H; win->size(w, h);
+        const Color bg = {0.07f, 0.08f, 0.09f, 1.0f};
+        auto drawScene = [&]() {
+            r->beginFrame(w, h, 1.0f);
+            r->fillRect({0, 0, (float)w, (float)h}, bg);
+            widgetview::drawButton(*r, ok, wth);
+            widgetview::drawButton(*r, cancel, wth);
+            r->endFrame();
+        };
+        bool wquit = false;
+        for (int f = 0; f < 3 && !wquit; ++f) {
+            Event ev; while (win->poll(ev)) if (ev.type == EventType::Quit) wquit = true;
+            drawScene();
+            SDL_Delay(16);
+        }
+
+        glReadBuffer(GL_BACK);
+        std::vector<uint8_t> buf((size_t)w * h * 3, 0);
+        glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buf.data());
+        bool wrote = writePpm("gui_demo.ppm", buf, w, h);
+
+        // Sample inside the OK button but left of its centered label (no glyph).
+        int sx = (int)(ok.bounds.x + 10), sy = (int)(ok.bounds.y + ok.bounds.h / 2);
+        size_t idx = ((size_t)(h - 1 - sy) * w + sx) * 3;
+        int gr = buf[idx], gg = buf[idx + 1], gb = buf[idx + 2];
+        auto near = [](int a, int b) { return a - b <= 10 && b - a <= 10; };
+        int er = (int)(wth.normal.r * 255 + 0.5f), eg = (int)(wth.normal.g * 255 + 0.5f),
+            eb = (int)(wth.normal.b * 255 + 0.5f);
+        bool rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
+        bool wok = okClicked && !cancelClicked && rendered;
+        std::printf("gui demo: %s — widgets: OK clicked=%d, Cancel(disabled) clicked=%d; "
+                    "OK fill (%d,%d,%d) expected ~(%d,%d,%d); wrote %s\n",
+                    wok ? "OK" : "FAILED", okClicked ? 1 : 0, cancelClicked ? 1 : 0,
+                    gr, gg, gb, er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
+
+        if (hold) {
+            std::printf("gui demo: interactive widgets — click OK (Cancel is "
+                        "disabled), Esc/close to exit.\n");
+            win->setTitle("ArcadeLauncher (Linux) — widgets demo");
+            while (!wquit) {
+                Event ev;
+                while (win->poll(ev)) {
+                    if (ev.type == EventType::Quit) wquit = true;
+                    else if (ev.type == EventType::KeyDown && ev.key == Key::Escape)
+                        wquit = true;
+                    else if (ev.type == EventType::Resize) { w = ev.width; h = ev.height; }
+                    else {
+                        if (widgets::handle(ok, ev).clicked) std::printf("OK clicked\n");
+                        widgets::handle(cancel, ev);
+                    }
+                }
+                drawScene();
+                SDL_Delay(16);
+            }
+        }
+        return wok ? 0 : 1;
+    }
 
     // L3d: render the REAL catalog when a library.json is supplied; otherwise the
     // built-in demo scene (which has the deterministic pixel anchor). We keep the

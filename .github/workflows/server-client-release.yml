@@ -222,6 +222,9 @@ jobs:
       - name: Dynamic-sidebar self-check (gate)
         run: ./build/sidebar_selfcheck
 
+      - name: Widget-logic self-check (gate)
+        run: ./build/widgets_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
@@ -235,6 +238,7 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --sort title
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --tab PC
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --sidebar
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --widgets
 
       - name: Package Linux artifact
         run: |

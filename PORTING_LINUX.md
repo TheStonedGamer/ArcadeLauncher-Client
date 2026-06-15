@@ -389,16 +389,31 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   platform/collection regardless of contents; the KAT pins the ordering. A later
   step can have Windows adopt `sidebar::` once its sidebar is fed catalog-derived
   sets.)
-- **Next (Linux app shell / L1b-rest):** the browse experience (grid, scroll,
-  selection, covers, search, sort, tab filter, dynamic sidebar) is now all on
-  shared tested logic. Next is the heavier surface: L4 widgets (settings/dialogs
-  on a nanovg widget set) → L5 audio (miniaudio) → L6 XDG paths/integrations →
-  L7 AppImage + auto-update. Windows stays green and unchanged; each step
-  verified on both OSes.
+- The browse experience (grid, scroll, selection, covers, search, sort, tab
+  filter, dynamic sidebar) is now all on shared tested logic — Phase L3 complete.
 
 **Phase L4 — Retained widget set**
-- nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs
-  off Win32 controls onto it (shared by both platforms).
+- **Done (L4-a): widget foundation + push button.** First widget increment,
+  same logic/drawing split as the grid: `src/Widgets.{h,cpp}` (arcade_core,
+  UTF-8) holds the pure interaction state machine — `contains()` hit-test,
+  `widgets::Button`, and `handle(Button, Event)` implementing the push-button
+  contract (a click fires only when a left press *starts* inside and the matching
+  release is *also* inside; press-away / release-away / right-button / disabled
+  never fire), plus `visualState()` for styling. `src/WidgetView.{h,cpp}`
+  (arcade_gui + Windows build, IRenderer2D only) draws it: rounded fill per
+  Visual state, border, centered label. Locked by `widgets_selfcheck` (Linux
+  ctest, 7 cases) and `scripts/build-widgets-selfcheck.cmd` (MSVC). The Linux
+  `gui_demo --widgets` gate drives an enabled OK + disabled Cancel through the
+  shared state machine (asserts OK clicks, Cancel doesn't) and verifies the
+  button fill rendered; `--widgets --hold` is live-clickable. `ctest` 20/20,
+  Windows launcher 0/0 (both new TUs compile into the launcher). The state
+  machine + drawing are shared, so SettingsWindow/dialogs adopt them on both
+  platforms as the set grows.
+- **Next:** grow the set on the same pattern — checkbox/toggle, then label +
+  text-edit (caret/selection/clipboard), combo, listbox/scroll — each a portable
+  state machine + IRenderer2D drawing + KAT + `gui_demo` gate. Then assemble a
+  first real panel (a slice of SettingsWindow) off these, shared by both
+  platforms. Windows stays green and unchanged; each step verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)
