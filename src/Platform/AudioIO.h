@@ -38,4 +38,12 @@ public:
     virtual void stop() = 0;
 };
 
+// Factories, provided by the platform impl (Linux: miniaudio; Windows: WASAPI,
+// once VoiceEngine is migrated onto the boundary). `useNullDevice` selects
+// miniaudio's null backend — a device-free clock that still drives the callbacks
+// at the configured rate, used by the headless self-check / CI where no real
+// sound hardware exists. Returns nullptr if no backend could be opened.
+std::unique_ptr<IAudioOut> makeAudioOut(bool useNullDevice = false);
+std::unique_ptr<IAudioIn>  makeAudioIn(bool useNullDevice = false);
+
 } // namespace platform

@@ -65,6 +65,37 @@ target_link_libraries(core_selfcheck PRIVATE arcade_core)
 # server's /api/health. Linux/Unix only: the Windows build keeps its WinHTTP
 # pump. Built only when CURL is available so a bare core checkout still configures.
 if(NOT MSVC)
+  # ── arcade_audio + audio_device_selfcheck (Phase L5-b) ──────────────────────
+  # miniaudio-backed platform::IAudioIn/IAudioOut. miniaudio is a single header
+  # with no upstream CMake target, so we fetch the source and compile our impl TU
+  # (which #defines MINIAUDIO_IMPLEMENTATION). The device self-check uses
+  # miniaudio's null backend, so it needs no sound hardware (CI-safe). Opt out
+  # with -DARCADE_WITH_AUDIO=OFF.
+  option(ARCADE_WITH_AUDIO "Build the miniaudio audio backend (L5-b)" ON)
+  if(ARCADE_WITH_AUDIO)
+    include(FetchContent)
+    FetchContent_Declare(miniaudio
+      GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+      GIT_TAG        0.11.21
+      GIT_SHALLOW    TRUE)
+    FetchContent_GetProperties(miniaudio)
+    if(NOT miniaudio_POPULATED)
+      FetchContent_Populate(miniaudio)
+    endif()
+
+    add_library(arcade_audio STATIC src/Platform/linux/AudioMiniaudio.cpp)
+    target_include_directories(arcade_audio PUBLIC src ${miniaudio_SOURCE_DIR})
+    # miniaudio's single-header impl warns heavily under -Wall; silence just it.
+    set_source_files_properties(src/Platform/linux/AudioMiniaudio.cpp
+      PROPERTIES COMPILE_OPTIONS "-w")
+    find_package(Threads REQUIRED)
+    target_link_libraries(arcade_audio PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+
+    add_executable(audio_device_selfcheck src/core/AudioDeviceSelfCheckMain.cpp)
+    target_link_libraries(audio_device_selfcheck PRIVATE arcade_audio arcade_core)
+    add_test(NAME audio_device_selfcheck COMMAND audio_device_selfcheck)
+  endif()
+
   find_package(CURL QUIET)
   if(CURL_FOUND)
     set(ARCADE_NET_SRC src/Platform/linux/HttpClientCurl.cpp)

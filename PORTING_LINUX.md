@@ -539,9 +539,27 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   tracking underrun/dropped sample counters. Locked by `audio_buffer_selfcheck`
   (10-case KAT: ring FIFO/partial/wrap/drop-oldest/over-capacity/silence + jitter
   prime/drain/underrun-rearm/overflow). `ctest` 25/25, Windows launcher 0/0
-  (AudioBuffer.cpp compiles into both via arcade_core/vcxproj). **Next (L5-b):**
-  the miniaudio `IAudioIn`/`IAudioOut` backend (CMake `FetchContent`, null device
-  for CI) drains/fills these buffers; then wire VoiceEngine onto the boundary.
+  (AudioBuffer.cpp compiles into both via arcade_core/vcxproj).
+- **Done (L5-b): miniaudio `IAudioIn`/`IAudioOut` backend.**
+  `src/Platform/linux/AudioMiniaudio.cpp` implements `platform::makeAudioOut`/
+  `makeAudioIn` over miniaudio (PipeWire/ALSA/Pulse), driving interleaved int16
+  PCM through the device data callback: playback zero-fills then calls the
+  app's `RenderCallback`; capture hands mic frames to the `CaptureCallback`. A
+  `useNullDevice` flag selects miniaudio's **null backend** — a device-free clock
+  that still fires the callbacks at rate — so the headless gate runs with no sound
+  hardware. miniaudio is pulled via CMake `FetchContent` (tag 0.11.21,
+  `MINIAUDIO_IMPLEMENTATION` in our TU, decoders/encoders/generation `#define`d
+  out); new `arcade_audio` static lib links pthread/dl/m. `AudioIO.h` gained the
+  `makeAudioOut(bool)`/`makeAudioIn(bool)` factory decls. New
+  `audio_device_selfcheck` drives the REAL start→callback→stop path on the null
+  backend, **wired through the L5-a `audio::` buffers** exactly as voice will use
+  them (render drains a pre-filled `JitterBuffer`; capture writes a `RingBuffer`)
+  — asserting both callbacks fire + move samples, plus stop/restart idempotency.
+  `ctest` 26/26 (playback 22 callbacks/10560 real samples drained, capture 20
+  callbacks/9600 samples); Windows launcher 0/0 (AudioMiniaudio.cpp is a
+  Linux-only TU; `AudioIO.h` only added decls, no Windows caller yet). **Next
+  (L5-c):** wire VoiceEngine onto the `platform::AudioIO` boundary (the Windows
+  WASAPI impl provides the same factories), so the voice subsystem is shared.
 
 **Phase L6 — Paths, config, integrations**
 - XDG data dirs, autostart (.desktop), global hotkey (X11/Wayland), tray, file

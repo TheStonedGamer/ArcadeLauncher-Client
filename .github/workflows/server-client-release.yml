@@ -231,6 +231,9 @@ jobs:
       - name: Audio-buffer self-check (gate)
         run: ./build/audio_buffer_selfcheck
 
+      - name: Audio-device self-check (miniaudio null backend, gate)
+        run: ./build/audio_device_selfcheck
+
       - name: General-settings model self-check (gate)
         run: ./build/settings_selfcheck
 
