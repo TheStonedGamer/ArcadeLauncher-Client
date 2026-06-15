@@ -347,14 +347,30 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   in-place wstring sort for now — adopting `gamesort::` there means a
   precompute-keys-once refactor of the hot `ApplyFilter` path, deferred; the KAT
   pins both to identical semantics.)
+- **Done (L3d-c-5): shared sidebar tab filtering (`gamefilter::`) + KAT + Linux
+  tab filter.** App.cpp's `ApplyFilter` per-page selection moved into
+  `src/GameFilter.{h,cpp}` (arcade_core, UTF-8): a `passes(Item, TabSel)`
+  predicate for All / Favorites / Recently Played / Installed / Ready to Download
+  / Updates / Hidden / a Platform / a Collection, mirroring App.cpp exactly —
+  including the universal rule that hidden games appear only on the Hidden page.
+  (Background Downloads is excluded: it depends on the live download queue, not a
+  per-game predicate.) `tabSelect(label)` maps a sidebar label to its page (any
+  unknown label → a platform tab, matching `BuildSidebarEntries`). Locked by
+  `filter_selfcheck` (Linux ctest) and `scripts/build-filter-selfcheck.cmd`
+  (MSVC). `catalog::Game` gained `serverBacked` / `lastPlayed` / `collections`
+  (newline-joined) so the predicate has full parity inputs;
+  `catalog_selfcheck` extended to assert them. The Linux `gui_demo` filters the
+  parallel card/field/key/**item** arrays through it: `--tab <label>`
+  deterministic gate (`gui_demo_tab`: exact match-count + non-empty + tile0
+  rendered) and live sidebar clicks in `--hold` (hit-test the tab list → switch
+  `gamefilter::TabSel` → re-filter, composed with live search). `ctest` 16/16,
+  Windows launcher 0/0. (Windows keeps its native wstring `ApplyFilter`; the KAT
+  pins both to identical semantics, same approach as `gamesort::`.)
 - **Next (Linux app shell / L1b-rest):** continue growing the Linux shell on
-  shared logic — sidebar tab filtering (platform/favorites/hidden),
-  then L4 widgets (settings/dialogs on nanovg) → L5 audio → L6 XDG/integrations →
-  L7 AppImage + auto-update. Windows stays green and unchanged; each step verified.
-  Known follow-up: `gridview::installFromString` expects lowercase
-  ("installed"…) but `GameLibrary::Save` writes capitalized ("Installed"…); add
-  the capitalized spellings so a real Windows-saved library shows install dots on
-  Linux.
+  shared logic — collection tabs + a real sidebar entry model (dynamic
+  platform/collection rows from the catalog), then L4 widgets (settings/dialogs
+  on nanovg) → L5 audio → L6 XDG/integrations → L7 AppImage + auto-update.
+  Windows stays green and unchanged; each step verified.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

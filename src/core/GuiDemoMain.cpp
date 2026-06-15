@@ -23,6 +23,7 @@
 #include "CatalogGridView.h"
 #include "GameSearch.h"
 #include "GameSort.h"
+#include "GameFilter.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -104,10 +105,15 @@ int main(int argc, char** argv) {
     std::string searchQuery;   // --search <q>: filter the grid (shared gamesearch::)
     bool doSort = false;       // --sort <mode>: order the grid (shared gamesort::)
     gamesort::Mode sortMode = gamesort::Mode::Title;
+    bool doTab = false;        // --tab <label>: sidebar filter (shared gamefilter::)
+    std::string tabLabel;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
         else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
             searchQuery = argv[++i];
+        else if (std::strcmp(argv[i], "--tab") == 0 && i + 1 < argc) {
+            doTab = true; tabLabel = argv[++i];
+        }
         else if (std::strcmp(argv[i], "--sort") == 0 && i + 1 < argc) {
             doSort = true;
             std::string m = argv[++i];
@@ -132,8 +138,11 @@ int main(int argc, char** argv) {
     theme.titleFont = r->loadFont("", 22, true);
     theme.bodyFont  = r->loadFont("", 15, false);
 
+    // Real, filterable sidebar labels (each maps to a gamefilter::Page via
+    // tabSelect): "All Games"/"Favorites"/"Installed" are special pages, "PC" is
+    // a platform tab, "Hidden" is the dedicated hidden page.
     const std::vector<std::string> tabs = {
-        "All Games", "PC", "Consoles", "Favorites", "Downloads"};
+        "All Games", "Favorites", "Installed", "PC", "Hidden"};
 
     // L3d: render the REAL catalog when a library.json is supplied; otherwise the
     // built-in demo scene (which has the deterministic pixel anchor). We keep the
@@ -142,7 +151,18 @@ int main(int argc, char** argv) {
     std::vector<gridview::Card>       allCards;
     std::vector<gamesearch::Fields>   allFields;
     std::vector<gamesort::Key>        allKeys;
+    std::vector<gamefilter::Item>     allItems;   // parallel: sidebar tab filtering
     bool fromCatalog = false;
+
+    // gridview::Install (card overlay) → gamefilter::Install (tab predicate).
+    auto toFilterInstall = [](gridview::Install gi) {
+        switch (gi) {
+            case gridview::Install::Installed:       return gamefilter::Install::Installed;
+            case gridview::Install::UpdateAvailable: return gamefilter::Install::UpdateAvailable;
+            case gridview::Install::NotInstalled:    return gamefilter::Install::Missing;
+            default:                                 return gamefilter::Install::Unknown;
+        }
+    };
     size_t catalogCount = 0;
 
     // releaseDate (unix) -> Gregorian year for the search predicate.
@@ -163,8 +183,10 @@ int main(int argc, char** argv) {
         catalogCount = games.size();
         if (!games.empty()) {
             fromCatalog = true;
+            // Keep hidden games in the model; the shared tab predicate hides them
+            // off every page except "Hidden" (mirrors App::ApplyFilter), so the
+            // Hidden tab actually works instead of them being dropped here.
             for (const auto& g : games) {
-                if (g.hidden) continue;
                 gridview::Card c;
                 c.title = g.title.empty() ? g.id : g.title;
                 c.platform = g.platform;
@@ -183,10 +205,20 @@ int main(int argc, char** argv) {
                 f.releaseYear = yearOf(g.releaseDate);
                 gamesort::Key k;
                 k.title = c.title; k.id = g.id; k.platform = g.platform;
-                k.playtimeSeconds = g.playtimeSeconds;  // rating/lastPlayed absent
+                k.playtimeSeconds = g.playtimeSeconds;  // rating absent
+                k.lastPlayed = g.lastPlayed;
+                gamefilter::Item it;
+                it.platform = g.platform;
+                it.install = gamefilter::installFromString(g.installState);
+                it.serverBacked = g.serverBacked;
+                it.favorite = g.favorite;
+                it.hidden = g.hidden;
+                it.lastPlayed = g.lastPlayed;
+                it.collections = g.collections;
                 allCards.push_back(std::move(c));
                 allFields.push_back(std::move(f));
                 allKeys.push_back(std::move(k));
+                allItems.push_back(std::move(it));
             }
         }
     }
@@ -228,9 +260,17 @@ int main(int argc, char** argv) {
             k.rating = (float)(60 + (i * 7) % 40);
             k.playtimeSeconds = (uint64_t)((i * 37) % 100) * 60;
             k.lastPlayed = 1000 + (int64_t)((i * 53) % 100);
+            gamefilter::Item it;
+            it.platform = entries[i].platform;
+            it.install = toFilterInstall(c.install);
+            it.serverBacked = false;       // demo entries are all "local"
+            it.favorite = c.favorite;
+            it.hidden = false;
+            it.lastPlayed = k.lastPlayed;
             allCards.push_back(std::move(c));
             allFields.push_back(std::move(f));
             allKeys.push_back(std::move(k));
+            allItems.push_back(std::move(it));
         }
     }
 
@@ -245,23 +285,34 @@ int main(int argc, char** argv) {
         std::vector<gridview::Card>     sc; sc.reserve(order.size());
         std::vector<gamesearch::Fields> sf; sf.reserve(order.size());
         std::vector<gamesort::Key>      sk; sk.reserve(order.size());
+        std::vector<gamefilter::Item>   si; si.reserve(order.size());
         for (size_t idx : order) {
             sc.push_back(std::move(allCards[idx]));
             sf.push_back(std::move(allFields[idx]));
             sk.push_back(std::move(allKeys[idx]));
+            si.push_back(std::move(allItems[idx]));
         }
-        allCards.swap(sc); allFields.swap(sf); allKeys.swap(sk);
+        allCards.swap(sc); allFields.swap(sf); allKeys.swap(sk); allItems.swap(si);
     };
     if (doSort) sortAll(sortMode);
 
-    // Apply the search filter (shared gamesearch::) to produce the shown set.
-    // Empty query shows everything (preserving the deterministic tile-0 anchor).
+    // Active sidebar tab (shared gamefilter::). Default is "All Games"; --tab sets
+    // it for the deterministic gate, and a click sets it live in --hold.
+    std::string activeTabLabel = doTab ? tabLabel : "All Games";
+    gamefilter::TabSel activeTab = gamefilter::tabSelect(activeTabLabel);
+
+    // Produce the shown set: keep cards that pass the active sidebar tab (shared
+    // gamefilter::) AND the search query (shared gamesearch::). With the default
+    // "All Games" tab and an empty query this is every non-hidden card, preserving
+    // the deterministic tile-0 anchor.
     auto filterCards = [&](const std::string& query) {
         std::vector<gridview::Card> out;
-        if (query.empty()) { out = allCards; return out; }
-        const std::string lq = gamesearch::lower(query);
-        for (size_t i = 0; i < allCards.size(); ++i)
-            if (gamesearch::matches(allFields[i], lq)) out.push_back(allCards[i]);
+        const std::string lq = query.empty() ? std::string() : gamesearch::lower(query);
+        for (size_t i = 0; i < allCards.size(); ++i) {
+            if (!gamefilter::passes(allItems[i], activeTab)) continue;
+            if (!query.empty() && !gamesearch::matches(allFields[i], lq)) continue;
+            out.push_back(allCards[i]);
+        }
         return out;
     };
     std::vector<gridview::Card> cards = filterCards(searchQuery);
@@ -333,6 +384,31 @@ int main(int argc, char** argv) {
                     ok ? "OK" : "FAILED", searchQuery.c_str(), cards.size(),
                     allCards.size(), gr, gg, gb,
                     wrote ? "gui_demo.ppm" : "<ppm failed>");
+    } else if (doTab) {
+        // Tab path: assert the shared sidebar predicate produced exactly the games
+        // it should for this tab, that the set is non-empty, and the first tile
+        // actually rendered.
+        size_t matchCount = 0;
+        for (const auto& it : allItems)
+            if (gamefilter::passes(it, activeTab)) ++matchCount;
+        bool rendered;
+        if (!cards.empty() && cards[0].cover == 0) {
+            Color p = cards[0].placeholder;
+            int er = (int)(p.r * 255 + 0.5f), eg = (int)(p.g * 255 + 0.5f),
+                eb = (int)(p.b * 255 + 0.5f);
+            rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
+        } else {
+            const Color bg = theme.bg;
+            rendered = !cards.empty() &&
+                       !(near(gr, (int)(bg.r * 255)) && near(gg, (int)(bg.g * 255)) &&
+                         near(gb, (int)(bg.b * 255)));
+        }
+        ok = !cards.empty() && cards.size() == matchCount && rendered;
+        std::printf("gui demo: %s — tab \"%s\" → %zu/%zu tiles; "
+                    "tile0 (%d,%d,%d); wrote %s\n",
+                    ok ? "OK" : "FAILED", activeTabLabel.c_str(), cards.size(),
+                    allCards.size(), gr, gg, gb,
+                    wrote ? "gui_demo.ppm" : "<ppm failed>");
     } else if (doSort) {
         // Sort path: assert the shown order is non-decreasing under the shared
         // comparator, and the first tile rendered (non-bg).
@@ -373,17 +449,31 @@ int main(int argc, char** argv) {
     }
 
     if (hold) {
-        std::printf("gui demo: interactive — type to search, F1 cycles sort, "
-                    "wheel scrolls, click/arrows select, Esc/close to exit.\n");
+        std::printf("gui demo: interactive — click a sidebar tab to filter, type "
+                    "to search, F1 cycles sort, wheel scrolls, arrows select, "
+                    "Esc/close to exit.\n");
         std::string liveQuery = searchQuery;
         int sortIdx = 0;
         // Re-run the shared filter and re-sync the controller to the new count.
         auto applyQuery = [&]() {
             cards = filterCards(liveQuery);
             ctrl.setCount((int)cards.size());
-            win->setTitle(liveQuery.empty()
-                              ? "ArcadeLauncher (Linux) — catalog grid"
-                              : ("ArcadeLauncher (Linux) — search: " + liveQuery));
+            std::string title = "ArcadeLauncher (Linux)";
+            if (activeTab.page != gamefilter::Page::All)
+                title += " — " + activeTabLabel;
+            if (!liveQuery.empty()) title += " — search: " + liveQuery;
+            win->setTitle(title);
+        };
+
+        // Hit-test the sidebar tab list drawn by gridview::drawGrid (rows start at
+        // topbarH+12, 34px pitch, within the sidebar width). Returns tab index or -1.
+        auto tabAtPoint = [&](float x, float y) -> int {
+            const grid::Metrics mm = grid::Metrics::forViewport(w, h);
+            if (x < 0 || x > mm.sidebarW) return -1;
+            const float top = mm.topbarH + 12.0f;
+            if (y < top) return -1;
+            int idx = (int)((y - top) / 34.0f);
+            return (idx >= 0 && idx < (int)tabs.size()) ? idx : -1;
         };
         while (!quit) {
             Event ev;
@@ -397,7 +487,17 @@ int main(int argc, char** argv) {
                         ctrl.scrollBy(-ev.wheel * 80.0f);  // wheel up scrolls up
                         break;
                     case EventType::MouseDown:
-                        if (ev.button == MouseButton::Left) ctrl.clickAt(ev.x, ev.y);
+                        if (ev.button == MouseButton::Left) {
+                            int ti = tabAtPoint(ev.x, ev.y);
+                            if (ti >= 0) {
+                                // Switch the active sidebar tab (shared gamefilter::).
+                                activeTabLabel = tabs[ti];
+                                activeTab = gamefilter::tabSelect(activeTabLabel);
+                                applyQuery();
+                            } else {
+                                ctrl.clickAt(ev.x, ev.y);
+                            }
+                        }
                         break;
                     case EventType::TextInput:
                         // Live incremental search through the shared predicate.

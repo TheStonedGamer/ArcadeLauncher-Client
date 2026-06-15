@@ -37,6 +37,7 @@ add_library(arcade_core STATIC
   src/GameVariants.cpp
   src/GameSearch.cpp
   src/GameSort.cpp
+  src/GameFilter.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -177,6 +178,9 @@ if(NOT MSVC)
       add_test(NAME gui_demo_search COMMAND gui_demo --search PC)
       # Sort ordering through the shared gamesort:: comparator (title order).
       add_test(NAME gui_demo_sort COMMAND gui_demo --sort title)
+      # Sidebar tab filtering through the shared gamefilter:: predicate: the
+      # "PC" platform tab keeps only the PC demo tiles (non-empty strict subset).
+      add_test(NAME gui_demo_tab COMMAND gui_demo --tab PC)
 
       # Headless image-codec round-trip (no display/GL needed at runtime).
       add_executable(image_selfcheck src/core/ImageSelfCheckMain.cpp)
@@ -211,6 +215,9 @@ target_link_libraries(search_selfcheck PRIVATE arcade_core)
 add_executable(sort_selfcheck src/core/SortSelfCheckMain.cpp)
 target_link_libraries(sort_selfcheck PRIVATE arcade_core)
 
+add_executable(filter_selfcheck src/core/FilterSelfCheckMain.cpp)
+target_link_libraries(filter_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
@@ -219,3 +226,4 @@ add_test(NAME grid_controller_selfcheck COMMAND grid_controller_selfcheck)
 add_test(NAME variants_selfcheck COMMAND variants_selfcheck)
 add_test(NAME search_selfcheck COMMAND search_selfcheck)
 add_test(NAME sort_selfcheck COMMAND sort_selfcheck)
+add_test(NAME filter_selfcheck COMMAND filter_selfcheck)

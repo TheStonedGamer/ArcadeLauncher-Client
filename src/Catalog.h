@@ -29,8 +29,11 @@ struct Game {
     std::string contentPath;       // server content path; ROM-variant grouping
     int64_t     releaseDate = 0;   // unix timestamp (0 = unknown)
     uint64_t    playtimeSeconds = 0;
+    int64_t     lastPlayed = 0;    // unix timestamp (0 = never launched)
+    bool        serverBacked = false;
     bool        favorite = false;
     bool        hidden   = false;
+    std::vector<std::string> collections;  // newline-joined in JSON
 };
 
 // Parse the JSON array text produced by GameLibrary::Save into UTF-8 Games.

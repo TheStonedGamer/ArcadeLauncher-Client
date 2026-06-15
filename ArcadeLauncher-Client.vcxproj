@@ -115,6 +115,9 @@
     <ClCompile Include="src\GameSort.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\GameFilter.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <!-- Portable grid drawing (IRenderer2D only) + the Windows Direct2D
          IRenderer2D backend it draws through. Shared with the Linux build. -->
     <ClCompile Include="src\CatalogGridView.cpp">
@@ -183,6 +186,7 @@
     <ClInclude Include="src\GameVariants.h" />
     <ClInclude Include="src\GameSearch.h" />
     <ClInclude Include="src\GameSort.h" />
+    <ClInclude Include="src\GameFilter.h" />
     <ClInclude Include="src\CatalogGridView.h" />
     <ClInclude Include="src\Platform\win\RendererD2D.h" />
     <ClInclude Include="src\GameLibrary.h" />

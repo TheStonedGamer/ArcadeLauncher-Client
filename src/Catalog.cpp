@@ -101,8 +101,23 @@ std::vector<Game> parse(const std::string& json) {
         g.contentPath     = readField(obj, "contentPath");
         g.releaseDate     = (int64_t)readNum(obj, "releaseDate");
         g.playtimeSeconds = readNum(obj, "playtimeSeconds");
+        g.lastPlayed      = (int64_t)readNum(obj, "lastPlayed");
+        g.serverBacked    = readBool(obj, "serverBacked");
         g.favorite        = readBool(obj, "favorite");
         g.hidden          = readBool(obj, "hidden");
+        // Collections are stored as one newline-joined string (readField already
+        // reverses the \n escape); split back into entries.
+        {
+            std::string col = readField(obj, "collections");
+            size_t cp = 0;
+            while (cp < col.size()) {
+                size_t nl = col.find('\n', cp);
+                if (nl == std::string::npos) nl = col.size();
+                std::string one = col.substr(cp, nl - cp);
+                if (!one.empty()) g.collections.push_back(one);
+                cp = nl + 1;
+            }
+        }
         out.push_back(std::move(g));
     }
     return out;

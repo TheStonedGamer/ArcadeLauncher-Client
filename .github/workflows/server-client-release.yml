@@ -216,6 +216,9 @@ jobs:
       - name: Sort-order self-check (gate)
         run: ./build/sort_selfcheck
 
+      - name: Tab-filter self-check (gate)
+        run: ./build/filter_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
@@ -225,6 +228,9 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_smoke
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --search PC
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --sort title
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --tab PC
 
       - name: Package Linux artifact
         run: |

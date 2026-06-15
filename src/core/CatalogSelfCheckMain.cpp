@@ -17,11 +17,13 @@ int main() {
   {"id":"g1","title":"Hollow Knight","platform":"PC","installState":"installed",
    "coverArtPath":"covers/g1.png","developer":"Team Cherry","publisher":"Team Cherry",
    "franchise":"Hollow Knight","genres":"Metroidvania","contentPath":"games/PC/Hollow Knight/hk.exe",
-   "releaseDate":1488499200,
+   "releaseDate":1488499200,"serverBacked":true,"lastPlayed":1700000000,
+   "collections":"Favorites\nMetroidvanias",
    "summary":"A bug \"epic\" with a } brace inside","playtimeSeconds":3600,
    "favorite":true,"hidden":false},
   {"id":"g2","title":"Metroid Prime","platform":"GameCube","installState":"notInstalled",
    "coverArtPath":"","developer":"Retro Studios","publisher":"Nintendo",
+   "serverBacked":false,"lastPlayed":0,
    "playtimeSeconds":0,"favorite":false,"hidden":true}
 ]
 )JSON";
@@ -45,12 +47,20 @@ int main() {
         check(games[0].contentPath == "games/PC/Hollow Knight/hk.exe", "g1 contentPath");
         check(games[0].releaseDate == 1488499200, "g1 releaseDate");
         check(games[0].playtimeSeconds == 3600, "g1 playtime");
+        check(games[0].serverBacked, "g1 serverBacked");
+        check(games[0].lastPlayed == 1700000000, "g1 lastPlayed");
+        check(games[0].collections.size() == 2 &&
+              games[0].collections[0] == "Favorites" &&
+              games[0].collections[1] == "Metroidvanias", "g1 collections");
         check(games[0].favorite && !games[0].hidden, "g1 flags");
         // The '}' inside the summary must not have truncated the object, so g2
         // (which comes after it) must still parse.
         check(games[1].id == "g2", "g2 id (brace-in-string survived)");
         check(games[1].platform == "GameCube", "g2 platform");
         check(games[1].installState == "notInstalled", "g2 installState");
+        check(!games[1].serverBacked, "g2 serverBacked");
+        check(games[1].lastPlayed == 0, "g2 lastPlayed");
+        check(games[1].collections.empty(), "g2 collections empty");
         check(!games[1].favorite && games[1].hidden, "g2 flags");
     }
 
