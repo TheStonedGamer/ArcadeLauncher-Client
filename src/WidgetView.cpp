@@ -156,4 +156,56 @@ size_t caretIndexFromX(platform::IRenderer2D& r, const widgets::TextEdit& t,
     return t.text.size();
 }
 
+void drawCombo(platform::IRenderer2D& r, const widgets::Combo& c, const Theme& th,
+               const std::string& placeholder) {
+    // Header.
+    Color hdr;
+    switch (widgets::visualState(c)) {
+        case widgets::Visual::Hover:    hdr = th.hover;    break;
+        case widgets::Visual::Disabled: hdr = th.disabled; break;
+        case widgets::Visual::Normal:
+        default:                        hdr = th.normal;   break;
+    }
+    r.fillRoundedRect(c.bounds, th.radius, hdr);
+    r.strokeRoundedRect(c.bounds, th.radius, c.open ? th.accent : th.border,
+                        c.open ? 1.5f : 1.0f);
+
+    const float padX = 8.0f;
+    if (th.font) {
+        const std::string sel = widgets::selectedText(c);
+        const bool hasSel = !sel.empty();
+        const float ty = c.bounds.y + (c.bounds.h - th.fontPx) * 0.5f;
+        r.drawText(th.font, hasSel ? sel : placeholder, c.bounds.x + padX, ty,
+                   c.enabled ? (hasSel ? th.text : th.textDisabled) : th.textDisabled,
+                   platform::TextAlign::Left);
+
+        // Chevron (down caret) on the right.
+        const float cxr = c.bounds.x + c.bounds.w - 16.0f;
+        const float cyr = c.bounds.y + c.bounds.h * 0.5f;
+        const Color chev = c.enabled ? th.text : th.textDisabled;
+        r.drawLine(cxr - 4, cyr - 2, cxr, cyr + 3, chev, 1.5f);
+        r.drawLine(cxr, cyr + 3, cxr + 4, cyr - 2, chev, 1.5f);
+    }
+
+    // Open popup list (caller draws open combos last so this overlays).
+    if (c.open && !c.options.empty()) {
+        const platform::Rect pop = widgets::comboPopupRect(c);
+        // Solid panel + border so it reads as a layer above the page.
+        r.fillRoundedRect(pop, th.radius, th.normal);
+        for (int i = 0; i < static_cast<int>(c.options.size()); ++i) {
+            const platform::Rect row = widgets::comboItemRect(c, i);
+            if (i == c.highlight) {
+                Color hi = th.accent; hi.a = 0.30f;
+                r.fillRect(row, hi);
+            }
+            if (th.font) {
+                const float ty = row.y + (row.h - th.fontPx) * 0.5f;
+                r.drawText(th.font, c.options[static_cast<size_t>(i)],
+                           row.x + padX, ty, th.text, platform::TextAlign::Left);
+            }
+        }
+        r.strokeRoundedRect(pop, th.radius, th.border, 1.0f);
+    }
+}
+
 } // namespace widgetview

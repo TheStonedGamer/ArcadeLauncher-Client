@@ -434,9 +434,21 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   `--hold` lets you click to focus/place caret and type live. `ctest` 20/20,
   Windows launcher 0/0. (Clipboard cut/copy/paste deferred — needs the window
   clipboard + letter keycodes the platform Key enum doesn't yet carry.)
-- **Next:** combo (dropdown) and listbox/scroll, then assemble a first real panel
-  (a slice of SettingsWindow) off these, shared by both platforms. Windows stays
-  green; each step verified on both OSes.
+- **Done (L4-d): dropdown (combo).** `widgets::Combo` holds the open/select/
+  highlight state machine plus pure popup geometry (`comboPopupRect`/
+  `comboItemRect`/`comboItemAt`/`comboItemHeight`): a left-click on the header
+  opens it, a click on a row commits it (clicked=true) and closes, a click on the
+  header again or outside closes; Up/Down move the highlight (clamped), Enter
+  commits, Escape closes. `widgetview::drawCombo` paints the header (selected text
+  or placeholder + chevron) and, when open, the overlay list (accent-highlighted
+  row) — drawn LAST so it layers above the page. `widgets_selfcheck` grew 5 combo
+  cases (mouse open+commit, outside-closes, keyboard Down+Enter, Down-clamp +
+  Escape, disabled inert). `gui_demo --widgets` opens a combo and commits a row
+  through the shared model; `--hold` is fully interactive. `ctest` 20/20, Windows
+  launcher 0/0.
+- **Next:** listbox/scroll, then assemble a first real panel (a slice of
+  SettingsWindow) off the button/checkbox/textedit/combo/list set, shared by both
+  platforms. Windows stays green; each step verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

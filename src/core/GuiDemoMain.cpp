@@ -173,6 +173,10 @@ int main(int argc, char** argv) {
         field.bounds = {80, 210, 340, 34};
         field.focused = true;  // focused so the gate can type into it
 
+        widgets::Combo combo;
+        combo.bounds = {80, 260, 200, 30};
+        combo.options = {"Low", "Medium", "High"};
+
         // Drive copies through a synthetic click (no display needed for the
         // logic): press+release inside each. OK should click; disabled Cancel
         // must not. The drawn `ok`/`cancel` stay in their resting state so the
@@ -214,6 +218,21 @@ int main(int argc, char** argv) {
             field.anchor = f.caret;
         }
 
+        // Drive a copy of the combo: open, then commit row 2 ("High").
+        bool comboPicked = false;
+        {
+            widgets::Combo cc = combo;
+            const float hx = cc.bounds.x + 10, hy = cc.bounds.y + cc.bounds.h * 0.5f;
+            Event openEv; openEv.type = EventType::MouseDown; openEv.x = hx; openEv.y = hy;
+            widgets::handle(cc, openEv);
+            const platform::Rect row2 = widgets::comboItemRect(cc, 2);
+            Event pick; pick.type = EventType::MouseDown;
+            pick.x = row2.x + 10; pick.y = row2.y + row2.h * 0.5f;
+            widgets::handle(cc, pick);
+            comboPicked = (cc.selected == 2 && !cc.open);
+            combo.selected = cc.selected;  // show the choice in the drawn combo
+        }
+
         int w = W, h = H; win->size(w, h);
         const Color bg = {0.07f, 0.08f, 0.09f, 1.0f};
         auto drawScene = [&]() {
@@ -223,6 +242,7 @@ int main(int argc, char** argv) {
             widgetview::drawButton(*r, cancel, wth);
             widgetview::drawCheckbox(*r, chk, wth);
             widgetview::drawTextEdit(*r, field, wth);
+            widgetview::drawCombo(*r, combo, wth);  // last: open list overlays
             r->endFrame();
         };
         bool wquit = false;
@@ -245,12 +265,14 @@ int main(int argc, char** argv) {
         int er = (int)(wth.normal.r * 255 + 0.5f), eg = (int)(wth.normal.g * 255 + 0.5f),
             eb = (int)(wth.normal.b * 255 + 0.5f);
         bool rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
-        bool wok = okClicked && !cancelClicked && chkToggledOn && fieldTyped && rendered;
+        bool wok = okClicked && !cancelClicked && chkToggledOn && fieldTyped &&
+                   comboPicked && rendered;
         std::printf("gui demo: %s — widgets: OK clicked=%d, Cancel(disabled) clicked=%d, "
-                    "checkbox toggled=%d, field typed=%d (\"%s\"); OK fill (%d,%d,%d) "
-                    "expected ~(%d,%d,%d); wrote %s\n",
+                    "checkbox toggled=%d, field typed=%d (\"%s\"), combo picked=%d (\"%s\"); "
+                    "OK fill (%d,%d,%d) expected ~(%d,%d,%d); wrote %s\n",
                     wok ? "OK" : "FAILED", okClicked ? 1 : 0, cancelClicked ? 1 : 0,
                     chkToggledOn ? 1 : 0, fieldTyped ? 1 : 0, field.text.c_str(),
+                    comboPicked ? 1 : 0, widgets::selectedText(combo).c_str(),
                     gr, gg, gb, er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
 
         if (hold) {
@@ -282,6 +304,9 @@ int main(int argc, char** argv) {
                                 field.focused = false;
                             }
                         }
+                        // Combo gets mouse + keyboard (open list, pick, arrows).
+                        if (widgets::handle(combo, ev).clicked)
+                            std::printf("combo -> %s\n", widgets::selectedText(combo).c_str());
                         // Keyboard/text routing: the focused field consumes it
                         // (handle ignores mouse events).
                         widgets::handle(field, ev);

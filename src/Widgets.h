@@ -114,4 +114,39 @@ void setCaret(TextEdit& t, size_t byteIdx, bool extend);
 // handled the event. Mouse events are ignored here (the view drives focus/caret).
 InputResult handle(TextEdit& t, const platform::Event& ev);
 
+// ── Combo (dropdown) ─────────────────────────────────────────────────────────
+// A dropdown: a header showing the selected option, which on click opens a popup
+// list below it. The open/select/highlight state machine and the popup geometry
+// are pure here; the view draws the header + list. `itemHeight` defaults to the
+// header height when 0. `highlight` is the keyboard/mouse-highlighted row while
+// open; `selected` is the committed choice (-1 = none).
+struct Combo {
+    Rect                      bounds;       // closed header
+    std::vector<std::string>  options;
+    int    selected   = -1;
+    bool   open       = false;
+    bool   enabled    = true;
+    bool   hover      = false;
+    int    highlight  = -1;
+    float  itemHeight = 0.0f;
+};
+
+// Popup geometry (pure, valid whether or not the combo is open).
+float comboItemHeight(const Combo& c);            // itemHeight>0 ? itemHeight : bounds.h
+Rect  comboPopupRect(const Combo& c);             // the whole open list, below the header
+Rect  comboItemRect(const Combo& c, int index);   // one row's rect
+int   comboItemAt(const Combo& c, float x, float y);  // row under (x,y), or -1
+
+// The selected option text ("" when none).
+std::string selectedText(const Combo& c);
+
+// Header visual state (Disabled / Hover when open-or-hovered / Normal).
+Visual visualState(const Combo& c);
+
+// Feed one event. Closed: a left-click on the header opens it. Open: a left-click
+// on a row commits that row (clicked=true) and closes; clicking the header again
+// or outside closes; Up/Down move the highlight, Enter commits the highlight,
+// Escape closes. Disabled is inert.
+InputResult handle(Combo& c, const platform::Event& ev);
+
 } // namespace widgets

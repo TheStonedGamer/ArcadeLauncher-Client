@@ -50,4 +50,11 @@ void drawTextEdit(platform::IRenderer2D& r, const widgets::TextEdit& t, const Th
 size_t caretIndexFromX(platform::IRenderer2D& r, const widgets::TextEdit& t,
                        const Theme& th, float xPx);
 
+// Draw a dropdown: the header (selected text + chevron) and, when open, the popup
+// list (highlighted row uses the accent). Because the open list overlays other
+// content, draw open combos LAST in the frame. `placeholder` shows when nothing
+// is selected.
+void drawCombo(platform::IRenderer2D& r, const widgets::Combo& c, const Theme& th,
+               const std::string& placeholder = "Select…");
+
 } // namespace widgetview

@@ -216,4 +216,116 @@ InputResult handle(TextEdit& t, const platform::Event& ev) {
     return res;
 }
 
+// ── Combo (dropdown) ─────────────────────────────────────────────────────────
+
+float comboItemHeight(const Combo& c) {
+    return c.itemHeight > 0.0f ? c.itemHeight : c.bounds.h;
+}
+
+Rect comboPopupRect(const Combo& c) {
+    const float ih = comboItemHeight(c);
+    return Rect{c.bounds.x, c.bounds.y + c.bounds.h, c.bounds.w,
+               ih * static_cast<float>(c.options.size())};
+}
+
+Rect comboItemRect(const Combo& c, int index) {
+    const float ih = comboItemHeight(c);
+    return Rect{c.bounds.x, c.bounds.y + c.bounds.h + ih * static_cast<float>(index),
+               c.bounds.w, ih};
+}
+
+int comboItemAt(const Combo& c, float x, float y) {
+    for (int i = 0; i < static_cast<int>(c.options.size()); ++i)
+        if (contains(comboItemRect(c, i), x, y)) return i;
+    return -1;
+}
+
+std::string selectedText(const Combo& c) {
+    if (c.selected < 0 || c.selected >= static_cast<int>(c.options.size())) return {};
+    return c.options[static_cast<size_t>(c.selected)];
+}
+
+Visual visualState(const Combo& c) {
+    if (!c.enabled) return Visual::Disabled;
+    if (c.open || c.hover) return Visual::Hover;
+    return Visual::Normal;
+}
+
+InputResult handle(Combo& c, const platform::Event& ev) {
+    InputResult res;
+    if (!c.enabled) {
+        c.open = false;
+        c.hover = false;
+        c.highlight = -1;
+        return res;
+    }
+
+    switch (ev.type) {
+        case EventType::MouseMove:
+            c.hover = contains(c.bounds, ev.x, ev.y);
+            if (c.open) {
+                const int i = comboItemAt(c, ev.x, ev.y);
+                if (i >= 0) c.highlight = i;  // track the hovered row
+            }
+            break;
+
+        case EventType::MouseDown:
+            if (ev.button != MouseButton::Left) break;
+            if (!c.open) {
+                if (contains(c.bounds, ev.x, ev.y)) {
+                    c.open = true;
+                    c.highlight = c.selected;  // start on the current choice
+                    res.consumed = true;
+                }
+            } else {
+                const int i = comboItemAt(c, ev.x, ev.y);
+                if (i >= 0) {                       // commit a row
+                    c.selected = i;
+                    c.open = false;
+                    res.consumed = true;
+                    res.clicked = true;
+                } else {                            // header again or outside: close
+                    c.open = false;
+                    res.consumed = contains(c.bounds, ev.x, ev.y);
+                }
+            }
+            break;
+
+        case EventType::KeyDown:
+            if (!c.open) break;
+            switch (ev.key) {
+                case platform::Key::Down:
+                    if (!c.options.empty())
+                        c.highlight = c.highlight + 1 >= static_cast<int>(c.options.size())
+                                          ? static_cast<int>(c.options.size()) - 1
+                                          : c.highlight + 1;
+                    res.consumed = true;
+                    break;
+                case platform::Key::Up:
+                    c.highlight = c.highlight <= 0 ? 0 : c.highlight - 1;
+                    res.consumed = true;
+                    break;
+                case platform::Key::Enter:
+                    if (c.highlight >= 0) {
+                        c.selected = c.highlight;
+                        res.clicked = true;
+                    }
+                    c.open = false;
+                    res.consumed = true;
+                    break;
+                case platform::Key::Escape:
+                    c.open = false;
+                    res.consumed = true;
+                    break;
+                default:
+                    break;
+            }
+            break;
+
+        default:
+            break;
+    }
+    return res;
+}
+
 } // namespace widgets

@@ -15,6 +15,7 @@ using platform::MouseButton;
 using platform::Key;
 using widgets::Button;
 using widgets::Checkbox;
+using widgets::Combo;
 using widgets::TextEdit;
 using widgets::Visual;
 
@@ -244,8 +245,66 @@ int main() {
         check(d.text.empty(), "disabled field ignores typing");
     }
 
+    // ── Combo (dropdown): open/select via mouse and keyboard.
+    auto makeCombo = []() {
+        Combo c;
+        c.bounds = {100, 50, 160, 28};       // header; items 28px each below it
+        c.options = {"Low", "Medium", "High"};
+        return c;
+    };
+
+    // 17. Click header opens; click a row commits it and closes.
+    {
+        Combo c = makeCombo();
+        auto o = widgets::handle(c, down(110, 60));   // inside header
+        check(o.consumed && c.open, "combo: header click opens");
+        // Rows are 28px tall starting at y=78: row0 [78,106), row1 [106,134).
+        // Click the middle of row 1 ("Medium") at y=120.
+        auto pick = widgets::handle(c, down(110, 120));
+        check(pick.clicked && c.selected == 1 && !c.open,
+              "combo: row click commits + closes");
+        eqs("combo selected text", widgets::selectedText(c), "Medium");
+    }
+
+    // 18. Clicking outside an open combo closes it without changing selection.
+    {
+        Combo c = makeCombo();
+        widgets::handle(c, down(110, 60));   // open
+        widgets::handle(c, down(900, 900));  // far outside
+        check(!c.open && c.selected == -1, "combo: outside click closes, no change");
+    }
+
+    // 19. Keyboard: Down moves highlight, Enter commits it.
+    {
+        Combo c = makeCombo();
+        widgets::handle(c, down(110, 60));        // open; highlight = selected(-1)
+        widgets::handle(c, keyDown(Key::Down));   // -> 0
+        widgets::handle(c, keyDown(Key::Down));   // -> 1
+        check(c.highlight == 1, "combo: two Downs -> highlight 1");
+        auto e = widgets::handle(c, keyDown(Key::Enter));
+        check(e.clicked && c.selected == 1 && !c.open, "combo: Enter commits highlight");
+    }
+
+    // 20. Down highlight clamps at the last row; Escape closes without committing.
+    {
+        Combo c = makeCombo();
+        widgets::handle(c, down(110, 60));
+        for (int i = 0; i < 9; ++i) widgets::handle(c, keyDown(Key::Down));
+        check(c.highlight == 2, "combo: Down clamps at last row");
+        widgets::handle(c, keyDown(Key::Escape));
+        check(!c.open && c.selected == -1, "combo: Escape closes, no commit");
+    }
+
+    // 21. Disabled combo never opens.
+    {
+        Combo c = makeCombo();
+        c.enabled = false;
+        widgets::handle(c, down(110, 60));
+        check(!c.open, "combo: disabled never opens");
+    }
+
     if (g_fail == 0)
-        std::printf("widgets self-check: OK — button + checkbox + textedit KATs passed\n");
+        std::printf("widgets self-check: OK — button + checkbox + textedit + combo KATs passed\n");
     else
         std::printf("widgets self-check: FAILED (%d)\n", g_fail);
     return g_fail == 0 ? 0 : 1;
