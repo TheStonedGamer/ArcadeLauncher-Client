@@ -8,6 +8,8 @@
 //   ./gui_demo --hold                # interactive: keep the window open
 //   ./gui_demo <library.json>        # render the REAL catalog (L3d), real covers
 //   ./gui_demo --hold <library.json> # interactive, real catalog
+//   ./gui_demo --sidebar             # gate the dynamic sidebar:: entry model
+//   ./gui_demo --tab <label>         # gate one sidebar tab's filter
 //
 // With no path it draws the demo scene and verifies a known tile color. With a
 // library.json it parses the real catalog (catalog::loadFile), decodes cover art
@@ -24,6 +26,7 @@
 #include "GameSearch.h"
 #include "GameSort.h"
 #include "GameFilter.h"
+#include "SidebarModel.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -107,8 +110,10 @@ int main(int argc, char** argv) {
     gamesort::Mode sortMode = gamesort::Mode::Title;
     bool doTab = false;        // --tab <label>: sidebar filter (shared gamefilter::)
     std::string tabLabel;
+    bool doSidebar = false;    // --sidebar: gate the dynamic sidebar entry model
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
+        else if (std::strcmp(argv[i], "--sidebar") == 0) doSidebar = true;
         else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
             searchQuery = argv[++i];
         else if (std::strcmp(argv[i], "--tab") == 0 && i + 1 < argc) {
@@ -137,12 +142,6 @@ int main(int argc, char** argv) {
     gridview::Theme theme = gridview::darkTheme();
     theme.titleFont = r->loadFont("", 22, true);
     theme.bodyFont  = r->loadFont("", 15, false);
-
-    // Real, filterable sidebar labels (each maps to a gamefilter::Page via
-    // tabSelect): "All Games"/"Favorites"/"Installed" are special pages, "PC" is
-    // a platform tab, "Hidden" is the dedicated hidden page.
-    const std::vector<std::string> tabs = {
-        "All Games", "Favorites", "Installed", "PC", "Hidden"};
 
     // L3d: render the REAL catalog when a library.json is supplied; otherwise the
     // built-in demo scene (which has the deterministic pixel anchor). We keep the
@@ -296,6 +295,18 @@ int main(int argc, char** argv) {
     };
     if (doSort) sortAll(sortMode);
 
+    // Build the sidebar entry list dynamically from the catalog via the SHARED
+    // sidebar:: model (mirrors Renderer::BuildSidebarEntries): fixed tabs, then
+    // the platforms/collections actually present, then Hidden if anything is
+    // hidden. Each entry carries its own gamefilter::TabSel, so a live click can
+    // filter platform AND collection tabs without re-guessing from the label.
+    // Sorting permutes the items but not the platform/collection set, so the
+    // entry list is the same either way. `tabs` is the label list drawGrid draws.
+    std::vector<sidebar::Entry> sidebarEntries = sidebar::build(allItems);
+    std::vector<std::string> tabs;
+    tabs.reserve(sidebarEntries.size());
+    for (const auto& e : sidebarEntries) tabs.push_back(e.label);
+
     // Active sidebar tab (shared gamefilter::). Default is "All Games"; --tab sets
     // it for the deterministic gate, and a click sets it live in --hold.
     std::string activeTabLabel = doTab ? tabLabel : "All Games";
@@ -358,7 +369,41 @@ int main(int argc, char** argv) {
     bool ok;
     int gr, gg, gb;
     sampleTile(0, gr, gg, gb);
-    if (!searchQuery.empty()) {
+    if (doSidebar) {
+        // Dynamic sidebar gate: assert the SHARED sidebar:: model produced the
+        // expected structure for this catalog — the six fixed tabs first (none of
+        // them platform/collection rows), then platform/collection rows whose
+        // filter arg equals their label — and that the grid rendered.
+        static const std::vector<std::string> kFixed = {
+            "All Games", "Favorites", "Recently Played", "Installed",
+            "Ready to Download", "Updates"};
+        bool fixedOk = sidebarEntries.size() >= kFixed.size();
+        for (size_t i = 0; fixedOk && i < kFixed.size(); ++i)
+            if (sidebarEntries[i].label != kFixed[i] ||
+                sidebarEntries[i].sel.page == gamefilter::Page::Platform ||
+                sidebarEntries[i].sel.page == gamefilter::Page::Collection)
+                fixedOk = false;
+        bool selOk = true;
+        for (const auto& e : sidebarEntries)
+            if ((e.sel.page == gamefilter::Page::Platform ||
+                 e.sel.page == gamefilter::Page::Collection) &&
+                e.sel.arg != e.label)
+                selOk = false;
+        const Color bg = theme.bg;
+        bool drew = !(near(gr, (int)(bg.r * 255)) && near(gg, (int)(bg.g * 255)) &&
+                      near(gb, (int)(bg.b * 255)));
+        ok = fixedOk && selOk && !cards.empty() && drew;
+        std::string joined;
+        for (const auto& e : sidebarEntries) {
+            if (!joined.empty()) joined += '|';
+            joined += e.label;
+        }
+        std::printf("gui demo: %s — sidebar %zu entries [%s]; %zu tiles; "
+                    "tile0 (%d,%d,%d); wrote %s\n",
+                    ok ? "OK" : "FAILED", sidebarEntries.size(), joined.c_str(),
+                    cards.size(), gr, gg, gb,
+                    wrote ? "gui_demo.ppm" : "<ppm failed>");
+    } else if (!searchQuery.empty()) {
         // Search path: assert the shared predicate produced a correct, non-empty,
         // strict subset, and that its first tile actually rendered.
         const std::string lq = gamesearch::lower(searchQuery);
@@ -490,9 +535,12 @@ int main(int argc, char** argv) {
                         if (ev.button == MouseButton::Left) {
                             int ti = tabAtPoint(ev.x, ev.y);
                             if (ti >= 0) {
-                                // Switch the active sidebar tab (shared gamefilter::).
-                                activeTabLabel = tabs[ti];
-                                activeTab = gamefilter::tabSelect(activeTabLabel);
+                                // Switch to the clicked entry's own TabSel (shared
+                                // sidebar::/gamefilter::) — this carries the page
+                                // AND arg, so platform AND collection tabs filter
+                                // correctly without re-guessing from the label.
+                                activeTabLabel = sidebarEntries[ti].label;
+                                activeTab = sidebarEntries[ti].sel;
                                 applyQuery();
                             } else {
                                 ctrl.clickAt(ev.x, ev.y);

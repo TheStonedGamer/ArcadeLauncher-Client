@@ -366,11 +366,35 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   `gamefilter::TabSel` → re-filter, composed with live search). `ctest` 16/16,
   Windows launcher 0/0. (Windows keeps its native wstring `ApplyFilter`; the KAT
   pins both to identical semantics, same approach as `gamesort::`.)
-- **Next (Linux app shell / L1b-rest):** continue growing the Linux shell on
-  shared logic — collection tabs + a real sidebar entry model (dynamic
-  platform/collection rows from the catalog), then L4 widgets (settings/dialogs
-  on nanovg) → L5 audio → L6 XDG/integrations → L7 AppImage + auto-update.
-  Windows stays green and unchanged; each step verified.
+- **Done (L3d-c-6): dynamic sidebar entry model (`sidebar::`) + KAT + Linux
+  dynamic sidebar.** `Renderer::BuildSidebarEntries`' tab-list logic moved into
+  `src/SidebarModel.{h,cpp}` (arcade_core, UTF-8): `sidebar::build(items)`
+  produces the ordered `Entry{label, gamefilter::TabSel}` list — the six fixed
+  tabs (All Games / Favorites / Recently Played / Installed / Ready to Download /
+  Updates), then one tab per platform actually present (canonical
+  `platformOrder()`, then any unknown platform appended sorted), then one per
+  collection (unique, sorted), then Hidden (only when something is hidden). It is
+  genuinely *dynamic* — derived from the catalog rather than hard-coded — and
+  each entry carries its own `TabSel`, so model and filter (`gamefilter::passes`)
+  can never disagree (collection tabs filter correctly without re-guessing from a
+  label, which `tabSelect` can't do). Hidden items still count toward the
+  platform/collection sets so a platform that exists only as hidden games keeps
+  its tab. Locked by `sidebar_selfcheck` (Linux ctest) and
+  `scripts/build-sidebar-selfcheck.cmd` (MSVC). The Linux `gui_demo` now builds
+  its sidebar via `sidebar::build` (replacing the old hard-coded tab list):
+  `--sidebar` deterministic gate (`gui_demo_sidebar`: fixed-prefix + per-entry
+  arg checks + rendered) and live `--hold` clicks switch to the clicked entry's
+  own `TabSel`. `ctest` 18/18, Windows launcher 0/0. (Windows keeps its native
+  wstring `BuildSidebarEntries`, which still surfaces every *configured*
+  platform/collection regardless of contents; the KAT pins the ordering. A later
+  step can have Windows adopt `sidebar::` once its sidebar is fed catalog-derived
+  sets.)
+- **Next (Linux app shell / L1b-rest):** the browse experience (grid, scroll,
+  selection, covers, search, sort, tab filter, dynamic sidebar) is now all on
+  shared tested logic. Next is the heavier surface: L4 widgets (settings/dialogs
+  on a nanovg widget set) → L5 audio (miniaudio) → L6 XDG paths/integrations →
+  L7 AppImage + auto-update. Windows stays green and unchanged; each step
+  verified on both OSes.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs
