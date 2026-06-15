@@ -186,10 +186,20 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   (C_BG `0x0D1117` … C_ACCENT `0x58A6FF`) and draws **real decoded cover art** per
   tile via `createImageRGBA`+`drawImage` (clipped to the rounded card). Verified
   in WSLg + `ctest` (all 6 checks green).
-- **Next (L3d):** migrate `GameLibrary`/catalog parse off `std::wstring` to UTF-8
-  so the real catalog is readable on Linux, port `Renderer.cpp`'s grid/detail
-  drawing onto `IRenderer2D` (replacing the demo scene with live data), and wire
-  `App.cpp`'s message loop to `IWindow` to stand up the actual Linux app shell.
+- **Done (L3d-a): the Linux app reads the real catalog.** `src/Catalog.{h,cpp}`
+  in `arcade_core` — a portable UTF-8 reader for the same `library.json` format
+  `GameLibrary::Save` emits (same field names + escaping; `findObjectEnd` survives
+  a `}` inside a string value). No wstring/Win32. New headless `catalog_selfcheck`
+  KAT covers the brace-in-string + escape cases. `gui_demo <library.json>` now
+  parses the real catalog, skips hidden games, decodes each `coverArtPath` via
+  stb_image, and renders live tiles (`gui_demo` with no arg keeps the
+  deterministic demo scene for CI). Verified in WSLg against a real library.json:
+  4 games → 3 tiles with the actual decoded cover; `ctest` all 7 green.
+- **Next (L3d-b):** the heavy tail — migrate `Renderer.cpp`'s grid/detail drawing
+  off `ID2D1RenderTarget` onto `IRenderer2D` (so the production renderer, not
+  `gui_demo`, paints the grid), then migrate `GameLibrary` itself to UTF-8 and
+  wire `App.cpp`'s message loop to `IWindow`. Do this file-by-file keeping the
+  Windows build green (the Win impls of `IWindow`/`IRenderer2D` come in L1b).
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

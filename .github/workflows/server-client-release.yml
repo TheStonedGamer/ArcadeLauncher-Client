@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write
 
+# The JS actions below still declare the Node 20 runtime, which GitHub
+# force-deprecates 2026-06-16. Opt every action into Node 24 now (the
+# documented migration switch) so releases keep working past that date.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     name: Build & Package Server Client
@@ -191,6 +197,9 @@ jobs:
 
       - name: Image-codec self-check (gate)
         run: ./build/image_selfcheck
+
+      - name: Catalog-parse self-check (gate)
+        run: ./build/catalog_selfcheck
 
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true

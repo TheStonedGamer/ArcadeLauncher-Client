@@ -1,18 +1,22 @@
-// GuiDemoMain.cpp — Phase L3b GUI demo: a real catalog grid drawn entirely
-// through platform::IRenderer2D (nanovg/GL on Linux). Proves the renderer
-// boundary end-to-end — rounded-rect tiles, gradients, text, a sidebar and top
-// bar — the same primitives Renderer.cpp uses on Windows via Direct2D.
+// GuiDemoMain.cpp — Phase L3b/L3d GUI: a catalog grid drawn entirely through
+// platform::IRenderer2D (nanovg/GL on Linux). Proves the renderer boundary
+// end-to-end — rounded-rect tiles, gradients, text, sidebar, top bar — the same
+// primitives Renderer.cpp uses on Windows via Direct2D.
 //
-//   ./gui_demo            # render a few frames, verify pixels, dump PPM, exit
-//   ./gui_demo --hold     # interactive: keep the window open until closed
+//   ./gui_demo                       # built-in demo scene (deterministic check)
+//   ./gui_demo --hold                # interactive: keep the window open
+//   ./gui_demo <library.json>        # render the REAL catalog (L3d), real covers
+//   ./gui_demo --hold <library.json> # interactive, real catalog
 //
-// Verifies deterministically: each tile cover is a flat known color, so we read
-// the back buffer and assert the first tile's center matches. Exit 0 on success;
+// With no path it draws the demo scene and verifies a known tile color. With a
+// library.json it parses the real catalog (catalog::loadFile), decodes cover art
+// from coverArtPath, and verifies a non-empty frame rendered. Exit 0 on success;
 // SKIP (exit 0) if there is no display.
 
 #include "Platform/Window.h"
 #include "Platform/Renderer2D.h"
 #include "Platform/Image.h"
+#include "Catalog.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -76,6 +80,32 @@ std::vector<Tile> demoTiles() {
         {"Halo: CE",            "Xbox",     {0.25f, 0.50f, 0.25f, 1}},
         {"Chrono Trigger",      "SNES",     {0.45f, 0.30f, 0.70f, 1}},
     };
+}
+
+// Stable placeholder cover color for a platform string (used when a game has no
+// decodable cover art) — a cheap hash into a pleasant hue band.
+Color colorForPlatform(const std::string& p) {
+    uint32_t h = 2166136261u;
+    for (char c : p) { h ^= (uint8_t)c; h *= 16777619u; }
+    float r = 0.30f + ((h >> 0) & 0x3F) / 255.0f;
+    float g = 0.30f + ((h >> 6) & 0x3F) / 255.0f;
+    float b = 0.30f + ((h >> 12) & 0x3F) / 255.0f;
+    return Color{r, g, b, 1};
+}
+
+// Build display tiles from the real catalog. hidden games are skipped (matching
+// the Windows default view). Cover art is left to the caller to upload.
+std::vector<Tile> tilesFromCatalog(const std::vector<catalog::Game>& games) {
+    std::vector<Tile> out;
+    for (const auto& g : games) {
+        if (g.hidden) continue;
+        Tile t;
+        t.title = g.title.empty() ? g.id : g.title;
+        t.platform = g.platform;
+        t.cover = colorForPlatform(g.platform);
+        out.push_back(std::move(t));
+    }
+    return out;
 }
 
 bool writePpm(const char* path, const std::vector<uint8_t>& rgb, int w, int h) {
@@ -157,10 +187,16 @@ void renderScene(IRenderer2D& r, int w, int h, FontId fTitle, FontId fBody,
 } // namespace
 
 int main(int argc, char** argv) {
-    const bool hold = (argc > 1 && std::strcmp(argv[1], "--hold") == 0);
+    // Args: optional --hold flag, optional library.json path (any non-flag arg).
+    bool hold = false;
+    std::string catalogPath;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--hold") == 0) hold = true;
+        else catalogPath = argv[i];
+    }
     const int W = 1024, H = 680;
 
-    auto win = makeWindow("ArcadeLauncher (Linux) — L3c catalog grid", W, H);
+    auto win = makeWindow("ArcadeLauncher (Linux) — catalog grid", W, H);
     if (!win) { std::printf("gui demo: SKIP (no display: %s)\n", SDL_GetError()); return 0; }
     win->show(true);
 
@@ -169,14 +205,42 @@ int main(int argc, char** argv) {
 
     FontId fTitle = r->loadFont("", 22, true);
     FontId fBody  = r->loadFont("", 15, false);
-    auto tiles = demoTiles();
 
-    // Tile 0 keeps a flat cover as the deterministic verification anchor; the
-    // rest get real decoded cover art (PNG round-tripped) drawn via drawImage.
-    for (int i = 1; i < (int)tiles.size(); ++i) {
-        DecodedImage img = makeCoverImage(tiles[i].cover);
-        if (img.valid())
-            tiles[i].art = r->createImageRGBA(img.rgba.data(), img.w, img.h);
+    // L3d: render the REAL catalog when a library.json is supplied; otherwise the
+    // built-in demo scene (which has the deterministic pixel anchor).
+    std::vector<Tile> tiles;
+    bool fromCatalog = false;
+    size_t catalogCount = 0;
+    if (!catalogPath.empty()) {
+        auto games = catalog::loadFile(catalogPath);
+        catalogCount = games.size();
+        if (!games.empty()) {
+            fromCatalog = true;
+            for (const auto& g : games) {
+                if (g.hidden) continue;
+                Tile t;
+                t.title = g.title.empty() ? g.id : g.title;
+                t.platform = g.platform;
+                t.cover = colorForPlatform(g.platform);
+                // Decode the real cover art from disk when present.
+                if (!g.coverArtPath.empty()) {
+                    DecodedImage img;
+                    if (decodeImageFileRGBA(g.coverArtPath, img) && img.valid())
+                        t.art = r->createImageRGBA(img.rgba.data(), img.w, img.h);
+                }
+                tiles.push_back(std::move(t));
+            }
+        }
+    }
+    if (!fromCatalog) {
+        tiles = demoTiles();
+        // Tile 0 keeps a flat cover as the deterministic verification anchor; the
+        // rest get real decoded cover art (PNG round-tripped) via drawImage.
+        for (int i = 1; i < (int)tiles.size(); ++i) {
+            DecodedImage img = makeCoverImage(tiles[i].cover);
+            if (img.valid())
+                tiles[i].art = r->createImageRGBA(img.rgba.data(), img.w, img.h);
+        }
     }
 
     int w = W, h = H; win->size(w, h);
@@ -195,22 +259,40 @@ int main(int argc, char** argv) {
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buf.data());
     bool wrote = writePpm("gui_demo.ppm", buf, w, h);
 
-    // Verify the first tile's center pixel == its cover color (within tolerance).
-    float tw, th; Rect c0 = tileCover(0, w, tw, th);
-    int sx = (int)(c0.x + c0.w / 2), sy = (int)(c0.y + c0.h / 2);
-    // glReadPixels rows are bottom-up; flip the top-down y to index the buffer.
-    size_t idx = ((size_t)(h - 1 - sy) * w + sx) * 3;
-    int gr = buf[idx], gg = buf[idx + 1], gb = buf[idx + 2];
-    int er = (int)(tiles[0].cover.r * 255 + 0.5f),
-        eg = (int)(tiles[0].cover.g * 255 + 0.5f),
-        eb = (int)(tiles[0].cover.b * 255 + 0.5f);
+    auto sampleTile = [&](int i, int& gr, int& gg, int& gb) {
+        float tw, th; Rect c = tileCover(i, w, tw, th);
+        int sx = (int)(c.x + c.w / 2), sy = (int)(c.y + c.h / 2);
+        // glReadPixels rows are bottom-up; flip the top-down y.
+        size_t idx = ((size_t)(h - 1 - sy) * w + sx) * 3;
+        gr = buf[idx]; gg = buf[idx + 1]; gb = buf[idx + 2];
+    };
     auto near = [](int a, int b) { return a - b <= 10 && b - a <= 10; };
-    bool ok = near(gr, er) && near(gg, eg) && near(gb, eb);
 
-    std::printf("gui demo: %s — %dx%d, %zu tiles; tile0 center (%d,%d,%d) "
-                "expected ~(%d,%d,%d); wrote %s\n",
-                ok ? "OK" : "FAILED", w, h, tiles.size(), gr, gg, gb, er, eg, eb,
-                wrote ? "gui_demo.ppm" : "<ppm failed>");
+    bool ok;
+    int gr, gg, gb;
+    sampleTile(0, gr, gg, gb);
+    if (fromCatalog) {
+        // Real data: assert tiles parsed and the first tile drew something other
+        // than the background (covers/colors aren't known ahead of time).
+        const int bgr = (int)(kBg.r * 255), bgg = (int)(kBg.g * 255),
+                  bgb = (int)(kBg.b * 255);
+        bool drew = !(near(gr, bgr) && near(gg, bgg) && near(gb, bgb));
+        ok = !tiles.empty() && drew;
+        std::printf("gui demo: %s — %dx%d, catalog %zu games → %zu tiles; "
+                    "tile0 center (%d,%d,%d) != bg; wrote %s\n",
+                    ok ? "OK" : "FAILED", w, h, catalogCount, tiles.size(),
+                    gr, gg, gb, wrote ? "gui_demo.ppm" : "<ppm failed>");
+    } else {
+        // Demo: deterministic — tile0 center must equal its flat cover color.
+        int er = (int)(tiles[0].cover.r * 255 + 0.5f),
+            eg = (int)(tiles[0].cover.g * 255 + 0.5f),
+            eb = (int)(tiles[0].cover.b * 255 + 0.5f);
+        ok = near(gr, er) && near(gg, eg) && near(gb, eb);
+        std::printf("gui demo: %s — %dx%d, %zu tiles; tile0 center (%d,%d,%d) "
+                    "expected ~(%d,%d,%d); wrote %s\n",
+                    ok ? "OK" : "FAILED", w, h, tiles.size(), gr, gg, gb,
+                    er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
+    }
 
     if (hold) {
         std::printf("gui demo: holding window open — close it (or Esc) to exit.\n");

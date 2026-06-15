@@ -31,6 +31,7 @@ add_library(arcade_core STATIC
   src/Platform/Text.cpp
   src/Platform/Sha256.cpp
   src/Platform/Paths.cpp
+  src/Catalog.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -175,5 +176,11 @@ if(NOT MSVC)
   endif()
 endif()
 
+# ── catalog_selfcheck (Phase L3d) ────────────────────────────────────────────
+# Portable library.json parser KAT (no display/GL). Gates like core_selfcheck.
+add_executable(catalog_selfcheck src/core/CatalogSelfCheckMain.cpp)
+target_link_libraries(catalog_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
+add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
