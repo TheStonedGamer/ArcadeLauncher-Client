@@ -128,9 +128,21 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Direct2D Renderer (→IRenderer2D), WASAPI VoiceEngine (→IAudioIn/Out); then route
   the app through the interfaces with no visual change.
 
-**Phase L2 — Net + Crypto on Linux**
+**Phase L2 — Net + Crypto on Linux** — 🚧 **HTTP + crypto landed; WS pending**
 - libcurl `IHttpClient`, IXWebSocket `IWebSocket`, vendored sha256. Headless test:
   log in, hit `/api/health`, open the social gateway from Linux. (No UI yet.)
+- **Done (L2a):** `src/Platform/linux/HttpClientCurl.cpp` — libcurl-backed
+  `platform::IHttpClient` / `makeHttpClient()`: synchronous, thread-safe
+  (`CURLOPT_NOSIGNAL`, one easy handle per request), binary-safe request/response
+  bodies, header capture (lower-cased keys), follow-redirects, gzip, ranged GET.
+  CMake gains `arcade_net` (built only when `find_package(CURL)` succeeds and not
+  MSVC) + `net_selfcheck` driver that GETs `{base}/api/health`. Vendored sha256
+  already shipped in L1 (`Sha256.cpp`). Verified in WSL (Ubuntu 26.04, g++ 15.2,
+  libcurl4-openssl-dev) on ext4: clean build, `net_selfcheck` → `OK (HTTP 200)`
+  against the live server through nginx/TLS.
+- **Next (L2b):** IXWebSocket `IWebSocket` impl for the social gateway (text/
+  binary frames + the app-level `{"type":"ping"}` heartbeat), then a headless
+  gateway-connect test from Linux.
 
 **Phase L3 — Window + Renderer2D on Linux**
 - SDL2 window + GL context; nanovg `Renderer2D`. Port the main grid/detail

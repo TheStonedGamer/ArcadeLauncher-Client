@@ -48,5 +48,27 @@ endif()
 add_executable(core_selfcheck src/core/SelfCheckMain.cpp)
 target_link_libraries(core_selfcheck PRIVATE arcade_core)
 
+# ── arcade_net + net_selfcheck (Phase L2) ────────────────────────────────────
+# The libcurl-backed platform::IHttpClient and a headless driver that hits the
+# server's /api/health. Linux/Unix only: the Windows build keeps its WinHTTP
+# pump. Built only when CURL is available so a bare core checkout still configures.
+if(NOT MSVC)
+  find_package(CURL QUIET)
+  if(CURL_FOUND)
+    add_library(arcade_net STATIC
+      src/Platform/linux/HttpClientCurl.cpp
+    )
+    target_include_directories(arcade_net PUBLIC src)
+    target_link_libraries(arcade_net PUBLIC CURL::libcurl)
+    target_compile_options(arcade_net PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
+    add_executable(net_selfcheck src/core/NetSelfCheckMain.cpp)
+    target_link_libraries(net_selfcheck PRIVATE arcade_net arcade_core)
+    add_test(NAME net_selfcheck COMMAND net_selfcheck)
+  else()
+    message(STATUS "CURL not found — skipping arcade_net/net_selfcheck (L2).")
+  endif()
+endif()
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
