@@ -41,6 +41,7 @@ add_library(arcade_core STATIC
   src/SidebarModel.cpp
   src/Widgets.cpp
   src/Forms.cpp
+  src/Settings.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -240,6 +241,9 @@ target_link_libraries(widgets_selfcheck PRIVATE arcade_core)
 add_executable(forms_selfcheck src/core/FormsSelfCheckMain.cpp)
 target_link_libraries(forms_selfcheck PRIVATE arcade_core)
 
+add_executable(settings_selfcheck src/core/SettingsSelfCheckMain.cpp)
+target_link_libraries(settings_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
@@ -252,3 +256,4 @@ add_test(NAME filter_selfcheck COMMAND filter_selfcheck)
 add_test(NAME sidebar_selfcheck COMMAND sidebar_selfcheck)
 add_test(NAME widgets_selfcheck COMMAND widgets_selfcheck)
 add_test(NAME forms_selfcheck COMMAND forms_selfcheck)
+add_test(NAME settings_selfcheck COMMAND settings_selfcheck)

@@ -477,8 +477,20 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   form through the shared model (toggle/type/commit) and asserts the readback +
   that the panel rendered; `--hold` is interactive. `ctest` 22/22, Windows
   launcher 0/0.
-- **Next:** adopt `forms::Panel` for the real Linux settings screen (wire it to
-  AppConfig load/save), then Phase L5 audio. Windows stays green; each step
+- **Done (L4-g): General settings model bound to the config.** `settings::General`
+  is the portable bridge between the on-disk config and `forms::Panel`: a struct of
+  the General behavior toggles (start fullscreen / minimize-to-tray / Defender
+  exclusions / Discord presence / download limit), `parseGeneral` reading them out
+  of the launcher config JSON *text*, and `applyGeneral` rewriting **only** those
+  keys in-place — every other byte (and the full Windows-owned schema) preserved,
+  so adopting it on Linux can't drop fields the portable model doesn't know.
+  `buildGeneralPanel`/`readGeneralPanel` bind the model to a `forms::Panel` and
+  back. `settings_selfcheck` is a 6-case KAT (parse, default-fallback,
+  round-trip-preserves-other-keys, absent-key-stays-absent, panel bind/readback,
+  numeric clamp). `ctest` 23/23, Windows launcher 0/0.
+- **Next:** drive the real Linux settings screen from `settings::General` +
+  `forms::Panel` (load the config file, edit, `applyGeneral` back to disk through
+  the platform paths), then Phase L5 audio. Windows stays green; each step
   verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**

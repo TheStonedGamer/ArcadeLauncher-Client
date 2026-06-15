@@ -228,6 +228,9 @@ jobs:
       - name: Settings-panel self-check (gate)
         run: ./build/forms_selfcheck
 
+      - name: General-settings model self-check (gate)
+        run: ./build/settings_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
