@@ -30,6 +30,7 @@
 #include "SidebarModel.h"
 #include "Widgets.h"
 #include "WidgetView.h"
+#include "Settings.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -116,10 +117,13 @@ int main(int argc, char** argv) {
     bool doSidebar = false;    // --sidebar: gate the dynamic sidebar entry model
     bool doWidgets = false;    // --widgets: gate the retained widget set (L4)
     bool doSettings = false;   // --settings: gate the portable settings panel (L4-f)
+    std::string settingsFile;  // --settings-file <path>: edit a real config (L4-h)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
         else if (std::strcmp(argv[i], "--widgets") == 0) doWidgets = true;
         else if (std::strcmp(argv[i], "--settings") == 0) doSettings = true;
+        else if (std::strcmp(argv[i], "--settings-file") == 0 && i + 1 < argc)
+            settingsFile = argv[++i];
         else if (std::strcmp(argv[i], "--sidebar") == 0) doSidebar = true;
         else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
             searchQuery = argv[++i];
@@ -466,6 +470,76 @@ int main(int argc, char** argv) {
             }
         }
         return sok ? 0 : 1;
+    }
+
+    // L4-h: edit a REAL config file. Loads the General settings out of the given
+    // config.json through the portable settings:: model, binds a forms::Panel to
+    // them, and (with --hold) lets the user edit; on exit the changes are written
+    // back NON-DESTRUCTIVELY (settings::saveGeneralToFile rewrites only the
+    // General keys via a temp-file replace, leaving the rest of the config and
+    // its full schema intact). Without --hold it loads + reports only (no write),
+    // so an automated run never mutates the file.
+    if (!settingsFile.empty()) {
+        widgetview::Theme cth = widgetview::darkTheme();
+        cth.font = r->loadFont("", 15, false);
+        cth.fontPx = 15.0f;
+
+        settings::General gen;
+        bool loaded = settings::loadGeneralFromFile(settingsFile, gen);
+        forms::Panel panel = settings::buildGeneralPanel(gen, {120, 90, 760, 320});
+
+        int w = W, h = H; win->size(w, h);
+        const Color cbg = {0.07f, 0.08f, 0.09f, 1.0f};
+        auto drawCfg = [&]() {
+            r->beginFrame(w, h, 1.0f);
+            r->fillRect({0, 0, (float)w, (float)h}, cbg);
+            if (cth.font)
+                r->drawText(cth.font, "General settings", panel.bounds.x, 50.0f,
+                            cth.text, platform::TextAlign::Left);
+            widgetview::drawPanel(*r, panel, cth);
+            r->endFrame();
+        };
+
+        std::printf("gui demo: settings-file %s — loaded=%d "
+                    "(fullscreen=%d, tray=%d, defender=%d, discord=%d, limit=%d)\n",
+                    settingsFile.c_str(), loaded ? 1 : 0,
+                    gen.startFullscreen ? 1 : 0, gen.minimizeOnLaunch ? 1 : 0,
+                    gen.defenderExclusions ? 1 : 0, gen.discordRichPresence ? 1 : 0,
+                    gen.downloadLimitKBps);
+
+        bool cquit = false;
+        for (int f = 0; f < 3 && !cquit; ++f) {
+            Event ev; while (win->poll(ev)) if (ev.type == EventType::Quit) cquit = true;
+            drawCfg();
+            SDL_Delay(16);
+        }
+
+        if (hold) {
+            std::printf("gui demo: interactive General settings — Tab/click/type/"
+                        "Space to edit; changes saved on exit (Esc/close).\n");
+            win->setTitle("ArcadeLauncher (Linux) — General settings");
+            while (!cquit) {
+                Event ev;
+                while (win->poll(ev)) {
+                    if (ev.type == EventType::Quit) cquit = true;
+                    else if (ev.type == EventType::KeyDown && ev.key == Key::Escape)
+                        cquit = true;
+                    else if (ev.type == EventType::Resize) { w = ev.width; h = ev.height; }
+                    else forms::handle(panel, ev);
+                }
+                drawCfg();
+                SDL_Delay(16);
+            }
+            // Persist the edited values back into the real file (non-destructive).
+            settings::General edited = settings::readGeneralPanel(panel);
+            bool saved = settings::saveGeneralToFile(settingsFile, edited);
+            std::printf("gui demo: settings-file saved=%d (fullscreen=%d, tray=%d, "
+                        "defender=%d, discord=%d, limit=%d)\n", saved ? 1 : 0,
+                        edited.startFullscreen ? 1 : 0, edited.minimizeOnLaunch ? 1 : 0,
+                        edited.defenderExclusions ? 1 : 0, edited.discordRichPresence ? 1 : 0,
+                        edited.downloadLimitKBps);
+        }
+        return loaded ? 0 : 1;
     }
 
     // L3d: render the REAL catalog when a library.json is supplied; otherwise the

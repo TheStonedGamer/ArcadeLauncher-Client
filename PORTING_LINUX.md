@@ -488,10 +488,23 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   back. `settings_selfcheck` is a 6-case KAT (parse, default-fallback,
   round-trip-preserves-other-keys, absent-key-stays-absent, panel bind/readback,
   numeric clamp). `ctest` 23/23, Windows launcher 0/0.
-- **Next:** drive the real Linux settings screen from `settings::General` +
-  `forms::Panel` (load the config file, edit, `applyGeneral` back to disk through
-  the platform paths), then Phase L5 audio. Windows stays green; each step
-  verified on both OSes.
+- **Done (L4-h): file-backed General settings.** `settings::configPath` resolves
+  `<data_dir>/config.json` per platform; `loadGeneralFromFile` reads the General
+  toggles out of the real config; `saveGeneralToFile` writes them back
+  *non-destructively* — it reads the existing file, `applyGeneral`s only the
+  General keys, and writes via a temp-file + replace, so an interrupted write
+  can't truncate the config and a missing file is never created (the full schema
+  stays owned by the Windows `Config::Save`). `settings_selfcheck` gained a real
+  temp-file round-trip case (keys update, others preserved, missing file left
+  untouched). `gui_demo --settings-file <path>` loads a real config into a
+  `forms::Panel`, edits interactively under `--hold`, and saves back on exit
+  (non-`--hold` loads + reports only, never writing). The Windows launcher now
+  compiles `Platform/Paths.cpp` too (it was Linux-only before). `ctest` 23/23,
+  Windows launcher 0/0.
+- **Next:** the Linux app's real entry point adopts this (load config at startup,
+  open the settings panel, save on close) as the port grows past the gui_demo
+  harness; then Phase L5 audio. Windows stays green; each step verified on both
+  OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

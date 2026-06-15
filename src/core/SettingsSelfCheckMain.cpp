@@ -8,6 +8,8 @@
 #include "Settings.h"
 
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 namespace {
@@ -129,9 +131,47 @@ int main() {
         ck("empty limit -> 0", settings::readGeneralPanel(p).downloadLimitKBps == 0);
     }
 
+    // 7. Real temp-file round-trip: write a config, load it, modify, save it
+    //    back, and re-read the raw text — the General keys update while every
+    //    other key survives, and a missing file is left untouched.
+    {
+        const std::string path = "settings_selfcheck_tmp.json";
+        { std::ofstream f(path, std::ios::binary | std::ios::trunc); f << cfg; }
+
+        settings::General g;
+        ck("load from file", settings::loadGeneralFromFile(path, g));
+        ck("loaded minimizeOnLaunch", g.minimizeOnLaunch == true);
+
+        g.startFullscreen = true;
+        g.downloadLimitKBps = 4096;
+        ck("save to file", settings::saveGeneralToFile(path, g));
+
+        std::string after;
+        {   // close the handle before std::remove (Windows won't delete an open file)
+            std::ifstream rf(path, std::ios::binary);
+            after.assign((std::istreambuf_iterator<char>(rf)),
+                         std::istreambuf_iterator<char>());
+        }
+        ck("file startFullscreen updated",
+           after.find("\"startFullscreen\":true") != std::string::npos);
+        ck("file downloadLimit updated",
+           after.find("\"downloadLimitKBps\":4096") != std::string::npos);
+        ck("file steamPath preserved",
+           after.find("\"steamPath\":\"D:\\\\Steam\"") != std::string::npos);
+        ck("file steamGridDbApiKey preserved",
+           after.find("\"steamGridDbApiKey\":\"abc123\"") != std::string::npos);
+
+        std::remove(path.c_str());
+        // Saving to a now-missing file must NOT create one (schema is owned
+        // elsewhere) and must report failure.
+        ck("save to missing file fails", !settings::saveGeneralToFile(path, g));
+        std::ifstream gone(path);
+        ck("missing file not created", !gone.good());
+    }
+
     if (g_fail == 0)
         std::printf("settings self-check: OK — parse + non-destructive apply + "
-                    "panel bind/readback KATs passed\n");
+                    "panel bind/readback + file round-trip KATs passed\n");
     else
         std::printf("settings self-check: FAILED (%d)\n", g_fail);
     return g_fail == 0 ? 0 : 1;

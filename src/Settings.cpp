@@ -2,8 +2,12 @@
 // Settings.h. The JSON helpers mirror the launcher's hand-rolled config format
 // (flat "key":value pairs) but stay pure std::string so they link on Linux too.
 #include "Settings.h"
+#include "Platform/Paths.h"
 
 #include <cctype>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 namespace settings {
@@ -109,6 +113,54 @@ General readGeneralPanel(const forms::Panel& p) {
     }
     g.downloadLimitKBps = v < 0 ? 0 : v;
     return g;
+}
+
+// ── File-backed General ──────────────────────────────────────────────────────
+namespace {
+// Read an entire file into a string. Returns false when it can't be opened.
+bool readFile(const std::string& path, std::string& out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    out.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return true;
+}
+} // namespace
+
+std::string configPath() {
+    return platform::join(platform::data_dir(), "config.json");
+}
+
+bool loadGeneralFromFile(const std::string& path, General& out) {
+    std::string json;
+    if (!readFile(path, json) || json.empty()) return false;
+    out = parseGeneral(json);
+    return true;
+}
+
+bool saveGeneralToFile(const std::string& path, const General& g) {
+    // Only rewrite an existing config — never create the file (the Windows
+    // Config::Save owns the full schema), so the portable model can't write a
+    // half-populated config that the launcher would then read back.
+    std::string json;
+    if (!readFile(path, json) || json.empty()) return false;
+
+    const std::string updated = applyGeneral(json, g);
+
+    // Write to a temp sibling, then replace, so an interrupted write leaves the
+    // original config intact.
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f << updated;
+        if (!f.good()) return false;
+    }
+    std::remove(path.c_str());                       // POSIX rename replaces, Win32 needs this
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        std::remove(tmp.c_str());                    // leave no stray temp on failure
+        return false;
+    }
+    return true;
 }
 
 } // namespace settings

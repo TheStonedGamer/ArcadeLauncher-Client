@@ -145,6 +145,9 @@
     <ClCompile Include="src\Platform\Text.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\Platform\Paths.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\GameLibrary.cpp" />
     <ClCompile Include="src\Config.cpp" />
     <ClCompile Include="src\DolphinConfig.cpp" />
@@ -206,6 +209,7 @@
     <ClInclude Include="src\Widgets.h" />
     <ClInclude Include="src\Forms.h" />
     <ClInclude Include="src\Settings.h" />
+    <ClInclude Include="src\Platform\Paths.h" />
     <ClInclude Include="src\WidgetView.h" />
     <ClInclude Include="src\CatalogGridView.h" />
     <ClInclude Include="src\Platform\win\RendererD2D.h" />

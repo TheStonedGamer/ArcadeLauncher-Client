@@ -45,4 +45,22 @@ forms::Panel buildGeneralPanel(const General& g, const platform::Rect& bounds);
 // download-limit text; non-numeric or negative clamps to 0).
 General readGeneralPanel(const forms::Panel& p);
 
+// ── File-backed General (portable) ───────────────────────────────────────────
+// The launcher config path for the current platform: <data_dir>/config.json
+// (Windows: %LOCALAPPDATA%\ArcadeLauncher; Linux: XDG data dir). UTF-8.
+std::string configPath();
+
+// Load the General fields from the config file at `path`. Returns false (and
+// leaves `out` at its defaults) when the file is missing or empty; the General
+// keys themselves still fall back to defaults individually if absent.
+bool loadGeneralFromFile(const std::string& path, General& out);
+
+// Write `g` back into the config file at `path` *non-destructively*: the existing
+// file is read, only the General-owned scalar keys are rewritten (applyGeneral),
+// and the result is written via a temp file + replace so a crash can't truncate
+// the real config. Returns false without touching anything when the file is
+// missing (the full schema is owned by the Windows Config::Save, which creates
+// it) or the temp write/replace fails.
+bool saveGeneralToFile(const std::string& path, const General& g);
+
 } // namespace settings
