@@ -103,6 +103,18 @@
     <ClCompile Include="src\GridLayout.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <!-- Portable grid drawing (IRenderer2D only) + the Windows Direct2D
+         IRenderer2D backend it draws through. Shared with the Linux build. -->
+    <ClCompile Include="src\CatalogGridView.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\Platform\win\RendererD2D.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <!-- UTF-8 <-> UTF-16 codec used by the Direct2D text path (platform::widen). -->
+    <ClCompile Include="src\Platform\Text.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\GameLibrary.cpp" />
     <ClCompile Include="src\Config.cpp" />
     <ClCompile Include="src\DolphinConfig.cpp" />
@@ -155,6 +167,8 @@
     <ClInclude Include="src\DarkTheme.h" />
     <ClInclude Include="src\Renderer.h" />
     <ClInclude Include="src\GridLayout.h" />
+    <ClInclude Include="src\CatalogGridView.h" />
+    <ClInclude Include="src\Platform\win\RendererD2D.h" />
     <ClInclude Include="src\GameLibrary.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\DolphinConfig.h" />

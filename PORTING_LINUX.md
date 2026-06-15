@@ -123,10 +123,21 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   round-trip with €/😀, app-scoped path checks). MSVC compiles the new TUs clean;
   Windows MSI build untouched (platform/ files are not in the vcxproj yet — they
   enter the Windows build when code is migrated onto the boundary in L1b).
-- **Next (L1b):** Windows impls under `platform/win/` that wrap the existing
-  ServerClient/WinHTTP (→IHttpClient/IWebSocket), the Win32 window/loop (→IWindow),
-  Direct2D Renderer (→IRenderer2D), WASAPI VoiceEngine (→IAudioIn/Out); then route
-  the app through the interfaces with no visual change.
+- **Done (L1b — renderer):** `src/Platform/win/RendererD2D.{h,cpp}` — a Windows
+  `platform::IRenderer2D` over **Direct2D + DirectWrite** (`makeRendererD2D(rt,
+  dw)`), wrapping a caller-managed `ID2D1RenderTarget` (Renderer.cpp already owns
+  `BeginDraw`/`EndDraw`). Implements the full interface: solid/rounded/stroked
+  rects, ellipse, line, linear gradient, RGBA→premultiplied-BGRA image upload +
+  blit, UTF-8 text via `DrawTextLayout` (x-as-anchor alignment to match nanovg;
+  sidesteps the `windows.h` `DrawText` macro), `measureText`, and an
+  axis-aligned clip stack. Added to the vcxproj (no-pch). **Verified on the real
+  Direct2D backend:** a standalone `d2d_selfcheck` (`scripts/build-d2d-selfcheck.cmd`)
+  renders the shared `gridview::drawGrid` into an off-screen WIC bitmap target
+  and reads tile-0 center back = `(41,107,140)`, pixel-identical to the Linux
+  nanovg result. Launcher build stays green (0/0).
+- **Next (L1b — rest):** the remaining Windows wrappers — ServerClient/WinHTTP
+  (→IHttpClient/IWebSocket), the Win32 window/loop (→IWindow), WASAPI VoiceEngine
+  (→IAudioIn/Out); then route the app through the interfaces with no visual change.
 
 **Phase L2 — Net + Crypto on Linux** — ✅ **HTTP + WS + crypto landed**
 - libcurl `IHttpClient`, IXWebSocket `IWebSocket`, vendored sha256. Headless test:
@@ -231,12 +242,17 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   bespoke scene — verified in WSLg + `ctest` (all 8 green): demo tile0 center
   matches its placeholder exactly, and a real `library.json` renders (hidden
   games skipped, covers decoded).
-- **Next (L3d-b-3b):** **L1b** — a Windows `platform::IRenderer2D` that wraps
-  `ID2D1RenderTarget`/DirectWrite (+ `IWindow` over the Win32 window/loop), then
-  point Renderer.cpp's grid drawing at `gridview::drawGrid` through it so the
-  production renderer paints via the shared path on both OSes. After that:
-  migrate `GameLibrary` to UTF-8 and wire `App.cpp`'s message loop to `IWindow`.
-  File-by-file, Windows green.
+- **Done (L3d-b-3b): the Windows IRenderer2D backend** (see L1b above) —
+  `gridview::drawGrid` now paints correctly through Direct2D, proven by
+  `d2d_selfcheck`. The shared draw path is live on **both** back-ends (nanovg/GL
+  + Direct2D), pixel-matched.
+- **Next (L3d-b-3c):** point Renderer.cpp's actual grid frame at
+  `gridview::drawGrid` through a `makeRendererD2D(m_rt, m_dwFactory)` adapter —
+  i.e. build the `gridview::Card` list from the live `GameLibrary` games (uploading
+  each `ID2D1Bitmap` cover as an `ImageId`) and replace the bespoke `DrawGrid`/
+  `DrawCard` body with a call to the shared path, behind a flag so the legacy
+  path stays available. Then migrate `GameLibrary` to UTF-8 and wire `App.cpp`'s
+  message loop to `IWindow`. File-by-file, Windows green.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs
