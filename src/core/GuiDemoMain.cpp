@@ -22,14 +22,17 @@
 #include "GridController.h"
 #include "CatalogGridView.h"
 #include "GameSearch.h"
+#include "GameSort.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -99,10 +102,21 @@ int main(int argc, char** argv) {
     bool hold = false;
     std::string catalogPath;
     std::string searchQuery;   // --search <q>: filter the grid (shared gamesearch::)
+    bool doSort = false;       // --sort <mode>: order the grid (shared gamesort::)
+    gamesort::Mode sortMode = gamesort::Mode::Title;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
         else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
             searchQuery = argv[++i];
+        else if (std::strcmp(argv[i], "--sort") == 0 && i + 1 < argc) {
+            doSort = true;
+            std::string m = argv[++i];
+            if (m == "platform") sortMode = gamesort::Mode::Platform;
+            else if (m == "rating") sortMode = gamesort::Mode::Rating;
+            else if (m == "playtime") sortMode = gamesort::Mode::Playtime;
+            else if (m == "recent") sortMode = gamesort::Mode::Recent;
+            else sortMode = gamesort::Mode::Title;
+        }
         else catalogPath = argv[i];
     }
     const int W = 1024, H = 680;
@@ -127,6 +141,7 @@ int main(int argc, char** argv) {
     // --search can filter through the SHARED gamesearch:: predicate.
     std::vector<gridview::Card>       allCards;
     std::vector<gamesearch::Fields>   allFields;
+    std::vector<gamesort::Key>        allKeys;
     bool fromCatalog = false;
     size_t catalogCount = 0;
 
@@ -166,8 +181,12 @@ int main(int argc, char** argv) {
                 f.genres = g.genres; f.developer = g.developer;
                 f.publisher = g.publisher; f.franchise = g.franchise;
                 f.releaseYear = yearOf(g.releaseDate);
+                gamesort::Key k;
+                k.title = c.title; k.id = g.id; k.platform = g.platform;
+                k.playtimeSeconds = g.playtimeSeconds;  // rating/lastPlayed absent
                 allCards.push_back(std::move(c));
                 allFields.push_back(std::move(f));
+                allKeys.push_back(std::move(k));
             }
         }
     }
@@ -201,10 +220,39 @@ int main(int argc, char** argv) {
             }
             gamesearch::Fields f;
             f.title = c.title; f.platform = c.platform;
+            gamesort::Key k;
+            k.title = entries[i].title;
+            k.id = std::to_string(i);
+            k.platform = entries[i].platform;
+            // Synthetic, distinct metrics so each sort mode has a clear order.
+            k.rating = (float)(60 + (i * 7) % 40);
+            k.playtimeSeconds = (uint64_t)((i * 37) % 100) * 60;
+            k.lastPlayed = 1000 + (int64_t)((i * 53) % 100);
             allCards.push_back(std::move(c));
             allFields.push_back(std::move(f));
+            allKeys.push_back(std::move(k));
         }
     }
+
+    // Apply the sort (shared gamesort::) by permuting the parallel arrays.
+    auto sortAll = [&](gamesort::Mode m) {
+        if (allCards.empty()) return;
+        std::vector<size_t> order(allCards.size());
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](size_t i, size_t j) {
+            return gamesort::less(allKeys[i], allKeys[j], m);
+        });
+        std::vector<gridview::Card>     sc; sc.reserve(order.size());
+        std::vector<gamesearch::Fields> sf; sf.reserve(order.size());
+        std::vector<gamesort::Key>      sk; sk.reserve(order.size());
+        for (size_t idx : order) {
+            sc.push_back(std::move(allCards[idx]));
+            sf.push_back(std::move(allFields[idx]));
+            sk.push_back(std::move(allKeys[idx]));
+        }
+        allCards.swap(sc); allFields.swap(sf); allKeys.swap(sk);
+    };
+    if (doSort) sortAll(sortMode);
 
     // Apply the search filter (shared gamesearch::) to produce the shown set.
     // Empty query shows everything (preserving the deterministic tile-0 anchor).
@@ -285,6 +333,23 @@ int main(int argc, char** argv) {
                     ok ? "OK" : "FAILED", searchQuery.c_str(), cards.size(),
                     allCards.size(), gr, gg, gb,
                     wrote ? "gui_demo.ppm" : "<ppm failed>");
+    } else if (doSort) {
+        // Sort path: assert the shown order is non-decreasing under the shared
+        // comparator, and the first tile rendered (non-bg).
+        bool sorted = std::is_sorted(allKeys.begin(), allKeys.end(),
+            [&](const gamesort::Key& x, const gamesort::Key& y) {
+                return gamesort::less(x, y, sortMode);
+            });
+        const Color bg = theme.bg;
+        bool rendered = !cards.empty() &&
+                        !(near(gr, (int)(bg.r * 255)) && near(gg, (int)(bg.g * 255)) &&
+                          near(gb, (int)(bg.b * 255)));
+        ok = sorted && rendered;
+        std::printf("gui demo: %s — sort: %zu tiles ordered; first \"%s\"; "
+                    "tile0 (%d,%d,%d); wrote %s\n",
+                    ok ? "OK" : "FAILED", cards.size(),
+                    cards.empty() ? "" : cards[0].title.c_str(), gr, gg, gb,
+                    wrote ? "gui_demo.ppm" : "<ppm failed>");
     } else if (fromCatalog) {
         const Color bg = theme.bg;
         const int bgr = (int)(bg.r * 255), bgg = (int)(bg.g * 255),
@@ -308,9 +373,10 @@ int main(int argc, char** argv) {
     }
 
     if (hold) {
-        std::printf("gui demo: interactive — type to search, wheel scrolls, "
-                    "click/arrows select, Esc/close to exit.\n");
+        std::printf("gui demo: interactive — type to search, F1 cycles sort, "
+                    "wheel scrolls, click/arrows select, Esc/close to exit.\n");
         std::string liveQuery = searchQuery;
+        int sortIdx = 0;
         // Re-run the shared filter and re-sync the controller to the new count.
         auto applyQuery = [&]() {
             cards = filterCards(liveQuery);
@@ -341,6 +407,13 @@ int main(int argc, char** argv) {
                     case EventType::KeyDown:
                         switch (ev.key) {
                             case Key::Escape: quit = true; break;
+                            case Key::F1:
+                                // Cycle the shared sort modes (Title→Platform→
+                                // Rating→Playtime→Recent) and re-apply the query.
+                                sortIdx = (sortIdx + 1) % 5;
+                                sortAll(gamesort::modeFromIndex(sortIdx));
+                                applyQuery();
+                                break;
                             case Key::Backspace:
                                 if (!liveQuery.empty()) {
                                     // Drop one UTF-8 code point (trailing

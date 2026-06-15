@@ -336,8 +336,19 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   `--hold` (TextInput appends, Backspace drops a UTF-8 code point, title shows the
   query). `ctest` 12/12, Windows launcher 0/0. The Linux grid is now a searchable
   catalog browser driven entirely by shared portable logic.
+- **Done (L3d-c-4): shared sort ordering (`gamesort::`) + KAT + Linux sort.**
+  The catalog sort modes (Title/Platform/Rating/Playtime/Recent) moved into
+  `src/GameSort.{h,cpp}` (arcade_core, UTF-8), mirroring App.cpp's comparators
+  (descending for rating/playtime/recent, every mode tie-broken by title then
+  id). Locked by `sort_selfcheck`. The Linux `gui_demo` sorts the parallel
+  card/field/key arrays through it: `--sort <mode>` deterministic gate
+  (`gui_demo_sort`: asserts non-decreasing order) and live F1 cycling in
+  `--hold`. `ctest` 14/14, Windows launcher 0/0. (Windows keeps its native
+  in-place wstring sort for now — adopting `gamesort::` there means a
+  precompute-keys-once refactor of the hot `ApplyFilter` path, deferred; the KAT
+  pins both to identical semantics.)
 - **Next (Linux app shell / L1b-rest):** continue growing the Linux shell on
-  shared logic — sidebar tab filtering (platform/favorites/hidden), sort options,
+  shared logic — sidebar tab filtering (platform/favorites/hidden),
   then L4 widgets (settings/dialogs on nanovg) → L5 audio → L6 XDG/integrations →
   L7 AppImage + auto-update. Windows stays green and unchanged; each step verified.
   Known follow-up: `gridview::installFromString` expects lowercase

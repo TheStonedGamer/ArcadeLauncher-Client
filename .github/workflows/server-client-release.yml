@@ -213,6 +213,9 @@ jobs:
       - name: Search-match self-check (gate)
         run: ./build/search_selfcheck
 
+      - name: Sort-order self-check (gate)
+        run: ./build/sort_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
