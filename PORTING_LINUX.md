@@ -326,12 +326,24 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   field survives, and confirm `Search` still finds the reloaded game. **Local
   pre-push gate** (Windows-only, like `d2d_selfcheck`); run it before any change
   touching persistence. Verified OK.
-- **Next (Linux app shell / L1b-rest):** the highest-leverage remaining port work
-  is on the LINUX side, not rewriting Windows: grow the Linux `gui_demo` into a
-  real app shell (wire `gamesearch::`/sort + sidebar filtering onto the live
-  catalog; extend `catalog::Game` with the fields the shared logic wants), then
-  L4 widgets (settings/dialogs on nanovg) → L5 audio → L6 XDG/integrations → L7
-  AppImage + auto-update. Windows stays green and unchanged; each step verified.
+- **Done (L3d-c-3): live search in the Linux app via shared `gamesearch::`.**
+  `catalog::Game` gained the searchable fields (`franchise`, `genres`,
+  `contentPath`, `releaseDate`) + parser support (catalog KAT extended). The
+  Linux `gui_demo` now builds a parallel `gamesearch::Fields` per tile and filters
+  the grid through the SAME predicate Windows `Search` uses: `--search <q>` for a
+  deterministic headless gate (`gui_demo_search`: "PC" → 3/8 demo tiles, a
+  correct non-empty strict subset that renders), and live incremental typing in
+  `--hold` (TextInput appends, Backspace drops a UTF-8 code point, title shows the
+  query). `ctest` 12/12, Windows launcher 0/0. The Linux grid is now a searchable
+  catalog browser driven entirely by shared portable logic.
+- **Next (Linux app shell / L1b-rest):** continue growing the Linux shell on
+  shared logic — sidebar tab filtering (platform/favorites/hidden), sort options,
+  then L4 widgets (settings/dialogs on nanovg) → L5 audio → L6 XDG/integrations →
+  L7 AppImage + auto-update. Windows stays green and unchanged; each step verified.
+  Known follow-up: `gridview::installFromString` expects lowercase
+  ("installed"…) but `GameLibrary::Save` writes capitalized ("Installed"…); add
+  the capitalized spellings so a real Windows-saved library shows install dots on
+  Linux.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

@@ -18,9 +18,12 @@ constexpr Color hex(unsigned v) {
 } // namespace
 
 Install installFromString(const std::string& s) {
-    if (s == "installed") return Install::Installed;
-    if (s == "updateAvailable") return Install::UpdateAvailable;
-    if (s == "notInstalled") return Install::NotInstalled;
+    // Accept both the lowercase API spellings and the capitalized names
+    // GameLibrary::Save writes ("Installed"/"UpdateAvailable"/"Missing"/…), so a
+    // real Windows-saved library shows install dots on Linux too.
+    if (s == "installed" || s == "Installed") return Install::Installed;
+    if (s == "updateAvailable" || s == "UpdateAvailable") return Install::UpdateAvailable;
+    if (s == "notInstalled" || s == "Missing") return Install::NotInstalled;
     return Install::Unknown;
 }
 

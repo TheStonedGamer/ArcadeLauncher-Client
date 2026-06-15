@@ -21,6 +21,7 @@
 #include "GridLayout.h"
 #include "GridController.h"
 #include "CatalogGridView.h"
+#include "GameSearch.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -28,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -96,8 +98,11 @@ bool writePpm(const char* path, const std::vector<uint8_t>& rgb, int w, int h) {
 int main(int argc, char** argv) {
     bool hold = false;
     std::string catalogPath;
+    std::string searchQuery;   // --search <q>: filter the grid (shared gamesearch::)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
+        else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
+            searchQuery = argv[++i];
         else catalogPath = argv[i];
     }
     const int W = 1024, H = 680;
@@ -117,10 +122,26 @@ int main(int argc, char** argv) {
         "All Games", "PC", "Consoles", "Favorites", "Downloads"};
 
     // L3d: render the REAL catalog when a library.json is supplied; otherwise the
-    // built-in demo scene (which has the deterministic pixel anchor).
-    std::vector<gridview::Card> cards;
+    // built-in demo scene (which has the deterministic pixel anchor). We keep the
+    // full set (allCards) plus a parallel searchable Fields list (allFields) so
+    // --search can filter through the SHARED gamesearch:: predicate.
+    std::vector<gridview::Card>       allCards;
+    std::vector<gamesearch::Fields>   allFields;
     bool fromCatalog = false;
     size_t catalogCount = 0;
+
+    // releaseDate (unix) -> Gregorian year for the search predicate.
+    auto yearOf = [](int64_t unixTime) -> int {
+        if (unixTime <= 0) return 0;
+        time_t t = (time_t)unixTime;
+        struct tm tmv {};
+#ifdef _WIN32
+        if (gmtime_s(&tmv, &t) != 0) return 0;
+#else
+        if (!gmtime_r(&t, &tmv)) return 0;
+#endif
+        return tmv.tm_year + 1900;
+    };
 
     if (!catalogPath.empty()) {
         auto games = catalog::loadFile(catalogPath);
@@ -140,7 +161,13 @@ int main(int argc, char** argv) {
                     if (decodeImageFileRGBA(g.coverArtPath, img) && img.valid())
                         c.cover = r->createImageRGBA(img.rgba.data(), img.w, img.h);
                 }
-                cards.push_back(std::move(c));
+                gamesearch::Fields f;
+                f.title = c.title;  f.platform = g.platform;
+                f.genres = g.genres; f.developer = g.developer;
+                f.publisher = g.publisher; f.franchise = g.franchise;
+                f.releaseYear = yearOf(g.releaseDate);
+                allCards.push_back(std::move(c));
+                allFields.push_back(std::move(f));
             }
         }
     }
@@ -172,9 +199,24 @@ int main(int argc, char** argv) {
                 if (img.valid())
                     c.cover = r->createImageRGBA(img.rgba.data(), img.w, img.h);
             }
-            cards.push_back(std::move(c));
+            gamesearch::Fields f;
+            f.title = c.title; f.platform = c.platform;
+            allCards.push_back(std::move(c));
+            allFields.push_back(std::move(f));
         }
     }
+
+    // Apply the search filter (shared gamesearch::) to produce the shown set.
+    // Empty query shows everything (preserving the deterministic tile-0 anchor).
+    auto filterCards = [&](const std::string& query) {
+        std::vector<gridview::Card> out;
+        if (query.empty()) { out = allCards; return out; }
+        const std::string lq = gamesearch::lower(query);
+        for (size_t i = 0; i < allCards.size(); ++i)
+            if (gamesearch::matches(allFields[i], lq)) out.push_back(allCards[i]);
+        return out;
+    };
+    std::vector<gridview::Card> cards = filterCards(searchQuery);
 
     int w = W, h = H; win->size(w, h);
 
@@ -217,7 +259,33 @@ int main(int argc, char** argv) {
     bool ok;
     int gr, gg, gb;
     sampleTile(0, gr, gg, gb);
-    if (fromCatalog) {
+    if (!searchQuery.empty()) {
+        // Search path: assert the shared predicate produced a correct, non-empty,
+        // strict subset, and that its first tile actually rendered.
+        const std::string lq = gamesearch::lower(searchQuery);
+        size_t matchCount = 0;
+        for (const auto& fl : allFields)
+            if (gamesearch::matches(fl, lq)) ++matchCount;
+        bool rendered;
+        if (!cards.empty() && cards[0].cover == 0) {
+            Color p = cards[0].placeholder;
+            int er = (int)(p.r * 255 + 0.5f), eg = (int)(p.g * 255 + 0.5f),
+                eb = (int)(p.b * 255 + 0.5f);
+            rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
+        } else {
+            const Color bg = theme.bg;
+            rendered = !cards.empty() &&
+                       !(near(gr, (int)(bg.r * 255)) && near(gg, (int)(bg.g * 255)) &&
+                         near(gb, (int)(bg.b * 255)));
+        }
+        ok = !cards.empty() && cards.size() == matchCount &&
+             cards.size() < allCards.size() && rendered;
+        std::printf("gui demo: %s — search \"%s\" → %zu/%zu tiles; "
+                    "tile0 (%d,%d,%d); wrote %s\n",
+                    ok ? "OK" : "FAILED", searchQuery.c_str(), cards.size(),
+                    allCards.size(), gr, gg, gb,
+                    wrote ? "gui_demo.ppm" : "<ppm failed>");
+    } else if (fromCatalog) {
         const Color bg = theme.bg;
         const int bgr = (int)(bg.r * 255), bgg = (int)(bg.g * 255),
                   bgb = (int)(bg.b * 255);
@@ -240,8 +308,17 @@ int main(int argc, char** argv) {
     }
 
     if (hold) {
-        std::printf("gui demo: interactive — wheel scrolls, click/arrows select, "
-                    "Esc/close to exit.\n");
+        std::printf("gui demo: interactive — type to search, wheel scrolls, "
+                    "click/arrows select, Esc/close to exit.\n");
+        std::string liveQuery = searchQuery;
+        // Re-run the shared filter and re-sync the controller to the new count.
+        auto applyQuery = [&]() {
+            cards = filterCards(liveQuery);
+            ctrl.setCount((int)cards.size());
+            win->setTitle(liveQuery.empty()
+                              ? "ArcadeLauncher (Linux) — catalog grid"
+                              : ("ArcadeLauncher (Linux) — search: " + liveQuery));
+        };
         while (!quit) {
             Event ev;
             while (win->poll(ev)) {
@@ -256,9 +333,25 @@ int main(int argc, char** argv) {
                     case EventType::MouseDown:
                         if (ev.button == MouseButton::Left) ctrl.clickAt(ev.x, ev.y);
                         break;
+                    case EventType::TextInput:
+                        // Live incremental search through the shared predicate.
+                        liveQuery += ev.text;
+                        applyQuery();
+                        break;
                     case EventType::KeyDown:
                         switch (ev.key) {
                             case Key::Escape: quit = true; break;
+                            case Key::Backspace:
+                                if (!liveQuery.empty()) {
+                                    // Drop one UTF-8 code point (trailing
+                                    // continuation bytes, then the lead byte).
+                                    while (!liveQuery.empty() &&
+                                           (liveQuery.back() & 0xC0) == 0x80)
+                                        liveQuery.pop_back();
+                                    if (!liveQuery.empty()) liveQuery.pop_back();
+                                    applyQuery();
+                                }
+                                break;
                             case Key::Left:  ctrl.moveSelection(-1, 0); break;
                             case Key::Right: ctrl.moveSelection(1, 0);  break;
                             case Key::Up:    ctrl.moveSelection(0, -1); break;

@@ -16,6 +16,8 @@ int main() {
     const std::string json = R"JSON([
   {"id":"g1","title":"Hollow Knight","platform":"PC","installState":"installed",
    "coverArtPath":"covers/g1.png","developer":"Team Cherry","publisher":"Team Cherry",
+   "franchise":"Hollow Knight","genres":"Metroidvania","contentPath":"games/PC/Hollow Knight/hk.exe",
+   "releaseDate":1488499200,
    "summary":"A bug \"epic\" with a } brace inside","playtimeSeconds":3600,
    "favorite":true,"hidden":false},
   {"id":"g2","title":"Metroid Prime","platform":"GameCube","installState":"notInstalled",
@@ -38,6 +40,10 @@ int main() {
         check(games[0].installState == "installed", "g1 installState");
         check(games[0].coverArtPath == "covers/g1.png", "g1 cover");
         check(games[0].developer == "Team Cherry", "g1 developer");
+        check(games[0].franchise == "Hollow Knight", "g1 franchise");
+        check(games[0].genres == "Metroidvania", "g1 genres");
+        check(games[0].contentPath == "games/PC/Hollow Knight/hk.exe", "g1 contentPath");
+        check(games[0].releaseDate == 1488499200, "g1 releaseDate");
         check(games[0].playtimeSeconds == 3600, "g1 playtime");
         check(games[0].favorite && !games[0].hidden, "g1 flags");
         // The '}' inside the summary must not have truncated the object, so g2

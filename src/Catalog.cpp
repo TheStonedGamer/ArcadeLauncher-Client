@@ -96,6 +96,10 @@ std::vector<Game> parse(const std::string& json) {
         g.coverArtUrl     = readField(obj, "coverArtUrl");
         g.developer       = readField(obj, "developer");
         g.publisher       = readField(obj, "publisher");
+        g.franchise       = readField(obj, "franchise");
+        g.genres          = readField(obj, "genres");
+        g.contentPath     = readField(obj, "contentPath");
+        g.releaseDate     = (int64_t)readNum(obj, "releaseDate");
         g.playtimeSeconds = readNum(obj, "playtimeSeconds");
         g.favorite        = readBool(obj, "favorite");
         g.hidden          = readBool(obj, "hidden");

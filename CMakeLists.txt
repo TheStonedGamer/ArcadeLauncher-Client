@@ -171,6 +171,9 @@ if(NOT MSVC)
       add_executable(gui_demo src/core/GuiDemoMain.cpp)
       target_link_libraries(gui_demo PRIVATE arcade_gui arcade_core)
       add_test(NAME gui_demo COMMAND gui_demo)
+      # Search filtering through the shared gamesearch:: predicate: "PC" keeps
+      # only the 3 PC demo tiles (a correct, non-empty, strict subset).
+      add_test(NAME gui_demo_search COMMAND gui_demo --search PC)
 
       # Headless image-codec round-trip (no display/GL needed at runtime).
       add_executable(image_selfcheck src/core/ImageSelfCheckMain.cpp)

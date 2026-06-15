@@ -24,6 +24,10 @@ struct Game {
     std::string coverArtUrl;
     std::string developer;
     std::string publisher;
+    std::string franchise;
+    std::string genres;
+    std::string contentPath;       // server content path; ROM-variant grouping
+    int64_t     releaseDate = 0;   // unix timestamp (0 = unknown)
     uint64_t    playtimeSeconds = 0;
     bool        favorite = false;
     bool        hidden   = false;
