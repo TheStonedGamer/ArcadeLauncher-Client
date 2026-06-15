@@ -129,7 +129,9 @@ if(NOT MSVC)
         endif()
         list(APPEND ARCADE_GUI_SRC
           ${nanovg_SOURCE_DIR}/src/nanovg.c
-          src/Platform/linux/RendererNanovg.cpp)
+          src/Platform/linux/RendererNanovg.cpp
+          src/Platform/linux/ImageStb.cpp
+          src/Platform/linux/ImageStbWrite.cpp)
         set(_have_renderer ON)
       else()
         message(STATUS "GLEW not found — skipping nanovg Renderer2D (L3b).")
@@ -141,10 +143,16 @@ if(NOT MSVC)
     target_link_libraries(arcade_gui PUBLIC ${SDL2_LIBRARIES} OpenGL::GL)
     target_compile_options(arcade_gui PRIVATE -Wall -Wextra -Wno-unused-parameter)
     if(_have_renderer)
-      target_include_directories(arcade_gui PUBLIC ${nanovg_SOURCE_DIR}/src)
+      # nanovg/src has stb_image.h + stb_truetype.h; example/ has stb_image_write.h.
+      target_include_directories(arcade_gui PUBLIC
+        ${nanovg_SOURCE_DIR}/src ${nanovg_SOURCE_DIR}/example)
       target_link_libraries(arcade_gui PUBLIC GLEW::GLEW)
       # nanovg.c is C and trips -Wall as C++; keep its warnings quiet.
       set_source_files_properties(${nanovg_SOURCE_DIR}/src/nanovg.c
+        PROPERTIES COMPILE_OPTIONS "-w")
+      # stb single-header impls also warn heavily; silence just those TUs.
+      set_source_files_properties(
+        src/Platform/linux/ImageStb.cpp src/Platform/linux/ImageStbWrite.cpp
         PROPERTIES COMPILE_OPTIONS "-w")
     endif()
 
@@ -156,6 +164,11 @@ if(NOT MSVC)
       add_executable(gui_demo src/core/GuiDemoMain.cpp)
       target_link_libraries(gui_demo PRIVATE arcade_gui arcade_core)
       add_test(NAME gui_demo COMMAND gui_demo)
+
+      # Headless image-codec round-trip (no display/GL needed at runtime).
+      add_executable(image_selfcheck src/core/ImageSelfCheckMain.cpp)
+      target_link_libraries(image_selfcheck PRIVATE arcade_gui arcade_core)
+      add_test(NAME image_selfcheck COMMAND image_selfcheck)
     endif()
   else()
     message(STATUS "SDL2/OpenGL not found — skipping arcade_gui/gui_smoke (L3).")

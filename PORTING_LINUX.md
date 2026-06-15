@@ -177,10 +177,19 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   platform pills + titles — and verifies a tile's center pixel deterministically.
   Verified in WSLg (Mesa llvmpipe) and via `ctest` (all 5 self-checks green); CI
   runs both GUI checks headless under `xvfb`. `--hold` opens it interactively.
-- **Next (L3c):** migrate the real `Renderer.cpp` grid/detail drawing off
-  `ID2D1RenderTarget` onto `IRenderer2D`, and decode cover art with stb_image, so
-  the production catalog (not a demo scene) paints on Linux. Then wire
-  `App.cpp`'s loop to `IWindow` to stand up the actual Linux app shell.
+- **Done (L3c):** cover-art image pipeline. `Platform/Image.h` + stb_image impls
+  (`ImageStb.cpp` decode, `ImageStbWrite.cpp` encode — split TUs since stb_image
+  and stb_image_write share `static` helpers; both `*_STATIC` so they don't clash
+  with nanovg.c's embedded stb_image). `decodeImageRGBA`/`decodeImageFileRGBA`/
+  `encodePngRGBA` replace WIC on Linux. New headless `image_selfcheck` round-trips
+  RGBA→PNG→RGBA (KAT). `gui_demo` now uses the **production GitHub-dark palette**
+  (C_BG `0x0D1117` … C_ACCENT `0x58A6FF`) and draws **real decoded cover art** per
+  tile via `createImageRGBA`+`drawImage` (clipped to the rounded card). Verified
+  in WSLg + `ctest` (all 6 checks green).
+- **Next (L3d):** migrate `GameLibrary`/catalog parse off `std::wstring` to UTF-8
+  so the real catalog is readable on Linux, port `Renderer.cpp`'s grid/detail
+  drawing onto `IRenderer2D` (replacing the demo scene with live data), and wire
+  `App.cpp`'s message loop to `IWindow` to stand up the actual Linux app shell.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

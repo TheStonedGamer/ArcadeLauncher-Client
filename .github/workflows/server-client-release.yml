@@ -189,6 +189,9 @@ jobs:
       - name: Portable-core self-check (gate)
         run: ./build/core_selfcheck
 
+      - name: Image-codec self-check (gate)
+        run: ./build/image_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck

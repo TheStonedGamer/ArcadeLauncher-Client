@@ -12,6 +12,7 @@
 
 #include "Platform/Window.h"
 #include "Platform/Renderer2D.h"
+#include "Platform/Image.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -26,14 +27,43 @@ using namespace platform;
 
 namespace {
 
-struct Tile { std::string title; std::string platform; Color cover; };
+struct Tile { std::string title; std::string platform; Color cover; ImageId art = 0; };
 
-const Color kBg     {18 / 255.f, 18 / 255.f, 24 / 255.f, 1};
-const Color kPanel  {28 / 255.f, 30 / 255.f, 40 / 255.f, 1};
-const Color kText   {0.92f, 0.93f, 0.96f, 1};
-const Color kMuted  {0.55f, 0.57f, 0.63f, 1};
-const Color kAccentA{0.36f, 0.42f, 0.95f, 1};
-const Color kAccentB{0.62f, 0.30f, 0.86f, 1};
+// Hex 0xRRGGBB → Color, matching Renderer.cpp's production GitHub-dark palette.
+constexpr Color hex(unsigned v) {
+    return Color{((v >> 16) & 0xFF) / 255.f, ((v >> 8) & 0xFF) / 255.f,
+                 (v & 0xFF) / 255.f, 1.0f};
+}
+const Color kBg      = hex(0x0D1117);  // C_BG
+const Color kPanel   = hex(0x13181E);  // C_SIDEBAR
+const Color kTopbarC = hex(0x161B22);  // C_TOPBAR
+const Color kCard    = hex(0x21262D);  // C_CARD
+const Color kText    = hex(0xC9D1D9);  // C_TEXT
+const Color kMuted   = hex(0x8B949E);  // C_SUBTEXT
+const Color kAccentA = hex(0x58A6FF);  // C_ACCENT
+const Color kAccentB = hex(0x388BFD);  // C_SELECTED
+
+// Synthesize a cover image (a diagonal gradient with a known center color) and
+// encode→decode it through the platform codec, so the tile shows a *real*
+// decoded image, exercising decodeImageRGBA + createImageRGBA + drawImage.
+DecodedImage makeCoverImage(Color tint) {
+    const int W = 64, H = 84;
+    std::vector<uint8_t> rgba((size_t)W * H * 4);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            float t = (float)(x + y) / (W + H);
+            size_t i = ((size_t)y * W + x) * 4;
+            rgba[i + 0] = (uint8_t)(tint.r * 255 * (0.5f + 0.5f * t));
+            rgba[i + 1] = (uint8_t)(tint.g * 255 * (0.5f + 0.5f * t));
+            rgba[i + 2] = (uint8_t)(tint.b * 255 * (0.5f + 0.5f * t));
+            rgba[i + 3] = 255;
+        }
+    // Round-trip through PNG to prove the real decode path, not just raw upload.
+    std::vector<uint8_t> png = encodePngRGBA(rgba.data(), W, H);
+    DecodedImage img;
+    if (!png.empty()) decodeImageRGBA(png.data(), png.size(), img);
+    return img;
+}
 
 std::vector<Tile> demoTiles() {
     return {
@@ -101,7 +131,15 @@ void renderScene(IRenderer2D& r, int w, int h, FontId fTitle, FontId fBody,
     for (int i = 0; i < (int)tiles.size(); ++i) {
         float tw, th;
         Rect cover = tileCover(i, w, tw, th);
-        r.fillRoundedRect(cover, 8, tiles[i].cover);
+        if (tiles[i].art != 0) {
+            // Real decoded cover art: card backing, then the image clipped to it.
+            r.fillRoundedRect(cover, 8, kCard);
+            r.pushClip(cover);
+            r.drawImage(tiles[i].art, cover, 1.0f);
+            r.popClip();
+        } else {
+            r.fillRoundedRect(cover, 8, tiles[i].cover);
+        }
         r.strokeRoundedRect(cover, 8, Color{1, 1, 1, 0.08f}, 1.0f);
         // Platform pill.
         Rect pill{cover.x + 8, cover.y + 8, 56, 18};
@@ -122,7 +160,7 @@ int main(int argc, char** argv) {
     const bool hold = (argc > 1 && std::strcmp(argv[1], "--hold") == 0);
     const int W = 1024, H = 680;
 
-    auto win = makeWindow("ArcadeLauncher (Linux) — L3b catalog grid", W, H);
+    auto win = makeWindow("ArcadeLauncher (Linux) — L3c catalog grid", W, H);
     if (!win) { std::printf("gui demo: SKIP (no display: %s)\n", SDL_GetError()); return 0; }
     win->show(true);
 
@@ -132,6 +170,14 @@ int main(int argc, char** argv) {
     FontId fTitle = r->loadFont("", 22, true);
     FontId fBody  = r->loadFont("", 15, false);
     auto tiles = demoTiles();
+
+    // Tile 0 keeps a flat cover as the deterministic verification anchor; the
+    // rest get real decoded cover art (PNG round-tripped) drawn via drawImage.
+    for (int i = 1; i < (int)tiles.size(); ++i) {
+        DecodedImage img = makeCoverImage(tiles[i].cover);
+        if (img.valid())
+            tiles[i].art = r->createImageRGBA(img.rgba.data(), img.w, img.h);
+    }
 
     int w = W, h = H; win->size(w, h);
 
