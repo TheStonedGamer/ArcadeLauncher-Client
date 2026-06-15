@@ -29,6 +29,11 @@ struct Theme {
     platform::FontId bodyFont  = 0;
 };
 
+// Install state, shown as a small corner dot. Mirrors GameLibrary's
+// installState strings; use installFromString() to map.
+enum class Install { Unknown, NotInstalled, Installed, UpdateAvailable };
+Install installFromString(const std::string& s);
+
 // One tile's display model. Cover art is an already-uploaded image handle (0 =
 // none → draw the placeholder color instead).
 struct Card {
@@ -36,8 +41,10 @@ struct Card {
     std::string platform;
     platform::ImageId cover = 0;
     platform::Color   placeholder{0.13f, 0.15f, 0.18f, 1.0f};
-    bool hovered  = false;
-    bool selected = false;
+    bool    hovered  = false;
+    bool    selected = false;
+    bool    favorite = false;
+    Install install  = Install::Unknown;
 };
 
 // The GitHub-dark theme Renderer.cpp uses (fonts left 0 — caller fills them in).

@@ -17,6 +17,13 @@ constexpr Color hex(unsigned v) {
 }
 } // namespace
 
+Install installFromString(const std::string& s) {
+    if (s == "installed") return Install::Installed;
+    if (s == "updateAvailable") return Install::UpdateAvailable;
+    if (s == "notInstalled") return Install::NotInstalled;
+    return Install::Unknown;
+}
+
 Theme darkTheme() {
     Theme th;
     th.bg        = hex(0x0D1117);  // C_BG
@@ -62,6 +69,26 @@ void drawCard(platform::IRenderer2D& r, const Rect& cover, const Card& c,
         r.fillRoundedRect(pill, 9, Color{0, 0, 0, 0.45f});
         r.drawText(th.bodyFont, c.platform, pill.x + pill.w / 2, pill.y + 3,
                    th.text, TextAlign::Center);
+    }
+
+    // Favorite star (top-right) — a gold disc on a dark scrim so it reads over
+    // any cover. (Corner overlay: doesn't touch the card center.)
+    if (c.favorite) {
+        float fx = rect.x + rect.w - 16, fy = rect.y + 16;
+        r.fillEllipse(fx, fy, 9, 9, Color{0, 0, 0, 0.45f});
+        r.fillEllipse(fx, fy, 5, 5, Color{0.98f, 0.79f, 0.20f, 1.0f});  // gold
+    }
+
+    // Install-state dot (bottom-right): green=installed, blue=update, gray=not.
+    if (c.install != Install::Unknown) {
+        Color dot = c.install == Install::Installed
+                        ? Color{0.22f, 0.78f, 0.35f, 1.0f}
+                        : c.install == Install::UpdateAvailable
+                              ? th.accent
+                              : Color{0.55f, 0.58f, 0.62f, 1.0f};
+        float dx = rect.x + rect.w - 14, dy = rect.y + rect.h - 14;
+        r.fillEllipse(dx, dy, 7, 7, Color{0, 0, 0, 0.45f});
+        r.fillEllipse(dx, dy, 4, 4, dot);
     }
 
     // Title under the cover.

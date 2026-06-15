@@ -265,11 +265,18 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   *regress* those. So the unification order is: share the **pure logic**
   (GridLayout ✅, GridController ✅) that can't regress anything, grow `gridview`
   to feature-parity incrementally, and only then swap the Windows draw path.
-- **Next (L3d-b-5):** grow `gridview::drawCard` toward parity (selection
-  checkbox, install-state overlay, favorite star, count badges) — each addition
-  verified on both back-ends via the self-checks — until it can back the Windows
-  grid without feature loss. In parallel: migrate `GameLibrary` to UTF-8 and wire
-  `App.cpp`'s loop to `IWindow`. File-by-file, Windows green.
+- **Done (L3d-b-5): gridview parity — favorite + install-state.**
+  `gridview::Card` gained `favorite` + an `Install` enum (`installFromString`
+  maps GameLibrary's strings); `drawCard` paints a gold favorite disc (top-right)
+  and an install-state dot (bottom-right: green=installed, accent=update,
+  gray=not). Both are corner overlays so the deterministic center-pixel checks
+  still hold. Exercised on **both** back-ends — Linux `gui_demo` + Windows
+  `d2d_selfcheck` (tile0 center still `(41,107,140)`); `ctest` all 9 green,
+  launcher build green.
+- **Next (L3d-b-6):** keep closing the `gridview` ↔ `DrawCard` gap (count
+  badges, multi-select checkbox, hover lift already in) until parity, then the
+  Windows grid can adopt `gridview::drawGrid`. In parallel: migrate `GameLibrary`
+  to UTF-8 and wire `App.cpp`'s loop to `IWindow`. File-by-file, Windows green.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

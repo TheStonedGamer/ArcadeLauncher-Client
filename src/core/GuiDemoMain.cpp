@@ -133,6 +133,8 @@ int main(int argc, char** argv) {
                 c.title = g.title.empty() ? g.id : g.title;
                 c.platform = g.platform;
                 c.placeholder = colorForPlatform(g.platform);
+                c.favorite = g.favorite;
+                c.install = gridview::installFromString(g.installState);
                 if (!g.coverArtPath.empty()) {
                     DecodedImage img;
                     if (decodeImageFileRGBA(g.coverArtPath, img) && img.valid())
@@ -149,6 +151,15 @@ int main(int argc, char** argv) {
             c.title = entries[i].title;
             c.platform = entries[i].platform;
             c.placeholder = entries[i].cover;
+            // Exercise the corner overlays on a few tiles (not tile 0, which
+            // stays the plain center-pixel anchor). Corners don't touch center.
+            if (i > 0) {
+                c.favorite = (i % 3 == 0);
+                gridview::Install st[] = {gridview::Install::Installed,
+                                          gridview::Install::NotInstalled,
+                                          gridview::Install::UpdateAvailable};
+                c.install = st[i % 3];
+            }
             // Tile 0 keeps a flat placeholder as the deterministic verification
             // anchor; the rest get real decoded cover art (PNG round-tripped).
             if (i > 0) {

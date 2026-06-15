@@ -77,6 +77,8 @@ int main() {
     for (int i = 1; i < 8; ++i) {
         gridview::Card c; c.title = "Game"; c.platform = "PC";
         c.placeholder = platform::Color{0.3f, 0.3f, 0.3f, 1.0f};
+        c.favorite = (i % 2 == 0);           // exercise the favorite overlay
+        c.install = (gridview::Install)(1 + (i % 3));  // exercise install dots
         cards.push_back(c);
     }
     const std::vector<std::string> tabs = {"All Games", "PC", "Favorites"};
