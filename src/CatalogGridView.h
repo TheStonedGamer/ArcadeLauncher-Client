@@ -45,6 +45,13 @@ struct Card {
     bool    selected = false;
     bool    favorite = false;
     Install install  = Install::Unknown;
+    // ROM-variant count: when >1 the tile represents N dumps of one game and
+    // draws a "N versions" badge (top-right), mirroring Renderer.cpp.
+    int     variantCount = 1;
+    // Multi-select: when the grid is in selection mode every card shows a
+    // corner checkbox; `multiSelected` ticks it. Mirrors Renderer.cpp.
+    bool    selectionMode = false;
+    bool    multiSelected = false;
 };
 
 // The GitHub-dark theme Renderer.cpp uses (fonts left 0 — caller fills them in).

@@ -63,12 +63,25 @@ void drawCard(platform::IRenderer2D& r, const Rect& cover, const Card& c,
     else
         r.strokeRoundedRect(rect, 8, th.border, 1.0f);
 
-    // Platform pill (top-left).
-    if (!c.platform.empty()) {
+    // Platform pill (top-left). Suppressed in selection mode, where the corner
+    // checkbox owns the top-left (mirrors Renderer.cpp).
+    if (!c.platform.empty() && !c.selectionMode) {
         Rect pill{rect.x + 8, rect.y + 8, 56, 18};
         r.fillRoundedRect(pill, 9, Color{0, 0, 0, 0.45f});
         r.drawText(th.bodyFont, c.platform, pill.x + pill.w / 2, pill.y + 3,
                    th.text, TextAlign::Center);
+    }
+
+    // ROM-variant count badge (top-right, below the favorite disc): this tile
+    // represents N dumps of one game. (Corner overlay — center untouched.)
+    if (c.variantCount > 1) {
+        const std::string vt = std::to_string(c.variantCount) + " versions";
+        float tw = r.measureText(th.bodyFont, vt);
+        float bw = tw + 12.0f;
+        Rect vp{rect.x + rect.w - 8 - bw, rect.y + 30, bw, 19};
+        r.fillRoundedRect(vp, 4, Color{0, 0, 0, 0.68f});
+        r.strokeRoundedRect(vp, 4, Color{th.accent.r, th.accent.g, th.accent.b, 0.85f}, 1.0f);
+        r.drawText(th.bodyFont, vt, vp.x + vp.w / 2, vp.y + 2, th.text, TextAlign::Center);
     }
 
     // Favorite star (top-right) — a gold disc on a dark scrim so it reads over
@@ -89,6 +102,21 @@ void drawCard(platform::IRenderer2D& r, const Rect& cover, const Card& c,
         float dx = rect.x + rect.w - 14, dy = rect.y + rect.h - 14;
         r.fillEllipse(dx, dy, 7, 7, Color{0, 0, 0, 0.45f});
         r.fillEllipse(dx, dy, 4, 4, dot);
+    }
+
+    // Multi-select checkbox (top-left) — shown only in selection mode; a check
+    // is drawn when this card is in the selection. Mirrors Renderer.cpp.
+    if (c.selectionMode) {
+        Rect box{rect.x + 10, rect.y + 10, 22, 22};
+        r.fillRoundedRect(box, 4, Color{0, 0, 0, 0.62f});
+        const Color edge = c.multiSelected ? th.accent : th.subtext;
+        r.strokeRoundedRect(box, 4, edge, c.multiSelected ? 2.0f : 1.25f);
+        if (c.multiSelected) {
+            r.drawLine(box.x + 5, box.y + 12, box.x + 10, box.y + box.h - 5,
+                       th.accent, 2.0f);
+            r.drawLine(box.x + 10, box.y + box.h - 5, box.x + box.w - 5, box.y + 6,
+                       th.accent, 2.0f);
+        }
     }
 
     // Title under the cover.

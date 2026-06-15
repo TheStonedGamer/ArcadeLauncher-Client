@@ -273,10 +273,26 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   still hold. Exercised on **both** back-ends — Linux `gui_demo` + Windows
   `d2d_selfcheck` (tile0 center still `(41,107,140)`); `ctest` all 9 green,
   launcher build green.
-- **Next (L3d-b-6):** keep closing the `gridview` ↔ `DrawCard` gap (count
-  badges, multi-select checkbox, hover lift already in) until parity, then the
-  Windows grid can adopt `gridview::drawGrid`. In parallel: migrate `GameLibrary`
-  to UTF-8 and wire `App.cpp`'s loop to `IWindow`. File-by-file, Windows green.
+- **Done (L3d-b-6): gridview parity — count badge + multi-select checkbox.**
+  `gridview::Card` gained `variantCount` (>1 draws a "N versions" badge top-right,
+  below the favorite disc, accent-stroked — mirrors Renderer.cpp's ROM-variant
+  badge) and `selectionMode`/`multiSelected` (in selection mode every card shows a
+  top-left checkbox, ticked with a two-segment check when selected; the platform
+  pill is suppressed so the checkbox owns the corner, matching production). All
+  corner overlays → center anchors unchanged. Exercised on **both** back-ends —
+  Linux `gui_demo` + Windows `d2d_selfcheck` (tile0 center still `(41,107,140)`);
+  `ctest` all 9 green, launcher build 0/0. With this `gridview::drawCard` now
+  covers the card display model Renderer.cpp draws (placeholder/cover, border/
+  selection ring + lift, platform pill, favorite, install-state, variant count,
+  multi-select checkbox). Remaining DrawCard-only flourishes are animated/
+  Windows-stateful (hover pulse, download progress bar, hover "⋯" overflow
+  button) — deferred until the Windows grid actually adopts `gridview` so they
+  can be reproduced against live animation state rather than guessed.
+- **Next (L1b-rest / GameLibrary UTF-8):** the static card model is at parity, so
+  the next unifying moves are infrastructural: migrate `GameLibrary` off
+  `std::wstring` to UTF-8 `std::string` (so the shared `gridview`/catalog model is
+  the one source of truth on both OSes), then wrap the Win32 window/message loop
+  behind `IWindow` and route `App.cpp` through it. File-by-file, Windows green.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

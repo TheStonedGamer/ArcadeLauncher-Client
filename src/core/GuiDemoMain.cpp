@@ -159,6 +159,11 @@ int main(int argc, char** argv) {
                                           gridview::Install::NotInstalled,
                                           gridview::Install::UpdateAvailable};
                 c.install = st[i % 3];
+                if (i % 4 == 0) c.variantCount = i + 1;   // count-badge overlay
+                if (i % 2 == 0) {                          // selection-mode checkbox
+                    c.selectionMode = true;
+                    c.multiSelected = (i % 4 == 0);
+                }
             }
             // Tile 0 keeps a flat placeholder as the deterministic verification
             // anchor; the rest get real decoded cover art (PNG round-tripped).

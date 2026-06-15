@@ -79,6 +79,11 @@ int main() {
         c.placeholder = platform::Color{0.3f, 0.3f, 0.3f, 1.0f};
         c.favorite = (i % 2 == 0);           // exercise the favorite overlay
         c.install = (gridview::Install)(1 + (i % 3));  // exercise install dots
+        if (i % 3 == 0) c.variantCount = i + 1;        // exercise count badge
+        if (i % 2 == 1) {                              // exercise checkbox
+            c.selectionMode = true;
+            c.multiSelected = (i % 4 == 1);
+        }
         cards.push_back(c);
     }
     const std::vector<std::string> tabs = {"All Games", "PC", "Favorites"};
