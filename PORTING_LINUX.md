@@ -288,11 +288,26 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Windows-stateful (hover pulse, download progress bar, hover "⋯" overflow
   button) — deferred until the Windows grid actually adopts `gridview` so they
   can be reproduced against live animation state rather than guessed.
-- **Next (L1b-rest / GameLibrary UTF-8):** the static card model is at parity, so
-  the next unifying moves are infrastructural: migrate `GameLibrary` off
-  `std::wstring` to UTF-8 `std::string` (so the shared `gridview`/catalog model is
-  the one source of truth on both OSes), then wrap the Win32 window/message loop
-  behind `IWindow` and route `App.cpp` through it. File-by-file, Windows green.
+- **Done (L3d-c-1): portable ROM-variant logic (`variants::`) + KAT.** First
+  concrete slice of GameLibrary's `std::wstring`→UTF-8 migration. The dump-variant
+  rules (filename stem, grouping key, human label, default-pick score) moved into
+  `src/GameVariants.{h,cpp}` (arcade_core, UTF-8, no Win32). The Windows
+  `Game::Variant*` methods are now thin wrappers that `narrow`/`widen` around
+  `variants::` — behaviour-identical because the dump tags (`[!]`, `[a1]`,
+  `(Prototype)`, `PRG 1`, …) are pure ASCII. Locked by `variants_selfcheck`
+  (real ROM filenames: Crystalis alt/verified, SMB3 PRG-1, prototype, bad+hack,
+  installed-copy, empty-path fallback). `ctest` 10/10, launcher build 0/0, new CI
+  gate added. **Migration pattern proven:** lift pure logic to a portable
+  KAT-covered module, point the wstring side at it via the boundary codec — zero
+  Windows regression, one source of truth.
+- **Next (GameLibrary UTF-8 cont. / L1b-rest):** keep peeling pure logic off the
+  wstring `Game`/`GameLibrary` the same way (search/filter predicates next), then
+  the data fields themselves with `narrow`/`widen` at Win32 call sites; in
+  parallel wrap the Win32 window/message loop behind `IWindow` and route
+  `App.cpp` through it. File-by-file, Windows green, each step KAT-locked.
+  ⚠️ The remaining `Game`-field migration touches ~1600 `std::wstring` sites
+  across ~83 files and has **no Windows GUI runtime self-check** — do it
+  incrementally with the user watching diffs, not as a big-bang.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs
