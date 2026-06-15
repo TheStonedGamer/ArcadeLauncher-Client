@@ -165,6 +165,10 @@ int main(int argc, char** argv) {
         cancel.label = "Cancel";
         cancel.enabled = false;
 
+        widgets::Checkbox chk;
+        chk.bounds = {80, 160, 240, 28};
+        chk.label = "Enable fancy mode";
+
         // Drive copies through a synthetic click (no display needed for the
         // logic): press+release inside each. OK should click; disabled Cancel
         // must not. The drawn `ok`/`cancel` stay in their resting state so the
@@ -180,6 +184,18 @@ int main(int argc, char** argv) {
         const bool okClicked = synthClick(ok);
         const bool cancelClicked = synthClick(cancel);
 
+        // Drive a copy of the checkbox through one click; it must end checked.
+        bool chkToggledOn = false;
+        {
+            widgets::Checkbox cc = chk;
+            const float cx = cc.bounds.x + 10, cy = cc.bounds.y + cc.bounds.h * 0.5f;
+            Event d; d.type = EventType::MouseDown; d.x = cx; d.y = cy;
+            Event u; u.type = EventType::MouseUp;   u.x = cx; u.y = cy;
+            widgets::handle(cc, d);
+            widgets::handle(cc, u);
+            chkToggledOn = cc.checked;
+        }
+
         int w = W, h = H; win->size(w, h);
         const Color bg = {0.07f, 0.08f, 0.09f, 1.0f};
         auto drawScene = [&]() {
@@ -187,6 +203,7 @@ int main(int argc, char** argv) {
             r->fillRect({0, 0, (float)w, (float)h}, bg);
             widgetview::drawButton(*r, ok, wth);
             widgetview::drawButton(*r, cancel, wth);
+            widgetview::drawCheckbox(*r, chk, wth);
             r->endFrame();
         };
         bool wquit = false;
@@ -209,11 +226,13 @@ int main(int argc, char** argv) {
         int er = (int)(wth.normal.r * 255 + 0.5f), eg = (int)(wth.normal.g * 255 + 0.5f),
             eb = (int)(wth.normal.b * 255 + 0.5f);
         bool rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
-        bool wok = okClicked && !cancelClicked && rendered;
-        std::printf("gui demo: %s — widgets: OK clicked=%d, Cancel(disabled) clicked=%d; "
-                    "OK fill (%d,%d,%d) expected ~(%d,%d,%d); wrote %s\n",
+        bool wok = okClicked && !cancelClicked && chkToggledOn && rendered;
+        std::printf("gui demo: %s — widgets: OK clicked=%d, Cancel(disabled) clicked=%d, "
+                    "checkbox toggled=%d; OK fill (%d,%d,%d) expected ~(%d,%d,%d); "
+                    "wrote %s\n",
                     wok ? "OK" : "FAILED", okClicked ? 1 : 0, cancelClicked ? 1 : 0,
-                    gr, gg, gb, er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
+                    chkToggledOn ? 1 : 0, gr, gg, gb, er, eg, eb,
+                    wrote ? "gui_demo.ppm" : "<ppm failed>");
 
         if (hold) {
             std::printf("gui demo: interactive widgets — click OK (Cancel is "
@@ -229,6 +248,8 @@ int main(int argc, char** argv) {
                     else {
                         if (widgets::handle(ok, ev).clicked) std::printf("OK clicked\n");
                         widgets::handle(cancel, ev);
+                        if (widgets::handle(chk, ev).clicked)
+                            std::printf("checkbox -> %s\n", chk.checked ? "on" : "off");
                     }
                 }
                 drawScene();

@@ -18,6 +18,7 @@ namespace widgetview {
 struct Theme {
     platform::Color normal, hover, pressed, disabled;       // fill per state
     platform::Color border;                                 // 1px outline
+    platform::Color accent;                                 // checked box / emphasis
     platform::Color text, textDisabled;                     // label colors
     platform::FontId font   = 0;
     float            fontPx = 15.0f;
@@ -31,5 +32,10 @@ Theme darkTheme();
 // Draw `b` into its bounds: a rounded fill chosen by widgets::visualState, a 1px
 // border, and the centered label.
 void drawButton(platform::IRenderer2D& r, const widgets::Button& b, const Theme& th);
+
+// Draw `c`: a square box (left-aligned, vertically centered in bounds) whose fill
+// follows visualState, an accent fill + checkmark when checked, and the label to
+// the right. Uses the same Theme (accent box reuses `border`/`text`).
+void drawCheckbox(platform::IRenderer2D& r, const widgets::Checkbox& c, const Theme& th);
 
 } // namespace widgetview

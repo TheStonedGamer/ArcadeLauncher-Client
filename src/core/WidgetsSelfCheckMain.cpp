@@ -13,6 +13,7 @@ using platform::Event;
 using platform::EventType;
 using platform::MouseButton;
 using widgets::Button;
+using widgets::Checkbox;
 using widgets::Visual;
 
 int g_fail = 0;
@@ -114,8 +115,54 @@ int main() {
         check(widgets::visualState(b) == Visual::Disabled, "disabled -> Disabled");
     }
 
+    // ── Checkbox: same push contract, but a completed click toggles `checked`.
+    auto makeCheck = []() {
+        Checkbox c;
+        c.bounds = {100, 50, 200, 28};  // x:[100,300) y:[50,78)
+        c.label = "Enable thing";
+        return c;
+    };
+
+    // 8. Full click toggles off->on, and a second click toggles on->off.
+    {
+        Checkbox c = makeCheck();
+        widgets::handle(c, down(110, 60));
+        auto u = widgets::handle(c, up(110, 60));
+        check(u.clicked && c.checked, "checkbox: first click checks it");
+        widgets::handle(c, down(110, 60));
+        auto u2 = widgets::handle(c, up(110, 60));
+        check(u2.clicked && !c.checked, "checkbox: second click unchecks it");
+    }
+
+    // 9. Release-away does NOT toggle (press started inside, released outside).
+    {
+        Checkbox c = makeCheck();
+        widgets::handle(c, down(110, 60));
+        auto u = widgets::handle(c, up(900, 900));
+        check(!u.clicked && !c.checked, "checkbox: release away does not toggle");
+    }
+
+    // 10. Disabled checkbox never toggles.
+    {
+        Checkbox c = makeCheck();
+        c.enabled = false;
+        widgets::handle(c, down(110, 60));
+        auto u = widgets::handle(c, up(110, 60));
+        check(!u.consumed && !c.checked, "checkbox: disabled never toggles");
+    }
+
+    // 11. visualState mirrors the button mapping.
+    {
+        Checkbox c = makeCheck();
+        check(widgets::visualState(c) == Visual::Normal, "checkbox fresh -> Normal");
+        widgets::handle(c, move(110, 60));
+        check(widgets::visualState(c) == Visual::Hover, "checkbox hover -> Hover");
+        widgets::handle(c, down(110, 60));
+        check(widgets::visualState(c) == Visual::Pressed, "checkbox armed -> Pressed");
+    }
+
     if (g_fail == 0)
-        std::printf("widgets self-check: OK — all push-button KATs passed\n");
+        std::printf("widgets self-check: OK — all push-button + checkbox KATs passed\n");
     else
         std::printf("widgets self-check: FAILED (%d)\n", g_fail);
     return g_fail == 0 ? 0 : 1;

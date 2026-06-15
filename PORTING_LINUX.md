@@ -409,11 +409,21 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Windows launcher 0/0 (both new TUs compile into the launcher). The state
   machine + drawing are shared, so SettingsWindow/dialogs adopt them on both
   platforms as the set grows.
-- **Next:** grow the set on the same pattern — checkbox/toggle, then label +
-  text-edit (caret/selection/clipboard), combo, listbox/scroll — each a portable
-  state machine + IRenderer2D drawing + KAT + `gui_demo` gate. Then assemble a
-  first real panel (a slice of SettingsWindow) off these, shared by both
-  platforms. Windows stays green and unchanged; each step verified on both OSes.
+- **Done (L4-b): checkbox / toggle.** `widgets::Checkbox` reuses the same push
+  contract as the button (factored into an internal `pushContract` template
+  shared by both), but a completed click flips `checked` (and `InputResult::
+  clicked` reports the flip). `widgetview::drawCheckbox` paints a square box
+  (state-tinted, accent fill + white checkmark when checked, muted tick when
+  checked-but-disabled) with the label to the right; the Theme gained an `accent`
+  color. `widgets_selfcheck` grew checkbox cases (toggle on/off, release-away no
+  toggle, disabled inert, visualState). `gui_demo --widgets` now also drives a
+  checkbox (synthetic click → checked) and draws it; `--hold` toggles it live.
+  `ctest` 20/20, Windows launcher 0/0.
+- **Next:** label + text-edit (caret/selection/clipboard), then combo and
+  listbox/scroll — each a portable state machine + IRenderer2D drawing + KAT +
+  `gui_demo` gate. Then assemble a first real panel (a slice of SettingsWindow)
+  off these, shared by both platforms. Windows stays green; each step verified on
+  both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

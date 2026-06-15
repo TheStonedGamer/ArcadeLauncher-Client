@@ -58,4 +58,23 @@ InputResult handle(Button& b, const platform::Event& ev);
 // dragged-off shows Normal (the press is still armed, but not under the cursor).
 Visual visualState(const Button& b);
 
+// A checkbox / toggle. Same press/release contract as Button, but a completed
+// click flips `checked` (and InputResult::clicked reports the flip). `bounds` is
+// the whole clickable row (box + label); the drawing layer places the box.
+struct Checkbox {
+    Rect        bounds;
+    std::string label;
+    bool        checked = false;
+    bool        enabled = true;
+    bool        hover   = false;
+    bool        pressed = false;
+};
+
+// Feed one input event to `c`. On the left release that completes a press started
+// inside, toggles `checked` and reports clicked == true. Disabled is inert.
+InputResult handle(Checkbox& c, const platform::Event& ev);
+
+// Runtime state → Visual, same mapping as the button.
+Visual visualState(const Checkbox& c);
+
 } // namespace widgets
