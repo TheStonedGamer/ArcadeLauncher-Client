@@ -42,6 +42,7 @@ add_library(arcade_core STATIC
   src/Widgets.cpp
   src/Forms.cpp
   src/Settings.cpp
+  src/AudioBuffer.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -250,6 +251,12 @@ target_link_libraries(forms_selfcheck PRIVATE arcade_core)
 add_executable(settings_selfcheck src/core/SettingsSelfCheckMain.cpp)
 target_link_libraries(settings_selfcheck PRIVATE arcade_core)
 
+# ── audio_buffer_selfcheck (Phase L5) ────────────────────────────────────────
+# Portable PCM staging-buffer KAT (no audio device): ring FIFO/wrap/overflow +
+# jitter prebuffer/underrun. The device-free core both audio backends build on.
+add_executable(audio_buffer_selfcheck src/core/AudioBufferSelfCheckMain.cpp)
+target_link_libraries(audio_buffer_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
@@ -263,3 +270,4 @@ add_test(NAME sidebar_selfcheck COMMAND sidebar_selfcheck)
 add_test(NAME widgets_selfcheck COMMAND widgets_selfcheck)
 add_test(NAME forms_selfcheck COMMAND forms_selfcheck)
 add_test(NAME settings_selfcheck COMMAND settings_selfcheck)
+add_test(NAME audio_buffer_selfcheck COMMAND audio_buffer_selfcheck)

@@ -228,6 +228,9 @@ jobs:
       - name: Settings-panel self-check (gate)
         run: ./build/forms_selfcheck
 
+      - name: Audio-buffer self-check (gate)
+        run: ./build/audio_buffer_selfcheck
+
       - name: General-settings model self-check (gate)
         run: ./build/settings_selfcheck
 

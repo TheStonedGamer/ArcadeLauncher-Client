@@ -523,8 +523,25 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
 - **Next:** Phase L5 audio (miniaudio `IAudioOut`/`IAudioIn` for the voice
   subsystem). Windows stays green; each step verified on both OSes.
 
-**Phase L5 — Audio (voice) on Linux**
+**Phase L5 — Audio (voice) on Linux** — 🚧 **portable PCM staging buffers landed**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)
+- **Done (L5-a): portable PCM staging buffers (`audio::`) + KAT.** Following the
+  established lift-pure-logic-first pattern, the device-free core both audio
+  backends build on landed before any device code: `src/AudioBuffer.{h,cpp}`
+  (arcade_core, UTF-8, no Win32/miniaudio/WASAPI). `audio::RingBuffer` is a
+  fixed-capacity SPSC ring of interleaved int16 PCM — the capture path writes mic
+  frames in, the app reads them out; overflow drops the OLDEST samples so a live
+  voice stream stays current (`write` returns the drop count), with `read`
+  (partial) and `readOrSilence` (zero-pads a render fill). `audio::JitterBuffer`
+  is the playback ring with a prebuffer: it primes until `prefill` samples arrive,
+  then drains to the render callback, and on underrun outputs silence + re-arms
+  priming (a network hiccup is a clean gap, not stale audio played late),
+  tracking underrun/dropped sample counters. Locked by `audio_buffer_selfcheck`
+  (10-case KAT: ring FIFO/partial/wrap/drop-oldest/over-capacity/silence + jitter
+  prime/drain/underrun-rearm/overflow). `ctest` 25/25, Windows launcher 0/0
+  (AudioBuffer.cpp compiles into both via arcade_core/vcxproj). **Next (L5-b):**
+  the miniaudio `IAudioIn`/`IAudioOut` backend (CMake `FetchContent`, null device
+  for CI) drains/fills these buffers; then wire VoiceEngine onto the boundary.
 
 **Phase L6 — Paths, config, integrations**
 - XDG data dirs, autostart (.desktop), global hotkey (X11/Wayland), tray, file
