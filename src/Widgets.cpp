@@ -3,6 +3,8 @@
 
 #include "Widgets.h"
 
+#include <algorithm>
+
 namespace widgets {
 
 using platform::EventType;
@@ -316,6 +318,113 @@ InputResult handle(Combo& c, const platform::Event& ev) {
                 case platform::Key::Escape:
                     c.open = false;
                     res.consumed = true;
+                    break;
+                default:
+                    break;
+            }
+            break;
+
+        default:
+            break;
+    }
+    return res;
+}
+
+// ── ListBox ──────────────────────────────────────────────────────────────────
+
+float listItemHeight(const ListBox& l) {
+    return l.itemHeight > 0.0f ? l.itemHeight : 24.0f;
+}
+
+float listContentHeight(const ListBox& l) {
+    return listItemHeight(l) * static_cast<float>(l.options.size());
+}
+
+float listMaxScroll(const ListBox& l) {
+    return std::max(0.0f, listContentHeight(l) - l.bounds.h);
+}
+
+void listClampScroll(ListBox& l) {
+    l.scroll = std::clamp(l.scroll, 0.0f, listMaxScroll(l));
+}
+
+int listItemAt(const ListBox& l, float x, float y) {
+    if (!contains(l.bounds, x, y)) return -1;
+    const float local = y - l.bounds.y + l.scroll;
+    const int i = static_cast<int>(local / listItemHeight(l));
+    if (i < 0 || i >= static_cast<int>(l.options.size())) return -1;
+    return i;
+}
+
+void listEnsureVisible(ListBox& l, int index) {
+    if (index < 0 || index >= static_cast<int>(l.options.size())) return;
+    const float ih = listItemHeight(l);
+    const float top = ih * static_cast<float>(index);
+    const float bot = top + ih;
+    if (top < l.scroll) l.scroll = top;
+    else if (bot > l.scroll + l.bounds.h) l.scroll = bot - l.bounds.h;
+    listClampScroll(l);
+}
+
+InputResult handle(ListBox& l, const platform::Event& ev) {
+    InputResult res;
+    if (!l.enabled) {
+        l.hover = false;
+        l.highlight = -1;
+        return res;
+    }
+    const int count = static_cast<int>(l.options.size());
+
+    switch (ev.type) {
+        case EventType::MouseWheel:
+            if (l.hover || contains(l.bounds, ev.x, ev.y)) {
+                l.scroll -= ev.wheel * listItemHeight(l);  // one row per notch
+                listClampScroll(l);
+                res.consumed = true;
+            }
+            break;
+
+        case EventType::MouseMove:
+            l.hover = contains(l.bounds, ev.x, ev.y);
+            l.highlight = listItemAt(l, ev.x, ev.y);
+            break;
+
+        case EventType::MouseDown:
+            if (ev.button == MouseButton::Left) {
+                const int i = listItemAt(l, ev.x, ev.y);
+                if (i >= 0) {
+                    l.selected = i;
+                    res.consumed = true;
+                    res.clicked = true;
+                }
+            }
+            break;
+
+        case EventType::KeyDown:
+            switch (ev.key) {
+                case platform::Key::Down:
+                    if (count > 0) {
+                        l.selected = l.selected + 1 >= count ? count - 1
+                                     : (l.selected < 0 ? 0 : l.selected + 1);
+                        listEnsureVisible(l, l.selected);
+                        res.consumed = true;
+                    }
+                    break;
+                case platform::Key::Up:
+                    if (count > 0) {
+                        l.selected = l.selected <= 0 ? 0 : l.selected - 1;
+                        listEnsureVisible(l, l.selected);
+                        res.consumed = true;
+                    }
+                    break;
+                case platform::Key::Home:
+                    if (count > 0) { l.selected = 0; listEnsureVisible(l, 0); res.consumed = true; }
+                    break;
+                case platform::Key::End:
+                    if (count > 0) { l.selected = count - 1; listEnsureVisible(l, count - 1); res.consumed = true; }
+                    break;
+                case platform::Key::Enter:
+                    if (l.selected >= 0) { res.clicked = true; res.consumed = true; }
                     break;
                 default:
                     break;

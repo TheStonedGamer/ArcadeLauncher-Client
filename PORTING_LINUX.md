@@ -446,9 +446,22 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Escape, disabled inert). `gui_demo --widgets` opens a combo and commits a row
   through the shared model; `--hold` is fully interactive. `ctest` 20/20, Windows
   launcher 0/0.
-- **Next:** listbox/scroll, then assemble a first real panel (a slice of
-  SettingsWindow) off the button/checkbox/textedit/combo/list set, shared by both
-  platforms. Windows stays green; each step verified on both OSes.
+- **Done (L4-e): scrollable listbox.** `widgets::ListBox` holds single-selection
+  scroll state plus pure row geometry (`listItemHeight`/`listContentHeight`/
+  `listMaxScroll`/`listItemAt`/`listClampScroll`/`listEnsureVisible`): the wheel
+  scrolls (clamped to [0, maxScroll]), a left-click selects the row under the
+  cursor (clicked=true), Up/Down move the selection auto-scrolling to keep it
+  visible, Home/End jump to first/last, Enter re-fires; disabled is inert.
+  `widgetview::drawListBox` paints the box, rows clipped via the renderer clip
+  stack (selected row = accent fill, hovered = subtle tint) and a scrollbar thumb
+  when the content overflows. `widgets_selfcheck` grew 5 listbox cases (geometry,
+  wheel scroll+clamp, click-selects-scrolled-row, keyboard Down/Home/End, disabled
+  inert). `gui_demo --widgets` selects a row through the shared model and asserts
+  it; `--hold` routes wheel/click/keys to the live list. `ctest` 20/20, Windows
+  launcher 0/0.
+- **Next:** assemble a first real panel (a slice of SettingsWindow) off the
+  button/checkbox/textedit/combo/list set, shared by both platforms. Windows
+  stays green; each step verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

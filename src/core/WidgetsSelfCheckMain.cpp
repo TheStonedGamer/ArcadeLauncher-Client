@@ -16,6 +16,7 @@ using platform::Key;
 using widgets::Button;
 using widgets::Checkbox;
 using widgets::Combo;
+using widgets::ListBox;
 using widgets::TextEdit;
 using widgets::Visual;
 
@@ -39,6 +40,9 @@ Event typeText(const char* s) {
 }
 Event keyDown(Key k, bool shift = false) {
     Event e; e.type = EventType::KeyDown; e.key = k; e.shift = shift; return e;
+}
+Event wheel(float w, float x, float y) {
+    Event e; e.type = EventType::MouseWheel; e.wheel = w; e.x = x; e.y = y; return e;
 }
 
 Button makeButton() {
@@ -303,8 +307,71 @@ int main() {
         check(!c.open, "combo: disabled never opens");
     }
 
+    // ── ListBox: scroll + selection. 10 rows of 20px in an 80px box (4 visible),
+    //    so content=200, maxScroll=120. Box at (100,50)-(300,130).
+    auto makeList = []() {
+        ListBox l;
+        l.bounds = {100, 50, 200, 80};
+        l.itemHeight = 20.0f;
+        for (int i = 0; i < 10; ++i) l.options.push_back("Item " + std::to_string(i));
+        return l;
+    };
+
+    // 22. Geometry: item height, content, max scroll.
+    {
+        ListBox l = makeList();
+        check(widgets::listItemHeight(l) == 20.0f, "list item height");
+        check(widgets::listContentHeight(l) == 200.0f, "list content height");
+        check(widgets::listMaxScroll(l) == 120.0f, "list max scroll");
+    }
+
+    // 23. Wheel scrolls (one row/notch) and clamps at both ends.
+    {
+        ListBox l = makeList();
+        l.hover = true;
+        widgets::handle(l, wheel(-1, 110, 60));  // down one row
+        check(l.scroll == 20.0f, "wheel down scrolls one row");
+        for (int i = 0; i < 20; ++i) widgets::handle(l, wheel(-1, 110, 60));
+        check(l.scroll == 120.0f, "wheel clamps at maxScroll");
+        for (int i = 0; i < 20; ++i) widgets::handle(l, wheel(1, 110, 60));
+        check(l.scroll == 0.0f, "wheel clamps at 0");
+    }
+
+    // 24. Click selects the row under the cursor, accounting for scroll.
+    {
+        ListBox l = makeList();
+        l.scroll = 40.0f;  // first visible row is Item 2 (index 2)
+        // Click 10px into the box → local y = (60-50)+40 = 50 → row 2.
+        auto c = widgets::handle(l, down(110, 60));
+        check(c.clicked && l.selected == 2, "list click selects scrolled row");
+    }
+
+    // 25. Down past the visible window auto-scrolls to keep selection visible.
+    {
+        ListBox l = makeList();
+        l.selected = 0;
+        for (int i = 0; i < 5; ++i) widgets::handle(l, keyDown(Key::Down)); // -> 5
+        check(l.selected == 5, "five Downs -> selected 5");
+        // Row 5 spans [100,120); box shows 80px, so scroll must be >= 40.
+        check(l.scroll >= 40.0f, "selection auto-scrolled into view");
+        widgets::handle(l, keyDown(Key::Home));
+        check(l.selected == 0 && l.scroll == 0.0f, "Home selects first + scrolls top");
+        widgets::handle(l, keyDown(Key::End));
+        check(l.selected == 9 && l.scroll == 120.0f, "End selects last + scrolls bottom");
+    }
+
+    // 26. Disabled list ignores input.
+    {
+        ListBox l = makeList();
+        l.enabled = false;
+        l.hover = true;
+        widgets::handle(l, wheel(-1, 110, 60));
+        auto c = widgets::handle(l, down(110, 60));
+        check(l.scroll == 0.0f && !c.clicked && l.selected == -1, "disabled list inert");
+    }
+
     if (g_fail == 0)
-        std::printf("widgets self-check: OK — button + checkbox + textedit + combo KATs passed\n");
+        std::printf("widgets self-check: OK — button + checkbox + textedit + combo + list KATs passed\n");
     else
         std::printf("widgets self-check: FAILED (%d)\n", g_fail);
     return g_fail == 0 ? 0 : 1;

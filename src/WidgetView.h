@@ -57,4 +57,9 @@ size_t caretIndexFromX(platform::IRenderer2D& r, const widgets::TextEdit& t,
 void drawCombo(platform::IRenderer2D& r, const widgets::Combo& c, const Theme& th,
                const std::string& placeholder = "Select…");
 
+// Draw a scrollable list: box + border, rows clipped to the box (selected row =
+// accent fill, hovered row = subtle tint), and a scrollbar thumb when the content
+// overflows. Uses the renderer's clip stack so partial rows are cut cleanly.
+void drawListBox(platform::IRenderer2D& r, const widgets::ListBox& l, const Theme& th);
+
 } // namespace widgetview

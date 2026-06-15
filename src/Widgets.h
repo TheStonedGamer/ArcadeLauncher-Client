@@ -149,4 +149,33 @@ Visual visualState(const Combo& c);
 // Escape closes. Disabled is inert.
 InputResult handle(Combo& c, const platform::Event& ev);
 
+// ── ListBox (scrollable list) ────────────────────────────────────────────────
+// A vertically scrolling list with single selection. Scroll/selection logic and
+// row geometry are pure here; the view draws the clipped rows + scrollbar.
+// `scroll` is the pixel offset from the top of the content; `itemHeight` defaults
+// to 24 when 0. `highlight` is the mouse-hovered row (-1 = none).
+struct ListBox {
+    Rect                      bounds;
+    std::vector<std::string>  options;
+    int    selected   = -1;
+    float  scroll     = 0.0f;
+    float  itemHeight = 0.0f;
+    bool   enabled    = true;
+    bool   hover      = false;
+    int    highlight  = -1;
+};
+
+float listItemHeight(const ListBox& l);      // itemHeight>0 ? itemHeight : 24
+float listContentHeight(const ListBox& l);   // options.size() * itemHeight
+float listMaxScroll(const ListBox& l);       // max(0, content - bounds.h)
+int   listItemAt(const ListBox& l, float x, float y);  // row under (x,y), or -1
+void  listClampScroll(ListBox& l);           // clamp scroll into [0, maxScroll]
+void  listEnsureVisible(ListBox& l, int index);  // scroll so `index` is fully shown
+
+// Feed one event: wheel scrolls (clamped), a left-click selects the row under the
+// cursor (clicked=true), Up/Down move the selection (auto-scrolling to keep it
+// visible), Home/End jump to first/last, Enter re-fires the selection. Disabled
+// is inert.
+InputResult handle(ListBox& l, const platform::Event& ev);
+
 } // namespace widgets

@@ -177,6 +177,12 @@ int main(int argc, char** argv) {
         combo.bounds = {80, 260, 200, 30};
         combo.options = {"Low", "Medium", "High"};
 
+        widgets::ListBox list;
+        list.bounds = {460, 90, 220, 160};       // right of the column above
+        list.itemHeight = 28;
+        list.options = {"Steam", "Epic", "GOG", "GameCube", "Wii",
+                        "N64", "NES", "SNES", "PS1", "PS2"};
+
         // Drive copies through a synthetic click (no display needed for the
         // logic): press+release inside each. OK should click; disabled Cancel
         // must not. The drawn `ok`/`cancel` stay in their resting state so the
@@ -233,6 +239,20 @@ int main(int argc, char** argv) {
             combo.selected = cc.selected;  // show the choice in the drawn combo
         }
 
+        // Drive a copy of the list: three Downs select row 2 ("GOG"), staying
+        // in view (no scroll needed for a row near the top). Verifies the shared
+        // selection logic before the live loop drives the real list.
+        bool listPicked = false;
+        {
+            widgets::ListBox cc = list;
+            for (int k = 0; k < 3; ++k) {
+                Event d; d.type = EventType::KeyDown; d.key = Key::Down;
+                widgets::handle(cc, d);
+            }
+            listPicked = (cc.selected == 2);
+            list.selected = cc.selected;  // show the selection in the drawn list
+        }
+
         int w = W, h = H; win->size(w, h);
         const Color bg = {0.07f, 0.08f, 0.09f, 1.0f};
         auto drawScene = [&]() {
@@ -242,6 +262,7 @@ int main(int argc, char** argv) {
             widgetview::drawButton(*r, cancel, wth);
             widgetview::drawCheckbox(*r, chk, wth);
             widgetview::drawTextEdit(*r, field, wth);
+            widgetview::drawListBox(*r, list, wth);
             widgetview::drawCombo(*r, combo, wth);  // last: open list overlays
             r->endFrame();
         };
@@ -266,13 +287,15 @@ int main(int argc, char** argv) {
             eb = (int)(wth.normal.b * 255 + 0.5f);
         bool rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
         bool wok = okClicked && !cancelClicked && chkToggledOn && fieldTyped &&
-                   comboPicked && rendered;
+                   comboPicked && listPicked && rendered;
         std::printf("gui demo: %s — widgets: OK clicked=%d, Cancel(disabled) clicked=%d, "
-                    "checkbox toggled=%d, field typed=%d (\"%s\"), combo picked=%d (\"%s\"); "
-                    "OK fill (%d,%d,%d) expected ~(%d,%d,%d); wrote %s\n",
+                    "checkbox toggled=%d, field typed=%d (\"%s\"), combo picked=%d (\"%s\"), "
+                    "list picked=%d (\"%s\"); OK fill (%d,%d,%d) expected ~(%d,%d,%d); wrote %s\n",
                     wok ? "OK" : "FAILED", okClicked ? 1 : 0, cancelClicked ? 1 : 0,
                     chkToggledOn ? 1 : 0, fieldTyped ? 1 : 0, field.text.c_str(),
                     comboPicked ? 1 : 0, widgets::selectedText(combo).c_str(),
+                    listPicked ? 1 : 0,
+                    list.selected >= 0 ? list.options[list.selected].c_str() : "",
                     gr, gg, gb, er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
 
         if (hold) {
@@ -307,6 +330,9 @@ int main(int argc, char** argv) {
                         // Combo gets mouse + keyboard (open list, pick, arrows).
                         if (widgets::handle(combo, ev).clicked)
                             std::printf("combo -> %s\n", widgets::selectedText(combo).c_str());
+                        // List gets mouse (wheel/click) + keyboard (arrows/Home/End).
+                        if (widgets::handle(list, ev).clicked && list.selected >= 0)
+                            std::printf("list -> %s\n", list.options[list.selected].c_str());
                         // Keyboard/text routing: the focused field consumes it
                         // (handle ignores mouse events).
                         widgets::handle(field, ev);

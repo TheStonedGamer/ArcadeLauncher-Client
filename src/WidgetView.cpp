@@ -208,4 +208,46 @@ void drawCombo(platform::IRenderer2D& r, const widgets::Combo& c, const Theme& t
     }
 }
 
+void drawListBox(platform::IRenderer2D& r, const widgets::ListBox& l, const Theme& th) {
+    r.fillRoundedRect(l.bounds, th.radius, l.enabled ? th.normal : th.disabled);
+
+    const float ih = widgets::listItemHeight(l);
+    const float padX = 8.0f;
+
+    // Clip rows to the inner box so partial top/bottom rows are cut cleanly.
+    r.pushClip({l.bounds.x + 1.0f, l.bounds.y + 1.0f,
+                l.bounds.w - 2.0f, l.bounds.h - 2.0f});
+    for (int i = 0; i < static_cast<int>(l.options.size()); ++i) {
+        const float ry = l.bounds.y - l.scroll + ih * static_cast<float>(i);
+        if (ry + ih < l.bounds.y || ry > l.bounds.y + l.bounds.h) continue;  // off-screen
+        const Rect row{l.bounds.x, ry, l.bounds.w, ih};
+        if (i == l.selected) {
+            Color sel = th.accent; sel.a = 0.55f;
+            r.fillRect(row, sel);
+        } else if (i == l.highlight && l.enabled) {
+            r.fillRect(row, th.hover);
+        }
+        if (th.font)
+            r.drawText(th.font, l.options[static_cast<size_t>(i)],
+                       l.bounds.x + padX, ry + (ih - th.fontPx) * 0.5f,
+                       l.enabled ? th.text : th.textDisabled, platform::TextAlign::Left);
+    }
+    r.popClip();
+
+    // Scrollbar thumb (only when content overflows).
+    const float maxS = widgets::listMaxScroll(l);
+    if (maxS > 0.0f) {
+        const float trackH = l.bounds.h - 4.0f;
+        const float content = widgets::listContentHeight(l);
+        const float thumbH = trackH * (l.bounds.h / content);
+        const float thumbY = l.bounds.y + 2.0f + (trackH - thumbH) * (l.scroll / maxS);
+        const float thumbW = 4.0f;
+        const Rect thumb{l.bounds.x + l.bounds.w - thumbW - 2.0f, thumbY, thumbW, thumbH};
+        Color t = th.border; t.a = 0.9f;
+        r.fillRoundedRect(thumb, thumbW * 0.5f, t);
+    }
+
+    r.strokeRoundedRect(l.bounds, th.radius, th.border, 1.0f);
+}
+
 } // namespace widgetview
