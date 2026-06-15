@@ -16,6 +16,9 @@ jobs:
     name: Build & Package Server Client
     runs-on: windows-latest
     if: github.ref_type == 'tag' || github.actor != 'github-actions[bot]'
+    outputs:
+      VERSION: ${{ steps.ver.outputs.VERSION }}
+      TAG: ${{ steps.ver.outputs.TAG }}
 
     steps:
       - name: Checkout
@@ -137,3 +140,73 @@ jobs:
           files: |
             dist/ArcadeLauncher-Server-Client-x64.msi
             dist/ArcadeLauncher-Server-Client.exe
+
+  # ── Linux client ────────────────────────────────────────────────────────────
+  # Builds the native Linux client via CMake and attaches a Linux artifact to the
+  # SAME release/tag the Windows job created. Runs against that tag so both
+  # platforms ship the identical version (see PORTING_LINUX.md §8 — the Linux
+  # client tracks the Windows client in lockstep once the port is complete).
+  #
+  # Port status: today CMake produces the portable core + headless self-checks
+  # (no GUI yet). The tarball therefore currently holds those binaries; as the
+  # port lands the SDL2 app (L3) and AppImage packaging (L7), this job's build/
+  # package steps grow into them and the release artifact becomes the real
+  # runnable Linux client — no pipeline rewiring needed.
+  build-linux:
+    name: Build & Package Linux Client
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref_type == 'tag' || github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          # Build the exact commit the Windows job tagged, so versions match.
+          ref: ${{ needs.build.outputs.TAG }}
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libcurl4-openssl-dev
+          # L3+ GUI deps (added to apt line as the SDL2/nanovg/audio impls land):
+          #   libsdl2-dev libgl1-mesa-dev libfontconfig1-dev libasound2-dev
+
+      - name: Configure (CMake)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Portable-core self-check (gate)
+        run: ./build/core_selfcheck
+
+      - name: Net self-check (best-effort — needs server reachable)
+        continue-on-error: true
+        run: ./build/net_selfcheck
+
+      - name: Package Linux artifact
+        run: |
+          VER="${{ needs.build.outputs.VERSION }}"
+          STAGE="ArcadeLauncher-Linux-x64-${VER}"
+          mkdir -p "dist/${STAGE}"
+          # Ship every built executable; today that's the headless self-checks,
+          # tomorrow the GUI client binary + AppImage land here too.
+          find build -maxdepth 1 -type f -executable -exec cp {} "dist/${STAGE}/" \;
+          cp PORTING_LINUX.md "dist/${STAGE}/" || true
+          tar -C dist -czf "dist/ArcadeLauncher-Linux-x64.tar.gz" "${STAGE}"
+          ls -l dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArcadeLauncher-Linux-${{ needs.build.outputs.TAG }}
+          path: dist/ArcadeLauncher-Linux-x64.tar.gz
+
+      - name: Attach Linux artifact to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.TAG }}
+          files: dist/ArcadeLauncher-Linux-x64.tar.gz

@@ -24,6 +24,13 @@ JSON parsers, WinHTTP downloads, WIC image loading, wincrypt SHA-256. Read
   clients update, or they are locked out.
 - Repo: `github.com/TheStonedGamer/ArcadeLauncher-Client`.
 - WiX `UpgradeCode` `DA9B3C2E-5F7A-4B8D-9C1E-0F2A3B4C5D6E` is **PERMANENT**.
+- **Windows + Linux ship in lockstep.** The release workflow has two jobs: the
+  Windows job owns versioning (bumps `Version.h`, tags, makes the release); the
+  `build-linux` job checks out that same tag, builds via CMake, and attaches the
+  Linux artifact to the **same** release at the **same** version. Both clients
+  always release together off one commit — never let them drift. See
+  `PORTING_LINUX.md` §8. (Today the Linux artifact is the portable core +
+  self-checks; it grows into the real GUI client/AppImage as the port lands.)
 
 ## Server / networking
 - Talks to the ArcadeLauncher Server via reverse proxy `arcade.orlandoaio.net`

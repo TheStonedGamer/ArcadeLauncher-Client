@@ -183,3 +183,32 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
 
 Stand up the Debian build CT and land Phase **L0** (CMake + portable-core compile).
 Everything after hangs off a green Linux core build.
+
+---
+
+## 8. Release & version lockstep (Windows ↔ Linux)
+
+**Policy: the Linux client tracks the Windows client in lockstep.** Once the port
+is complete there is exactly one client, two artifacts — every release ships both
+the Windows MSI **and** the Linux build at the **same version**, off the **same
+commit/tag**. We do not let the two platforms drift.
+
+How the CI enforces it (`.github/workflows/server-client-release.yml`):
+- The **Windows job** owns versioning: it bumps `src/Version.h` (patch / `[minor]`
+  / `[major]`), commits, pushes, and creates the `client-vX.Y.Z` tag + GitHub
+  release. It exposes `VERSION`/`TAG` as job outputs.
+- The **Linux job** (`build-linux`, `needs: build`) checks out that exact `TAG`,
+  builds via CMake, runs the self-check gate, and **attaches its Linux artifact to
+  the same release**. Because it builds the tagged commit, the Linux binary
+  carries the identical `Version.h` — same `/api/health` version handshake, same
+  server compatibility rules (major.minor lockstep with the server).
+- Consequence: a `[minor]`/`[major]` bump moves **both** clients together, and the
+  production server must be redeployed for that minor before either updates (same
+  rule as today, now covering Linux too).
+
+**Artifact maturity:** until the GUI (L3) and AppImage packaging (L7) land, the
+Linux job builds the portable core + headless self-checks and tarballs them. As
+those phases land, the job's build/package steps grow into the real runnable
+client (and eventually `.deb`/Flatpak) — the lockstep wiring stays the same.
+The Linux auto-updater (L7) mirrors the Windows "update on launch" flow so both
+platforms self-update from the same releases.
