@@ -40,6 +40,7 @@ add_library(arcade_core STATIC
   src/GameFilter.cpp
   src/SidebarModel.cpp
   src/Widgets.cpp
+  src/Forms.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -190,6 +191,9 @@ if(NOT MSVC)
       # Retained widget set (L4): drive a button through the shared widgets::
       # state machine and draw it via widgetview:: (button fill rendered).
       add_test(NAME gui_demo_widgets COMMAND gui_demo --widgets)
+      # Settings panel (L4-f): drive a form (focus/toggle/type/combo-commit) via
+      # the shared forms:: model and draw it via widgetview::drawPanel.
+      add_test(NAME gui_demo_settings COMMAND gui_demo --settings)
 
       # Headless image-codec round-trip (no display/GL needed at runtime).
       add_executable(image_selfcheck src/core/ImageSelfCheckMain.cpp)
@@ -233,6 +237,9 @@ target_link_libraries(sidebar_selfcheck PRIVATE arcade_core)
 add_executable(widgets_selfcheck src/core/WidgetsSelfCheckMain.cpp)
 target_link_libraries(widgets_selfcheck PRIVATE arcade_core)
 
+add_executable(forms_selfcheck src/core/FormsSelfCheckMain.cpp)
+target_link_libraries(forms_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
@@ -244,3 +251,4 @@ add_test(NAME sort_selfcheck COMMAND sort_selfcheck)
 add_test(NAME filter_selfcheck COMMAND filter_selfcheck)
 add_test(NAME sidebar_selfcheck COMMAND sidebar_selfcheck)
 add_test(NAME widgets_selfcheck COMMAND widgets_selfcheck)
+add_test(NAME forms_selfcheck COMMAND forms_selfcheck)

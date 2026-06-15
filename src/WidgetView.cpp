@@ -250,4 +250,35 @@ void drawListBox(platform::IRenderer2D& r, const widgets::ListBox& l, const Them
     r.strokeRoundedRect(l.bounds, th.radius, th.border, 1.0f);
 }
 
+void drawPanel(platform::IRenderer2D& r, const forms::Panel& p, const Theme& th) {
+    // First pass: row labels + every control except open-combo dropdowns.
+    int openCombo = -1;
+    for (int i = 0; i < (int)p.fields.size(); ++i) {
+        const forms::Field& f = p.fields[(size_t)i];
+
+        // Left-column label for the non-checkbox rows (checkboxes draw their own).
+        if (th.font && f.kind != forms::Kind::Checkbox && !f.label.empty()) {
+            const Rect cr = (f.kind == forms::Kind::TextEdit) ? f.textedit.bounds
+                          : (f.kind == forms::Kind::Combo)    ? f.combo.bounds
+                          :                                     f.button.bounds;
+            const float ty = cr.y + (cr.h - th.fontPx) * 0.5f;
+            r.drawText(th.font, f.label, p.bounds.x + p.padX, ty, th.text,
+                       platform::TextAlign::Left);
+        }
+
+        switch (f.kind) {
+            case forms::Kind::Checkbox: drawCheckbox(r, f.checkbox, th); break;
+            case forms::Kind::TextEdit: drawTextEdit(r, f.textedit, th); break;
+            case forms::Kind::Button:   drawButton(r, f.button, th);     break;
+            case forms::Kind::Combo:
+                if (f.combo.open) openCombo = i;  // defer; draw closed header now
+                else              drawCombo(r, f.combo, th);
+                break;
+        }
+    }
+    // Second pass: the one open combo, so its dropdown overlays the rows below.
+    if (openCombo >= 0)
+        drawCombo(r, p.fields[(size_t)openCombo].combo, th);
+}
+
 } // namespace widgetview

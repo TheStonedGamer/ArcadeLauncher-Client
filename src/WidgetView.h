@@ -9,6 +9,7 @@
 
 #include "Platform/Renderer2D.h"
 #include "Widgets.h"
+#include "Forms.h"
 
 namespace widgetview {
 
@@ -61,5 +62,11 @@ void drawCombo(platform::IRenderer2D& r, const widgets::Combo& c, const Theme& t
 // accent fill, hovered row = subtle tint), and a scrollbar thumb when the content
 // overflows. Uses the renderer's clip stack so partial rows are cut cleanly.
 void drawListBox(platform::IRenderer2D& r, const widgets::ListBox& l, const Theme& th);
+
+// Draw a whole settings panel: each row's left-column label (non-checkbox rows)
+// plus its control via the matching draw* above, with any open combo's dropdown
+// painted LAST so it overlays the rows beneath it. The panel model (layout/focus)
+// is forms::Panel; this only paints what it describes.
+void drawPanel(platform::IRenderer2D& r, const forms::Panel& p, const Theme& th);
 
 } // namespace widgetview

@@ -124,6 +124,9 @@
     <ClCompile Include="src\Widgets.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\Forms.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\WidgetView.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -198,6 +201,7 @@
     <ClInclude Include="src\GameFilter.h" />
     <ClInclude Include="src\SidebarModel.h" />
     <ClInclude Include="src\Widgets.h" />
+    <ClInclude Include="src\Forms.h" />
     <ClInclude Include="src\WidgetView.h" />
     <ClInclude Include="src\CatalogGridView.h" />
     <ClInclude Include="src\Platform\win\RendererD2D.h" />

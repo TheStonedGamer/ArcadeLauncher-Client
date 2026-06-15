@@ -459,9 +459,27 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   inert). `gui_demo --widgets` selects a row through the shared model and asserts
   it; `--hold` routes wheel/click/keys to the live list. `ctest` 20/20, Windows
   launcher 0/0.
-- **Next:** assemble a first real panel (a slice of SettingsWindow) off the
-  button/checkbox/textedit/combo/list set, shared by both platforms. Windows
-  stays green; each step verified on both OSes.
+- **Done (L4-f): settings panel (form model).** `forms::Panel` composes the
+  widget set into a real settings form: a vertical stack of labeled rows
+  (`addCheckbox`/`addTextEdit`/`addCombo`/`addButton`), pure `layout()` row
+  geometry, `fieldAt` hit-test (honoring an open combo's overlay popup), a Tab
+  focus state machine (`focusNext`/`focusPrev`/`setFocus`, wrapping and skipping
+  disabled rows), `handle()` event routing (mouse → all rows + focus move;
+  keyboard → focused row, with Space toggling a checkbox / Enter clicking a
+  button / Enter opening a combo — the keyboard activation the bare widgets
+  don't do), and keyed readback (`boolValue`/`textValue`/`choiceValue`). It
+  mirrors a slice of the Windows SettingsWindow (General behavior toggles + a
+  Steam path edit + a graphics-backend combo + a Browse button) with zero Win32.
+  `widgetview::drawPanel` paints the labels + controls, open combo last.
+  `forms_selfcheck` is a 10-case KAT (layout, hit-test, traversal+skip-disabled,
+  click-toggle+focus, typing, keyboard activation, keyboard combo commit,
+  popup-overlay click, readback type-safety). `gui_demo --settings` drives a full
+  form through the shared model (toggle/type/commit) and asserts the readback +
+  that the panel rendered; `--hold` is interactive. `ctest` 22/22, Windows
+  launcher 0/0.
+- **Next:** adopt `forms::Panel` for the real Linux settings screen (wire it to
+  AppConfig load/save), then Phase L5 audio. Windows stays green; each step
+  verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

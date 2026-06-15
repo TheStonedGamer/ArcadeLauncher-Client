@@ -115,9 +115,11 @@ int main(int argc, char** argv) {
     std::string tabLabel;
     bool doSidebar = false;    // --sidebar: gate the dynamic sidebar entry model
     bool doWidgets = false;    // --widgets: gate the retained widget set (L4)
+    bool doSettings = false;   // --settings: gate the portable settings panel (L4-f)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hold") == 0) hold = true;
         else if (std::strcmp(argv[i], "--widgets") == 0) doWidgets = true;
+        else if (std::strcmp(argv[i], "--settings") == 0) doSettings = true;
         else if (std::strcmp(argv[i], "--sidebar") == 0) doSidebar = true;
         else if (std::strcmp(argv[i], "--search") == 0 && i + 1 < argc)
             searchQuery = argv[++i];
@@ -343,6 +345,127 @@ int main(int argc, char** argv) {
             }
         }
         return wok ? 0 : 1;
+    }
+
+    // L4-f: isolated settings-panel scene. Assembles a real form (a slice of the
+    // Windows General/Steam/Dolphin pages) from the shared widget set through the
+    // portable forms::Panel model and draws it via widgetview::drawPanel. Verifies
+    // the form drives end to end — focus, click-toggle, typing, combo commit,
+    // value readback — then that the panel actually rendered.
+    if (doSettings) {
+        widgetview::Theme sth = widgetview::darkTheme();
+        sth.font = r->loadFont("", 15, false);
+        sth.fontPx = 15.0f;
+
+        forms::Panel panel;
+        panel.bounds = {120, 90, 760, 360};
+        forms::addCheckbox(panel, "fullscreen", "Start fullscreen  (F11 toggles)");
+        forms::addCheckbox(panel, "tray",       "Minimize launcher to tray on game launch");
+        forms::addTextEdit(panel, "steamPath",  "Steam root path", "");
+        forms::addCombo   (panel, "backend",    "Graphics backend",
+                           {"D3D11", "D3D12", "Vulkan", "OpenGL"}, 0);
+        forms::addButton  (panel, "browse",     "Browse\xE2\x80\xA6");
+        forms::layout(panel);
+
+        // Drive a copy through the shared model: focus + toggle the first
+        // checkbox, type a path, and commit "Vulkan" (index 2) in the combo —
+        // then read the values back, exactly as a Save handler would.
+        bool driven = false;
+        {
+            forms::Panel pc = panel;
+            forms::setFocus(pc, 0);
+            { platform::Event e; e.type = platform::EventType::KeyDown;
+              e.key = platform::Key::Space; forms::handle(pc, e); }   // toggle on
+            forms::setFocus(pc, 2);
+            for (const char* s : {"/", "s", "t", "e", "a", "m"}) {
+                platform::Event e; e.type = platform::EventType::TextInput; e.text = s;
+                forms::handle(pc, e);
+            }
+            forms::setFocus(pc, 3);
+            { platform::Event e; e.type = platform::EventType::KeyDown;
+              e.key = platform::Key::Enter; forms::handle(pc, e); }   // open
+            { platform::Event e; e.type = platform::EventType::KeyDown;
+              e.key = platform::Key::Down;  forms::handle(pc, e); }   // -> D3D12
+            { platform::Event e; e.type = platform::EventType::KeyDown;
+              e.key = platform::Key::Down;  forms::handle(pc, e); }   // -> Vulkan
+            { platform::Event e; e.type = platform::EventType::KeyDown;
+              e.key = platform::Key::Enter; forms::handle(pc, e); }   // commit
+            driven = forms::boolValue(pc, "fullscreen") &&
+                     forms::textValue(pc, "steamPath") == "/steam" &&
+                     forms::choiceValue(pc, "backend") == 2;
+            // Reflect the driven state into the panel we draw.
+            forms::find(panel, "fullscreen")->checkbox.checked = true;
+            forms::find(panel, "steamPath")->textedit.text = "/steam";
+            forms::find(panel, "steamPath")->textedit.caret = 6;
+            forms::find(panel, "steamPath")->textedit.anchor = 6;
+            forms::find(panel, "backend")->combo.selected = 2;
+        }
+
+        int w = W, h = H; win->size(w, h);
+        const Color sbg = {0.07f, 0.08f, 0.09f, 1.0f};
+        auto drawSettings = [&]() {
+            r->beginFrame(w, h, 1.0f);
+            r->fillRect({0, 0, (float)w, (float)h}, sbg);
+            if (sth.font)
+                r->drawText(sth.font, "Settings", panel.bounds.x, 50.0f,
+                            sth.text, platform::TextAlign::Left);
+            widgetview::drawPanel(*r, panel, sth);
+            r->endFrame();
+        };
+        bool squit = false;
+        for (int f = 0; f < 3 && !squit; ++f) {
+            Event ev; while (win->poll(ev)) if (ev.type == EventType::Quit) squit = true;
+            drawSettings();
+            SDL_Delay(16);
+        }
+
+        glReadBuffer(GL_BACK);
+        std::vector<uint8_t> buf((size_t)w * h * 3, 0);
+        glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buf.data());
+        bool wrote = writePpm("gui_demo.ppm", buf, w, h);
+
+        // Sample inside the Browse button (left of its centered label) — its fill
+        // should match the normal button color, proving the panel rendered.
+        const Rect bb = forms::find(panel, "browse")->button.bounds;
+        int sx = (int)(bb.x + 10), sy = (int)(bb.y + bb.h / 2);
+        size_t idx = ((size_t)(h - 1 - sy) * w + sx) * 3;
+        int gr = buf[idx], gg = buf[idx + 1], gb = buf[idx + 2];
+        auto near = [](int a, int b) { return a - b <= 10 && b - a <= 10; };
+        int er = (int)(sth.normal.r * 255 + 0.5f), eg = (int)(sth.normal.g * 255 + 0.5f),
+            eb = (int)(sth.normal.b * 255 + 0.5f);
+        bool rendered = near(gr, er) && near(gg, eg) && near(gb, eb);
+        bool sok = driven && rendered;
+        std::printf("gui demo: %s — settings: driven=%d (fullscreen=%d, path=\"%s\", "
+                    "backend=%d), Browse fill (%d,%d,%d) expected ~(%d,%d,%d); wrote %s\n",
+                    sok ? "OK" : "FAILED", driven ? 1 : 0,
+                    forms::boolValue(panel, "fullscreen") ? 1 : 0,
+                    forms::textValue(panel, "steamPath").c_str(),
+                    forms::choiceValue(panel, "backend"),
+                    gr, gg, gb, er, eg, eb, wrote ? "gui_demo.ppm" : "<ppm failed>");
+
+        if (hold) {
+            std::printf("gui demo: interactive settings — Tab to move focus, click/"
+                        "type/Space/Enter to edit; Esc/close to exit.\n");
+            win->setTitle("ArcadeLauncher (Linux) — settings panel");
+            while (!squit) {
+                Event ev;
+                while (win->poll(ev)) {
+                    if (ev.type == EventType::Quit) squit = true;
+                    else if (ev.type == EventType::KeyDown && ev.key == Key::Escape)
+                        squit = true;
+                    else if (ev.type == EventType::Resize) { w = ev.width; h = ev.height; }
+                    else {
+                        forms::PanelResult pr = forms::handle(panel, ev);
+                        if (pr.clicked >= 0)
+                            std::printf("settings: row %d fired (%s)\n", pr.clicked,
+                                        panel.fields[(size_t)pr.clicked].key.c_str());
+                    }
+                }
+                drawSettings();
+                SDL_Delay(16);
+            }
+        }
+        return sok ? 0 : 1;
     }
 
     // L3d: render the REAL catalog when a library.json is supplied; otherwise the
