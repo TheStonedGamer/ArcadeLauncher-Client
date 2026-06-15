@@ -501,10 +501,27 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   (non-`--hold` loads + reports only, never writing). The Windows launcher now
   compiles `Platform/Paths.cpp` too (it was Linux-only before). `ctest` 23/23,
   Windows launcher 0/0.
-- **Next:** the Linux app's real entry point adopts this (load config at startup,
-  open the settings panel, save on close) as the port grows past the gui_demo
-  harness; then Phase L5 audio. Windows stays green; each step verified on both
-  OSes.
+- **Done (L4→app): the real Linux app entry point (`arcade_client`).** The
+  isolated harnesses become one application: `src/core/AppMain.cpp` builds a
+  window + nanovg renderer, loads the catalog (real `library.json` or the demo
+  scene) into the shared grid/sidebar/search/filter model, and runs the browse
+  loop (wheel/arrows/PgUp-Dn, click tabs to filter, type to search, F1 sort).
+  **F2 opens an in-app settings overlay** — a dim modal backdrop + the shared
+  `forms::Panel` from `settings::buildGeneralPanel`, bound to the live
+  `settings::General`; the overlay captures input while open and Esc/F2 closes it,
+  merging the edits back via `readGeneralPanel`. It is wired to the **config
+  lifecycle**: `loadGeneralFromFile(configPath)` at startup (default
+  `settings::configPath()`, overridable with `--config <path>`) and
+  `saveGeneralToFile` on close — non-destructive, and **only on an interactive
+  (`--hold`) exit**, so an automated run never mutates the user's config. Headless
+  mode is a deterministic self-check (new `arcade_client` ctest): it loads the
+  config, drives the overlay open → Space-toggles a checkbox → closes (asserting
+  the edit merged), renders the grid then the overlay, and verifies the overlay
+  darkened tile-0 over the grid. Verified in WSLg + `ctest` **24/24**; the temp
+  `--config` round-trip confirms the file is untouched by a non-`--hold` run.
+  Windows launcher 0/0 (AppMain.cpp is a Linux-only target, not in the vcxproj).
+- **Next:** Phase L5 audio (miniaudio `IAudioOut`/`IAudioIn` for the voice
+  subsystem). Windows stays green; each step verified on both OSes.
 
 **Phase L5 — Audio (voice) on Linux**
 - miniaudio `IAudioOut`/`IAudioIn`; wire VoiceEngine. (Pairs with Phase 2 voice v2.)

@@ -246,6 +246,9 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --sidebar
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --widgets
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_demo --settings
+          # The real app entry point: grid browse + settings overlay + config
+          # lifecycle (headless self-check; never writes config without --hold).
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/arcade_client
 
       - name: Package Linux artifact
         run: |

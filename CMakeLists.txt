@@ -196,6 +196,12 @@ if(NOT MSVC)
       # the shared forms:: model and draw it via widgetview::drawPanel.
       add_test(NAME gui_demo_settings COMMAND gui_demo --settings)
 
+      # The real app entry point (L4 → app): grid browse + settings overlay +
+      # config load/save lifecycle. Headless mode is a deterministic self-check.
+      add_executable(arcade_client src/core/AppMain.cpp)
+      target_link_libraries(arcade_client PRIVATE arcade_gui arcade_core)
+      add_test(NAME arcade_client COMMAND arcade_client)
+
       # Headless image-codec round-trip (no display/GL needed at runtime).
       add_executable(image_selfcheck src/core/ImageSelfCheckMain.cpp)
       target_link_libraries(image_selfcheck PRIVATE arcade_gui arcade_core)
