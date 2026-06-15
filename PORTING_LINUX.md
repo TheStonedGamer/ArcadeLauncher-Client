@@ -246,13 +246,30 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   `gridview::drawGrid` now paints correctly through Direct2D, proven by
   `d2d_selfcheck`. The shared draw path is live on **both** back-ends (nanovg/GL
   + Direct2D), pixel-matched.
-- **Next (L3d-b-3c):** point Renderer.cpp's actual grid frame at
-  `gridview::drawGrid` through a `makeRendererD2D(m_rt, m_dwFactory)` adapter —
-  i.e. build the `gridview::Card` list from the live `GameLibrary` games (uploading
-  each `ID2D1Bitmap` cover as an `ImageId`) and replace the bespoke `DrawGrid`/
-  `DrawCard` body with a call to the shared path, behind a flag so the legacy
-  path stays available. Then migrate `GameLibrary` to UTF-8 and wire `App.cpp`'s
-  message loop to `IWindow`. File-by-file, Windows green.
+- **Done (L3d-b-4): portable interaction controller + interactive Linux grid.**
+  `src/GridController.{h,cpp}` in `arcade_core` — `grid::Controller` owns the
+  scroll offset + selected tile and turns input (wheel, click, arrow keys) into
+  state via `GridLayout` (maxScroll clamp, scroll-aware hit-test with the
+  sidebar/top-bar guard, scroll-into-view, clamped keyboard nav incl. short last
+  row). Pure logic, no GL/Win32 — shared by both platforms. Headless
+  `grid_controller_selfcheck` KAT verifies it against hand-computed values
+  (`maxScroll=922`, select-into-view `=900`, gap/sidebar `→ -1`, last-row clamp,
+  empty catalog). `gui_demo --hold` is now an **interactive** catalog browser:
+  wheel scrolls, click/arrows select, PgUp/PgDn page, resize re-flows. `ctest`
+  all 9 green; Windows launcher build green (the controller compiles into it too,
+  ready to adopt).
+- **Architecture note (why not swap Windows DrawCard yet):** production
+  `DrawCard` does far more than `gridview::drawCard` (badges, ROM-variant counts,
+  hover menu button, multi-select checkboxes, install-state overlays, favorite
+  stars, lift animation). Pointing Windows at `gridview::drawGrid` now would
+  *regress* those. So the unification order is: share the **pure logic**
+  (GridLayout ✅, GridController ✅) that can't regress anything, grow `gridview`
+  to feature-parity incrementally, and only then swap the Windows draw path.
+- **Next (L3d-b-5):** grow `gridview::drawCard` toward parity (selection
+  checkbox, install-state overlay, favorite star, count badges) — each addition
+  verified on both back-ends via the self-checks — until it can back the Windows
+  grid without feature loss. In parallel: migrate `GameLibrary` to UTF-8 and wire
+  `App.cpp`'s loop to `IWindow`. File-by-file, Windows green.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

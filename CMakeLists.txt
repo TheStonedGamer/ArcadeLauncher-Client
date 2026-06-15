@@ -33,6 +33,7 @@ add_library(arcade_core STATIC
   src/Platform/Paths.cpp
   src/Catalog.cpp
   src/GridLayout.cpp
+  src/GridController.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -190,7 +191,11 @@ target_link_libraries(catalog_selfcheck PRIVATE arcade_core)
 add_executable(grid_selfcheck src/core/GridLayoutSelfCheckMain.cpp)
 target_link_libraries(grid_selfcheck PRIVATE arcade_core)
 
+add_executable(grid_controller_selfcheck src/core/GridControllerSelfCheckMain.cpp)
+target_link_libraries(grid_controller_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
 add_test(NAME grid_selfcheck COMMAND grid_selfcheck)
+add_test(NAME grid_controller_selfcheck COMMAND grid_controller_selfcheck)

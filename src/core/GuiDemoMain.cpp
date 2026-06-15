@@ -19,6 +19,7 @@
 #include "Platform/Image.h"
 #include "Catalog.h"
 #include "GridLayout.h"
+#include "GridController.h"
 #include "CatalogGridView.h"
 
 #include <GL/glew.h>
@@ -161,12 +162,24 @@ int main(int argc, char** argv) {
 
     int w = W, h = H; win->size(w, h);
 
+    // Interactive state (scroll + selection) via the shared portable controller.
+    grid::Controller ctrl;
+    ctrl.setViewport(w, h);
+    ctrl.setCount((int)cards.size());
+
+    auto render = [&]() {
+        for (int i = 0; i < (int)cards.size(); ++i)
+            cards[i].selected = (i == ctrl.selected());
+        gridview::drawGrid(*r, w, h, ctrl.scrollOffset(), cards, tabs, theme);
+    };
+
     bool quit = false;
     // Render a few identical frames; the back buffer then holds a full scene we
-    // can read deterministically (front is undefined under a compositor).
+    // can read deterministically (front is undefined under a compositor). Scroll
+    // is 0 and nothing is selected here, so tile0 stays the verification anchor.
     for (int f = 0; f < 3 && !quit; ++f) {
         Event ev; while (win->poll(ev)) if (ev.type == EventType::Quit) quit = true;
-        gridview::drawGrid(*r, w, h, 0.0f, cards, tabs, theme);
+        render();
         SDL_Delay(16);
     }
 
@@ -211,14 +224,38 @@ int main(int argc, char** argv) {
     }
 
     if (hold) {
-        std::printf("gui demo: holding window open — close it (or Esc) to exit.\n");
+        std::printf("gui demo: interactive — wheel scrolls, click/arrows select, "
+                    "Esc/close to exit.\n");
         while (!quit) {
             Event ev;
-            while (win->poll(ev))
-                if (ev.type == EventType::Quit ||
-                    (ev.type == EventType::KeyDown && ev.key == Key::Escape))
-                    quit = true;
-            gridview::drawGrid(*r, w, h, 0.0f, cards, tabs, theme);
+            while (win->poll(ev)) {
+                switch (ev.type) {
+                    case EventType::Quit: quit = true; break;
+                    case EventType::Resize:
+                        w = ev.width; h = ev.height; ctrl.setViewport(w, h);
+                        break;
+                    case EventType::MouseWheel:
+                        ctrl.scrollBy(-ev.wheel * 80.0f);  // wheel up scrolls up
+                        break;
+                    case EventType::MouseDown:
+                        if (ev.button == MouseButton::Left) ctrl.clickAt(ev.x, ev.y);
+                        break;
+                    case EventType::KeyDown:
+                        switch (ev.key) {
+                            case Key::Escape: quit = true; break;
+                            case Key::Left:  ctrl.moveSelection(-1, 0); break;
+                            case Key::Right: ctrl.moveSelection(1, 0);  break;
+                            case Key::Up:    ctrl.moveSelection(0, -1); break;
+                            case Key::Down:  ctrl.moveSelection(0, 1);  break;
+                            case Key::PageDown: ctrl.scrollBy(h * 0.9f); break;
+                            case Key::PageUp:   ctrl.scrollBy(-h * 0.9f); break;
+                            default: break;
+                        }
+                        break;
+                    default: break;
+                }
+            }
+            render();
             SDL_Delay(16);
         }
     }

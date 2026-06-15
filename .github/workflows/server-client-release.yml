@@ -204,6 +204,9 @@ jobs:
       - name: Grid-layout self-check (gate)
         run: ./build/grid_selfcheck
 
+      - name: Grid-controller self-check (gate)
+        run: ./build/grid_controller_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
