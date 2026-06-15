@@ -17,6 +17,7 @@
 #include "Platform/Renderer2D.h"
 #include "Platform/Image.h"
 #include "Catalog.h"
+#include "GridLayout.h"
 
 #include <GL/glew.h>
 #include <SDL.h>
@@ -118,40 +119,30 @@ bool writePpm(const char* path, const std::vector<uint8_t>& rgb, int w, int h) {
     return true;
 }
 
-constexpr int kSidebar = 180;
-constexpr int kTopbar  = 56;
-constexpr float kCols  = 4;
-constexpr float kPad   = 20;
-
-// Returns the cover rect of tile index i within the content area.
-Rect tileCover(int i, int winW, float& outTileW, float& outTileH) {
-    const float areaX = kSidebar + kPad;
-    const float areaW = winW - kSidebar - 2 * kPad;
-    const float tileW = (areaW - (kCols - 1) * kPad) / kCols;
-    const float coverH = tileW * 1.3f;        // portrait cover
-    outTileW = tileW; outTileH = coverH + 28; // + title strip
-    const int col = i % (int)kCols;
-    const int row = i / (int)kCols;
-    const float x = areaX + col * (tileW + kPad);
-    const float y = kTopbar + kPad + row * (coverH + 28 + kPad);
-    return Rect{x, y, tileW, coverH};
+// Cover rect of tile i, computed through the SHARED portable grid geometry
+// (grid::GridLayout) — the exact same math Renderer.cpp uses on Windows. The
+// demo doesn't scroll, so scrollOffset is 0.
+Rect tileCover(const grid::Metrics& m, int i) {
+    grid::Rect g = grid::tileRect(m, i, 0.0f);
+    return Rect{g.x, g.y, g.w, g.h};
 }
 
 void renderScene(IRenderer2D& r, int w, int h, FontId fTitle, FontId fBody,
                  const std::vector<Tile>& tiles) {
+    const grid::Metrics m = grid::Metrics::forViewport(w, h);
     r.beginFrame(w, h, 1.0f);
 
     // Background.
     r.fillRect(Rect{0, 0, (float)w, (float)h}, kBg);
-    // Sidebar.
-    r.fillRect(Rect{0, 0, (float)kSidebar, (float)h}, kPanel);
+    // Sidebar (width from the shared metrics so tiles align to it).
+    r.fillRect(Rect{0, 0, m.sidebarW, (float)h}, kPanel);
     // Top bar with brand gradient.
-    r.linearGradientRect(Rect{0, 0, (float)w, (float)kTopbar}, kAccentA, kAccentB, false);
+    r.linearGradientRect(Rect{0, 0, (float)w, m.topbarH}, kAccentA, kAccentB, false);
     r.drawText(fTitle, "ArcadeLauncher", 16, 18, kText, TextAlign::Left);
 
     // Sidebar entries.
     const char* tabs[] = {"All Games", "PC", "Consoles", "Favorites", "Downloads"};
-    float ty = kTopbar + 20;
+    float ty = m.topbarH + 20;
     for (const char* t : tabs) {
         r.drawText(fBody, t, 20, ty, kMuted, TextAlign::Left);
         ty += 34;
@@ -159,8 +150,8 @@ void renderScene(IRenderer2D& r, int w, int h, FontId fTitle, FontId fBody,
 
     // Game grid.
     for (int i = 0; i < (int)tiles.size(); ++i) {
-        float tw, th;
-        Rect cover = tileCover(i, w, tw, th);
+        if (!grid::tileVisible(m, i, 0.0f, h)) continue;
+        Rect cover = tileCover(m, i);
         if (tiles[i].art != 0) {
             // Real decoded cover art: card backing, then the image clipped to it.
             r.fillRoundedRect(cover, 8, kCard);
@@ -259,8 +250,9 @@ int main(int argc, char** argv) {
     glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, buf.data());
     bool wrote = writePpm("gui_demo.ppm", buf, w, h);
 
+    const grid::Metrics gm = grid::Metrics::forViewport(w, h);
     auto sampleTile = [&](int i, int& gr, int& gg, int& gb) {
-        float tw, th; Rect c = tileCover(i, w, tw, th);
+        Rect c = tileCover(gm, i);
         int sx = (int)(c.x + c.w / 2), sy = (int)(c.y + c.h / 2);
         // glReadPixels rows are bottom-up; flip the top-down y.
         size_t idx = ((size_t)(h - 1 - sy) * w + sx) * 3;

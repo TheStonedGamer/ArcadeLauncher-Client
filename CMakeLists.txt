@@ -32,6 +32,7 @@ add_library(arcade_core STATIC
   src/Platform/Sha256.cpp
   src/Platform/Paths.cpp
   src/Catalog.cpp
+  src/GridLayout.cpp
   src/core/CoreSmoke.cpp
 )
 
@@ -181,6 +182,13 @@ endif()
 add_executable(catalog_selfcheck src/core/CatalogSelfCheckMain.cpp)
 target_link_libraries(catalog_selfcheck PRIVATE arcade_core)
 
+# ── grid_selfcheck (Phase L3d-b) ─────────────────────────────────────────────
+# Portable catalog-grid geometry KAT (no display/GL): asserts GridLayout's
+# metrics/rects/hit-test/scroll match Renderer.cpp's Direct2D math.
+add_executable(grid_selfcheck src/core/GridLayoutSelfCheckMain.cpp)
+target_link_libraries(grid_selfcheck PRIVATE arcade_core)
+
 enable_testing()
 add_test(NAME core_selfcheck COMMAND core_selfcheck)
 add_test(NAME catalog_selfcheck COMMAND catalog_selfcheck)
+add_test(NAME grid_selfcheck COMMAND grid_selfcheck)

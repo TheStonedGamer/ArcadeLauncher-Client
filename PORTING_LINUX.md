@@ -195,11 +195,26 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   stb_image, and renders live tiles (`gui_demo` with no arg keeps the
   deterministic demo scene for CI). Verified in WSLg against a real library.json:
   4 games → 3 tiles with the actual decoded cover; `ctest` all 7 green.
-- **Next (L3d-b):** the heavy tail — migrate `Renderer.cpp`'s grid/detail drawing
-  off `ID2D1RenderTarget` onto `IRenderer2D` (so the production renderer, not
-  `gui_demo`, paints the grid), then migrate `GameLibrary` itself to UTF-8 and
-  wire `App.cpp`'s message loop to `IWindow`. Do this file-by-file keeping the
-  Windows build green (the Win impls of `IWindow`/`IRenderer2D` come in L1b).
+- **Done (L3d-b-1): shared grid geometry.** `src/GridLayout.{h,cpp}` in
+  `arcade_core` — `grid::Metrics::forViewport()` + `tileRect`/`tileVisible`/
+  `hitTest`/`scrollForIndex`, extracted **verbatim** from `Renderer.cpp`'s
+  `Resize`/`DrawGrid`/`HitTestGrid`/`ScrollForSelected` so both platforms share
+  one source of truth for tile placement, click-mapping, culling, and
+  scroll-into-view. Pure CPU, no Win32/Direct2D/nanovg. New headless
+  `grid_selfcheck` KAT asserts metrics/rects/hit-test/scroll against
+  hand-computed values at a known viewport (and documents the production quirk
+  that `HitTestGrid` itself doesn't reject sidebar/topbar clicks — the caller
+  routes those first). `gui_demo` now lays its tiles out **through**
+  `GridLayout` (was ad-hoc), so the Linux grid provably matches the Windows
+  math. Windows `Renderer.cpp` is untouched — it adopts these functions in a
+  later slice. Verified in WSLg: clean build, `ctest` all 8 green; CI gains a
+  `grid_selfcheck` gate.
+- **Next (L3d-b-2):** the heavy tail — have Windows `Renderer.cpp` call
+  `grid::GridLayout` (delete its duplicated math), then migrate the tile/detail
+  *drawing* off `ID2D1RenderTarget` onto `IRenderer2D` so the production
+  renderer (not `gui_demo`) paints the grid, then migrate `GameLibrary` to UTF-8
+  and wire `App.cpp`'s message loop to `IWindow`. File-by-file, Windows green
+  (the Win impls of `IWindow`/`IRenderer2D` come in L1b).
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

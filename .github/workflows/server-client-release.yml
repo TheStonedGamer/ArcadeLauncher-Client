@@ -201,6 +201,9 @@ jobs:
       - name: Catalog-parse self-check (gate)
         run: ./build/catalog_selfcheck
 
+      - name: Grid-layout self-check (gate)
+        run: ./build/grid_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
