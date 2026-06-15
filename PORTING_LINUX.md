@@ -300,8 +300,14 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   gate added. **Migration pattern proven:** lift pure logic to a portable
   KAT-covered module, point the wstring side at it via the boundary codec — zero
   Windows regression, one source of truth.
+- **Done (L3d-c-2): portable search-match predicate (`gamesearch::`) + KAT.**
+  `GameLibrary::Search`'s match rule (case-insensitive substring over title/
+  genre/platform/dev/publisher/franchise + 4-digit release-year) moved into
+  `src/GameSearch.{h,cpp}` (arcade_core, UTF-8). Windows `Search` builds a
+  `gamesearch::Fields` by narrowing each field (year via `gmtime`) and delegates.
+  Locked by `search_selfcheck`. `ctest` 11/11, launcher 0/0, CI gate added.
 - **Next (GameLibrary UTF-8 cont. / L1b-rest):** keep peeling pure logic off the
-  wstring `Game`/`GameLibrary` the same way (search/filter predicates next), then
+  wstring `Game`/`GameLibrary` the same way (filter/sort predicates next), then
   the data fields themselves with `narrow`/`widen` at Win32 call sites; in
   parallel wrap the Win32 window/message loop behind `IWindow` and route
   `App.cpp` through it. File-by-file, Windows green, each step KAT-locked.

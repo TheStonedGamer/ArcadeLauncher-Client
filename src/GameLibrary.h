@@ -1,6 +1,7 @@
 #pragma once
 #include "pch.h"
 #include "GameVariants.h"
+#include "GameSearch.h"
 #include "Platform/Text.h"
 
 enum class Platform {

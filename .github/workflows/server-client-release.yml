@@ -210,6 +210,9 @@ jobs:
       - name: ROM-variant self-check (gate)
         run: ./build/variants_selfcheck
 
+      - name: Search-match self-check (gate)
+        run: ./build/search_selfcheck
+
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck

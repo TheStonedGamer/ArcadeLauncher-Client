@@ -154,32 +154,28 @@ std::vector<const Game*> GameLibrary::Filter(Platform p) const {
 
 std::vector<const Game*> GameLibrary::Search(const std::wstring& query) const {
     std::lock_guard<std::mutex> lk(m_mutex);
-    std::wstring lq = query;
-    for (auto& c : lq) c = towlower(c);
+    // Match rule is the portable gamesearch:: predicate (shared with Linux):
+    // case-insensitive substring over title/genre/platform/dev/publisher/
+    // franchise, plus a 4-digit release-year match ("rpg", "wii", "2008",
+    // "capcom"). We narrow each field to UTF-8 at the boundary and derive the
+    // release year via gmtime here.
+    const std::string lq = gamesearch::lower(platform::narrow(query));
 
-    auto contains = [&](std::wstring hay) {
-        for (auto& c : hay) c = towlower(c);
-        return hay.find(lq) != std::wstring::npos;
-    };
-
-    // Matches more than the title: genre, platform name, release year, and
-    // developer/publisher/franchise all hit too ("rpg", "wii", "2008", "capcom").
     std::vector<const Game*> out;
     for (auto& g : m_games) {
-        bool hit = contains(g.title) ||
-                   (!g.genres.empty()    && contains(g.genres)) ||
-                   contains(PlatformName(g.platform)) ||
-                   (!g.developer.empty() && contains(g.developer)) ||
-                   (!g.publisher.empty() && contains(g.publisher)) ||
-                   (!g.franchise.empty() && contains(g.franchise));
-        if (!hit && g.releaseDate > 0 && lq.size() == 4) {
+        gamesearch::Fields f;
+        f.title     = platform::narrow(g.title);
+        f.genres    = platform::narrow(g.genres);
+        f.platform  = platform::narrow(PlatformName(g.platform));
+        f.developer = platform::narrow(g.developer);
+        f.publisher = platform::narrow(g.publisher);
+        f.franchise = platform::narrow(g.franchise);
+        if (g.releaseDate > 0) {
             time_t t = (time_t)g.releaseDate;
             struct tm tmv {};
-            if (gmtime_s(&tmv, &t) == 0 &&
-                std::to_wstring(tmv.tm_year + 1900) == lq)
-                hit = true;
+            if (gmtime_s(&tmv, &t) == 0) f.releaseYear = tmv.tm_year + 1900;
         }
-        if (hit) out.push_back(&g);
+        if (gamesearch::matches(f, lq)) out.push_back(&g);
     }
     return out;
 }
