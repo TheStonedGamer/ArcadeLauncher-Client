@@ -153,9 +153,22 @@ only calls `Renderer2D` instead of `ID2D1RenderTarget`.
   Verified in WSL (libssl-dev): clean build, `ws_selfcheck` → `OK — gateway
   responded (code 401)` against the live gateway through nginx/TLS.
 
-**Phase L3 — Window + Renderer2D on Linux**
+**Phase L3 — Window + Renderer2D on Linux** — 🚧 **window + GL up; renderer next**
 - SDL2 window + GL context; nanovg `Renderer2D`. Port the main grid/detail
   renderer (Renderer.cpp) to `Renderer2D`. First pixels on Linux.
+- **Done (L3a):** `src/Platform/linux/WindowSdl.cpp` — SDL2-backed
+  `platform::IWindow` / `makeWindow()`: window + GL 3.2 core context (stencil for
+  nanovg), full SDL→`platform::Event` translation (mouse/wheel/keys/text/resize/
+  focus/quit), clipboard, title/show, `nativeHandle()` = `SDL_Window*`. CMake adds
+  `arcade_gui` + a `gui_smoke` driver that opens the window, clears to the dark-
+  theme color, reads the BACK buffer back to verify real output (center pixel ==
+  expected within tolerance), and dumps `gui_smoke.ppm`. **First pixels on Linux:**
+  verified in WSLg (SDL2 2.32, Mesa llvmpipe GL 4.5) — `gui_smoke` → `OK
+  (32,34,48)` and the PPM shows the rendered frame. CI runs it headless under
+  `xvfb` + software GL. `--hold` keeps the window open for manual inspection.
+- **Next (L3b):** nanovg `Renderer2D` over GL3, then migrate `Renderer.cpp`'s grid/
+  detail drawing onto `IRenderer2D` (rounded-rect tiles, cover art via stb_image,
+  text via nanovg/fontconfig) so the real catalog UI paints on Linux.
 
 **Phase L4 — Retained widget set**
 - nanovg button/checkbox/combo/listbox/text-edit. Port SettingsWindow + dialogs

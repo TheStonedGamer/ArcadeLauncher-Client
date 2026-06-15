@@ -61,4 +61,9 @@ public:
     virtual void* nativeHandle() const = 0;
 };
 
+// Create the platform window with an attached GL context (made current on the
+// calling thread). Returns nullptr if the window/context can't be created.
+// Provided by the platform impl (SDL2 on Linux; Win32 on Windows, L-later).
+std::unique_ptr<IWindow> makeWindow(const std::string& title, int width, int height);
+
 } // namespace platform

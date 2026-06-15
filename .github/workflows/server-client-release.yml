@@ -171,10 +171,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake pkg-config libcurl4-openssl-dev \
-            libssl-dev zlib1g-dev
+            libssl-dev zlib1g-dev \
+            libsdl2-dev libgl1-mesa-dev libgl1-mesa-dri xvfb
           # libssl-dev/zlib1g-dev: TLS + compression for IXWebSocket (L2b).
-          # L3+ GUI deps (added to apt line as the SDL2/nanovg/audio impls land):
-          #   libsdl2-dev libgl1-mesa-dev libfontconfig1-dev libasound2-dev
+          # libsdl2-dev/mesa/xvfb: SDL2 window + software GL for the L3 GUI smoke.
+          # Further L3+ deps as impls land: libfontconfig1-dev libasound2-dev
 
       - name: Configure (CMake)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -188,6 +189,11 @@ jobs:
       - name: Net self-check (best-effort — needs server reachable)
         continue-on-error: true
         run: ./build/net_selfcheck
+
+      - name: GUI smoke under xvfb (first pixels, software GL)
+        run: |
+          export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/gui_smoke
 
       - name: Package Linux artifact
         run: |

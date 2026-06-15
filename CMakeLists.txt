@@ -100,6 +100,28 @@ if(NOT MSVC)
   else()
     message(STATUS "CURL not found — skipping arcade_net/net_selfcheck (L2).")
   endif()
+
+  # ── arcade_gui + gui_smoke (Phase L3a) ──────────────────────────────────────
+  # SDL2-backed platform::IWindow (window + GL context + event loop) and a smoke
+  # app that opens a window, renders a known clear color, reads the framebuffer
+  # back, and dumps gui_smoke.ppm. nanovg Renderer2D + the grid renderer land in
+  # L3b. Built only when SDL2 + OpenGL are present.
+  find_package(SDL2 QUIET)
+  find_package(OpenGL QUIET)
+  if(SDL2_FOUND AND OpenGL_FOUND)
+    add_library(arcade_gui STATIC
+      src/Platform/linux/WindowSdl.cpp
+    )
+    target_include_directories(arcade_gui PUBLIC src ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(arcade_gui PUBLIC ${SDL2_LIBRARIES} OpenGL::GL)
+    target_compile_options(arcade_gui PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
+    add_executable(gui_smoke src/core/GuiSmokeMain.cpp)
+    target_link_libraries(gui_smoke PRIVATE arcade_gui arcade_core)
+    add_test(NAME gui_smoke COMMAND gui_smoke)
+  else()
+    message(STATUS "SDL2/OpenGL not found — skipping arcade_gui/gui_smoke (L3).")
+  endif()
 endif()
 
 enable_testing()
