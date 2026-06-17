@@ -17,18 +17,23 @@ static constexpr UINT WM_APP_UPDATE_PROGRESS = WM_USER + 9;
 // WPARAM = 0 (already up to date) or 1 (check failed), LPARAM = 0.
 static constexpr UINT WM_APP_UPDATE_NONE = WM_USER + 10;
 
+// Posted when the native client is retired (T10c) and users should install the
+// unified Tauri client. WPARAM = 1 for an explicit Tools → Check for Updates
+// request, 0 for the one-time launch notice.
+static constexpr UINT WM_APP_UPDATE_MIGRATE = WM_USER + 11;
+
 struct AppUpdateInfo {
     std::wstring tag;     // e.g. L"client-v1.2.3"
     std::wstring msiUrl;  // direct download URL for ArcadeLauncher-Server-Client-x64.msi
 };
 
-// Fires a background thread that checks GitHub for a newer release.
-// Posts WM_APP_UPDATE_FOUND if one is found. An automatic check (manual=false)
-// is silent on failure / up-to-date and honors the loop-breaker cooldown; a
-// manual check (manual=true) bypasses the cooldown and posts WM_APP_UPDATE_NONE
-// when no update is started so the caller can report the result.
+// Fires a background thread that notifies the user the native client is retired.
+// Automatic checks (manual=false) show a one-time migration notice; manual
+// checks always surface the unified-client download link.
 void CheckForAppUpdateAsync(HWND hwnd, bool manual = false);
 
-// Fires a background thread that downloads the MSI and hands it to an elevated
-// installer helper. Posts WM_APP_UPDATE_READY when done (success or failure).
+// Retained for ABI compatibility; the native auto-update channel is retired.
 void DownloadAndInstallAsync(HWND hwnd, std::wstring tag, std::wstring msiUrl);
+
+// Marks the one-time unified-client launch notice as seen.
+void DismissUnifiedClientNotice();

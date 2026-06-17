@@ -1,5 +1,11 @@
 # ArcadeLauncher (Client)
 
+> **Retired (T10c):** This native C++/Win32 client is no longer maintained.
+> Install the unified cross-platform client instead:
+> [ArcadeLauncher-Unified-Client releases](https://github.com/TheStonedGamer/ArcadeLauncher-Unified-Client/releases/latest).
+> Existing installs show a one-time migration notice on launch; the GitHub
+> auto-update channel for this repo is disabled.
+
 A native **C++17 / Win32 / Direct2D** game launcher for Windows. It presents a
 unified, controller-friendly library across local emulators, PC storefronts
 (Steam / Epic / GOG), and a private **ArcadeLauncher Server** catalog that streams
@@ -44,10 +50,14 @@ First-time setup pulls the LZMA SDK via `scripts\GetLzmaSDK.ps1`.
 
 ## Release pipeline
 
-Pushing to `main` triggers the GitHub Actions workflow, which auto-bumps
-`src/Version.h`, builds, and produces the MSI. The WiX `UpgradeCode`
-(`DA9B3C2E-5F7A-4B8D-9C1E-0F2A3B4C5D6E`) is **permanent** — never change it or
-in-place upgrades break.
+**Retired:** pushes to `main` no longer auto-release. The unified Tauri client
+is the sole shipping product. To cut over existing native installs, dispatch
+`server-client-release.yml` manually once so the EOL build (migration notice,
+no self-update) reaches users on the old channel.
+
+Tag-only and manual-dispatch releases still build the MSI when needed. The WiX
+`UpgradeCode` (`DA9B3C2E-5F7A-4B8D-9C1E-0F2A3B4C5D6E`) is **permanent** — never
+change it or in-place upgrades break.
 
 ## Server connection
 

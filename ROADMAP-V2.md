@@ -108,11 +108,13 @@ Each phase ends green on **both** Windows and Linux before the next begins.
 - Discord Rich Presence.
 - XDG paths on Linux, native file pickers.
 
-### T7 — Cutover
+### T7 — Cutover (DONE — unified client shipped)
+
 - Full parity audit vs. current C++ client (checklist sign-off).
 - Both-OS green, signed updater verified end-to-end.
-- **Flip the auto-update channel** from the C++ build to the Tauri build.
-- Archive the C++ client repo as legacy.
+- **Flip the auto-update channel** from the C++ build to the Tauri build — done
+  (T10c): native `AppUpdater` retired, unified client at v0.9.2.
+- C++ client repo archived as legacy (tag/dispatch-only releases).
 
 ---
 

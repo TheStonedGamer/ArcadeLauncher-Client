@@ -1,9 +1,10 @@
 name: Server Client Release
 
-# Builds and publishes the server-client MSI from this repo's main branch.
+# Builds and publishes the server-client MSI from a `client-v*` tag.
+# T10c: auto-release on every main push is retired — the unified Tauri client
+# is the sole shipping product. Tag pushes and manual dispatch only.
 on:
   push:
-    branches: [main]
     tags:
       - "client-v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:

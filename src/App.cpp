@@ -1019,7 +1019,7 @@ bool App::Initialize(HINSTANCE hInstance, bool startInTray) {
         }).detach();
     }
 
-    // Check for a newer release on GitHub (silent — only fires WM_APP_UPDATE_FOUND if one exists)
+    // One-time notice that the unified client replaces this native build (T10c).
     CheckForAppUpdateAsync(m_hwnd);
 
     // Timers
@@ -1620,18 +1620,32 @@ LRESULT App::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_APP_UPDATE_NONE:
-        // Result of a manual Tools → Check for Updates (no update was started).
-        if (wp == 1)
-            MessageBoxW(hwnd,
-                L"Couldn't check for updates right now.\n\n"
-                L"Check your internet connection and try again, or visit "
-                L"github.com/TheStonedGamer/ArcadeLauncher-Client/releases to update manually.",
-                L"Check for Updates", MB_OK | MB_ICONWARNING);
-        else
-            MessageBoxW(hwnd,
-                L"You're running the latest version of ArcadeLauncher.",
-                L"Check for Updates", MB_OK | MB_ICONINFORMATION);
+        // Legacy path — native GitHub auto-update is retired (T10c).
+        PostMessageW(hwnd, WM_APP_UPDATE_MIGRATE, 1, 0);
         return 0;
+
+    case WM_APP_UPDATE_MIGRATE: {
+        const bool manual = wp != 0;
+        const int choice = MessageBoxW(hwnd,
+            L"This build of ArcadeLauncher is retired.\n\n"
+            L"The unified cross-platform client replaces the native Windows and "
+            L"Linux builds. Install it for the same server library, friends, chat, "
+            L"and downloads — with a per-user install and admin-free signed updates.\n\n"
+            L"Download page:\n"
+            L"github.com/TheStonedGamer/ArcadeLauncher-Unified-Client/releases/latest\n\n"
+            L"Press OK to open the download page.",
+            L"Upgrade to ArcadeLauncher Unified",
+            manual ? (MB_OK | MB_ICONINFORMATION)
+                   : (MB_OKCANCEL | MB_ICONINFORMATION));
+        if (choice == IDOK) {
+            ShellExecuteW(hwnd, L"open",
+                L"https://github.com/TheStonedGamer/ArcadeLauncher-Unified-Client/releases/latest",
+                nullptr, nullptr, SW_SHOWNORMAL);
+            if (!manual) DismissUnifiedClientNotice();
+        }
+        // IDCANCEL on the one-time launch notice = remind me next launch (no marker).
+        return 0;
+    }
 
     case WM_APP_UPDATE_PROGRESS:
         if (g_updateDlg)
